@@ -2,11 +2,11 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <title>MGQP Map Editor - Финальная версия</title>
+  <title>MGQP Map Editor v1.4 - Финал</title>
   <style>
     body { font-family: sans-serif; margin: 20px; }
-    textarea { width: 100%; height: 60px; }
-    .block { margin-bottom: 20px; }
+    textarea { width: 100%; height: 60px; box-sizing: border-box; }
+    .block { margin-bottom: 20px; padding: 10px; border: 1px solid #ddd; border-radius: 6px; }
     label { font-weight: bold; }
     .control-btn {
         position: fixed;
@@ -18,6 +18,17 @@
         cursor: pointer;
         border-radius: 4px;
     }
+    .file-inputs { margin-bottom: 20px; display: flex; gap: 20px; align-items: center; }
+    .japanese-original {
+        background-color: #f5f5f5;
+        border: 1px dashed #ccc;
+        padding: 8px;
+        margin-bottom: 5px;
+        font-family: 'MS Gothic', 'Osaka-mono', monospace;
+        white-space: pre-wrap;
+        user-select: text;
+        font-size: 16px;
+    }
   </style>
 </head>
 <body>
@@ -27,7 +38,17 @@
   
   <h1>MGQP Map Editor</h1>
   
-  <input type="file" id="fileInput" accept=".txt">
+  <div class="file-inputs">
+    <div>
+        <label for="fileInput">1. Загрузить файл для перевода:</label><br>
+        <input type="file" id="fileInput" accept=".txt">
+    </div>
+    <div>
+        <label for="japaneseFileInput">2. Загрузить японский файл (Опционально):</label><br>
+        <input type="file" id="japaneseFileInput" accept=".txt">
+    </div>
+  </div>
+
   <div id="editor"></div>
   <button id="saveBtn" style="display:none;">Скачать изменённый файл</button>
   <button id="copyBtn" style="display:none;">Скопировать всё извлечённое</button>
@@ -35,10 +56,11 @@
   <script>
     let originalLines = [];
     let textBlocks = [];
+    let japaneseTextBlocks = [];
     let undoStack = [];
     let redoStack = [];
     const MAX_HISTORY = 10;
-    let wrapMode = 'remainder'; // 'remainder' или 'equal'
+    let wrapMode = 'remainder';
 
     function getSelections() {
       return Array.from(document.querySelectorAll('#editor textarea')).map(t => ({
@@ -68,10 +90,19 @@
       reader.readAsText(file, 'utf-8');
     });
 
+    document.getElementById('japaneseFileInput').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(evt) {
+            const japaneseLines = evt.target.result.split('\n');
+            extractJapaneseTexts(japaneseLines);
+        };
+        reader.readAsText(file, 'utf-8');
+    });
+
     function extractTexts() {
       textBlocks = [];
-      const editor = document.getElementById('editor');
-      editor.innerHTML = '';
       const textCmdRegex = /^\s*ShowText\(\[(.*)\]\)/;
       originalLines.forEach((line, idx) => {
         const match = line.match(textCmdRegex);
@@ -82,8 +113,30 @@
         }
       });
       renderTextBlocks();
-      document.getElementById('saveBtn').style.display = textBlocks.length > 0 ? '' : 'none';
-      document.getElementById('copyBtn').style.display = textBlocks.length > 0 ? '' : 'none';
+    }
+
+    function extractJapaneseTexts(lines) {
+        const tempBlocks = [];
+        const textCmdRegex = /^\s*ShowText\(\["(.*)"\]\)/;
+        const nameRegex = /^【.*】$/;
+        lines.forEach((line) => {
+            const match = line.match(textCmdRegex);
+            if (match) {
+                tempBlocks.push(match[1]);
+            }
+        });
+        japaneseTextBlocks = [];
+        for (let i = 0; i < tempBlocks.length; i++) {
+            const currentText = tempBlocks[i];
+            if (nameRegex.test(currentText) && (i + 1 < tempBlocks.length)) {
+                const nextText = tempBlocks[i+1];
+                japaneseTextBlocks.push({ text: `${currentText}\n${nextText}` });
+                i++;
+            } else {
+                japaneseTextBlocks.push({ text: currentText });
+            }
+        }
+        renderTextBlocks();
     }
 
     function pushUndo() {
@@ -95,14 +148,12 @@
       redoStack = [];
     }
 
-    // --- ЕДИНАЯ ГЛАВНАЯ ФУНКЦИЯ-ПОМОЩНИК (ИСПРАВЛЕНА) ---
     function getGameTextInfo(txt) {
       const result = {
         rawGameText: txt,
         nameAndPrefix: '',
         isCorrupted: false
       };
-
       const hasTagHint = /<@@C/.test(txt);
       const validNameTagRegex = /<@@C\[\d+\](?:.*?)@@C\[\d+\]>/;
       const hasValidTag = validNameTagRegex.test(txt);
@@ -117,7 +168,6 @@
           const prefix = fullMatch[1] || '';
           const nameTag = fullMatch[2] || '';
           const dialogue = fullMatch[3] || '';
-
           if (prefix || nameTag) {
               result.nameAndPrefix = prefix + nameTag;
               result.rawGameText = dialogue;
@@ -131,31 +181,58 @@
       editor.innerHTML = '';
       document.getElementById('undoBtn').disabled = undoStack.length === 0;
       document.getElementById('redoBtn').disabled = redoStack.length === 0;
+      document.getElementById('saveBtn').style.display = textBlocks.length > 0 ? '' : 'none';
+      document.getElementById('copyBtn').style.display = textBlocks.length > 0 ? '' : 'none';
 
       if (textBlocks.length === 0) {
-        editor.innerHTML = '<p>Внутриигровой текст не найден.</p>';
+        editor.innerHTML = '<p>Загрузите файл для перевода.</p>';
         return;
       }
       
+      let japIdx = 0;
+
       textBlocks.forEach((block, i) => {
         const div = document.createElement('div');
         div.className = 'block';
         const label = document.createElement('label');
-        label.textContent = `ShowText [строка ${block.idx+1}]:`;
+        label.textContent = block.idx !== undefined ? `ShowText [строка ${block.idx+1}]:` : 'ShowText [продолжение]:';
         div.appendChild(label);
-        div.appendChild(document.createElement('br'));
+        
+        // --- ФИНАЛЬНЫЙ АЛГОРИТМ СИНХРОНИЗАЦИИ ---
+        const ruHasName = /<@@C\[\d+\]/.test(block.text);
+        
+        // Показываем японский текст только если тип русской строки совпадает с типом японской
+        if (japIdx < japaneseTextBlocks.length) {
+            const japText = japaneseTextBlocks[japIdx].text;
+            const japHasName = /^【.*】/.test(japText);
+
+            if (japHasName === ruHasName) {
+                const pre = document.createElement('pre');
+                pre.className = 'japanese-original';
+                pre.textContent = japText.replace(/\\n/g, '\n');
+                div.appendChild(pre);
+                japIdx++; // Продвигаем счётчик, так как мы использовали этот блок
+            }
+        }
+        
         const textarea = document.createElement('textarea');
         textarea.value = block.text;
         textarea.setAttribute('data-block', i);
-        textarea.style.width = '100%';
-        textarea.style.height = '60px';
+        div.appendChild(textarea);
+
         const counter = document.createElement('div');
         counter.style.fontSize = '12px';
         counter.style.color = '#888';
         counter.style.margin = '2px 0 6px 0';
+        div.appendChild(counter);
+
         const plusBtn = document.createElement('button');
         const minusBtn = document.createElement('button');
-
+        
+        div.appendChild(document.createElement('br'));
+        div.appendChild(plusBtn);
+        div.appendChild(minusBtn);
+        
         function updateAll() {
           const text = textarea.value;
           const info = getGameTextInfo(text);
@@ -177,7 +254,7 @@
           let selGame = 0;
 
           if (sel > 0 && selStart >= nameLen && selEnd >= nameLen) {
-            selGame = Math.abs(selEnd - selStart);
+            selGame = selEnd - nameLen;
           } else if (sel > 0 && selEnd > nameLen && selStart < nameLen) {
             selGame = selEnd - nameLen;
             if (selGame < 0) selGame = 0;
@@ -204,9 +281,6 @@
           }
         });
         textarea.addEventListener('select', updateAll);
-        
-        div.appendChild(textarea);
-        div.appendChild(counter);
         
         plusBtn.textContent = '+';
         plusBtn.style.marginTop = '4px';
@@ -248,29 +322,17 @@
 
           textarea.value = namePart + acc.trimEnd();
           textBlocks[i].text = textarea.value;
-          textBlocks.splice(i+1, 0, {
-            idx: textBlocks[i].idx + 1,
-            text: rest.trimStart()
-          });
-          for (let j = i+2; j < textBlocks.length; j++) {
-            textBlocks[j].idx += 1;
-          }
+          textBlocks.splice(i + 1, 0, { text: rest.trimStart() });
           renderTextBlocks();
         };
-        div.appendChild(document.createElement('br'));
-        div.appendChild(plusBtn);
         
         minusBtn.textContent = '-';
         minusBtn.style.marginLeft = '8px';
         minusBtn.onclick = function() {
           pushUndo();
           textBlocks.splice(i, 1);
-          for (let j = i; j < textBlocks.length; j++) {
-            textBlocks[j].idx -= 1;
-          }
           renderTextBlocks();
         };
-        div.appendChild(minusBtn);
         
         updateAll();
         editor.appendChild(div);
@@ -297,24 +359,47 @@
     }
 
     document.getElementById('saveBtn').onclick = function() {
-      document.querySelectorAll('textarea[data-block]').forEach(ta => {
-        const idx = +ta.dataset.block;
-        textBlocks[idx].text = ta.value;
-      });
-      let newLines = [...originalLines];
-      textBlocks.forEach(block => {
-        let newText = block.text.replace(/@/g, '\\').replace(/\n/g, '\\n').replace(/"/g, '\\"');
-        newLines[block.idx] = newLines[block.idx].replace(/\[(.*)\]/, `["${newText}"]`);
-      });
-      const blob = new Blob([newLines.join('\n')], {type: 'text/plain'});
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = 'Map001_edited.txt';
-      a.click();
+        let linesToSave = [...originalLines];
+        let insertOffset = 0; // Смещение для вставки новых строк
+
+        textBlocks.forEach(block => {
+            if (block.idx !== undefined) {
+                // Это оригинальный блок, обновляем его
+                const originalLineIndex = block.idx;
+                const newText = block.text.replace(/@/g, '\\').replace(/\n/g, '\\n').replace(/"/g, '\\"');
+                linesToSave[originalLineIndex + insertOffset] = originalLines[originalLineIndex].replace(/\[(.*)\]/, `["${newText}"]`);
+            } else {
+                // Это новая, добавленная строка
+                const newText = block.text.replace(/@/g, '\\').replace(/\n/g, '\\n').replace(/"/g, '\\"');
+                // Нам нужно найти индекс предыдущего "главного" блока, чтобы вставить строку после него
+                let lastMainBlockIdx = -1;
+                for (let j = textBlocks.indexOf(block) - 1; j >= 0; j--) {
+                    if (textBlocks[j].idx !== undefined) {
+                        lastMainBlockIdx = textBlocks[j].idx;
+                        break;
+                    }
+                }
+                if (lastMainBlockIdx !== -1) {
+                    linesToSave.splice(lastMainBlockIdx + 1 + insertOffset, 0, `    ShowText(["${newText}"])`);
+                    insertOffset++;
+                }
+            }
+        });
+
+        const blob = new Blob([linesToSave.join('\n')], {type: 'text/plain'});
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'Map001_edited.txt';
+        a.click();
     };
 
     document.getElementById('copyBtn').onclick = function() {
-      let copyText = textBlocks.map(block => `[строка ${block.idx+1}]: ${block.text}`).join('\n\n');
+      let copyText = textBlocks.map(block => {
+        if(block.idx === undefined) {
+            return `[продолжение]: ${block.text}`
+        }
+        return `[строка ${block.idx+1}]: ${block.text}`
+      }).join('\n\n');
       navigator.clipboard.writeText(copyText).then(() => {
         alert('Текст скопирован в буфер обмена!');
       }, () => {
