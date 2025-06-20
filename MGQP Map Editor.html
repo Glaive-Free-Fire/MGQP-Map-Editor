@@ -2,30 +2,44 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <title>Редактор внутриигрового текста карты (ИСПРАВЛЕНО)</title>
+  <title>MGQP Map Editor - Финальная версия</title>
   <style>
     body { font-family: sans-serif; margin: 20px; }
     textarea { width: 100%; height: 60px; }
     .block { margin-bottom: 20px; }
     label { font-weight: bold; }
+    .control-btn {
+        position: fixed;
+        z-index: 1000;
+        font-size: 14px;
+        padding: 4px 12px;
+        border: 1px solid #ccc;
+        background: #f0f0f0;
+        cursor: pointer;
+        border-radius: 4px;
+    }
   </style>
 </head>
 <body>
-  <button id="undoBtn" style="position:fixed;bottom:20px;right:70px;z-index:1000;font-size:20px;padding:4px 12px;">←</button>
-  <button id="redoBtn" style="position:fixed;bottom:20px;right:20px;z-index:1000;font-size:20px;padding:4px 12px;">→</button>
-  <h1>Редактор внутриигрового текста карты (ИСПРАВЛЕНО)</h1>
+  <button id="undoBtn" class="control-btn" style="bottom:20px;right:80px;font-size:20px;">←</button>
+  <button id="redoBtn" class="control-btn" style="bottom:20px;right:30px;font-size:20px;">→</button>
+  <button id="wrapModeBtn" class="control-btn" style="bottom:20px;left:20px;">Режим переноса: Остаточный</button>
+  
+  <h1>MGQP Map Editor</h1>
+  
   <input type="file" id="fileInput" accept=".txt">
   <div id="editor"></div>
   <button id="saveBtn" style="display:none;">Скачать изменённый файл</button>
   <button id="copyBtn" style="display:none;">Скопировать всё извлечённое</button>
+
   <script>
     let originalLines = [];
     let textBlocks = [];
     let undoStack = [];
     let redoStack = [];
     const MAX_HISTORY = 10;
+    let wrapMode = 'remainder'; // 'remainder' или 'equal'
 
-    // Для хранения selection/cursor
     function getSelections() {
       return Array.from(document.querySelectorAll('#editor textarea')).map(t => ({
         selectionStart: t.selectionStart,
@@ -48,7 +62,6 @@
       if (!file) return;
       const reader = new FileReader();
       reader.onload = function(evt) {
-        // Заменяем все обратные слэши на @ для отображения
         originalLines = evt.target.result.replace(/\\/g, '@').split('\n');
         extractTexts();
       };
@@ -60,228 +73,183 @@
       const editor = document.getElementById('editor');
       editor.innerHTML = '';
       const textCmdRegex = /^\s*ShowText\(\[(.*)\]\)/;
-      let blockIdx = 0;
-
       originalLines.forEach((line, idx) => {
         const match = line.match(textCmdRegex);
         if (match) {
-          // Извлекаем текст (возможно, с экранированием)
           let text = match[1];
-          // Убираем кавычки и экранирование
           text = text.replace(/^"(.*)"$/, '$1').replace(/\\n/g, '\n');
-          textBlocks.push({ idx, orig: match[1], text });
-          blockIdx++;
+          textBlocks.push({ idx, text });
         }
       });
-
       renderTextBlocks();
-
-      if (textBlocks.length > 0) {
-        document.getElementById('saveBtn').style.display = '';
-        document.getElementById('copyBtn').style.display = '';
-      } else {
-        editor.innerHTML = '<p>Внутриигровой текст не найден.</p>';
-        document.getElementById('saveBtn').style.display = 'none';
-        document.getElementById('copyBtn').style.display = 'none';
-      }
+      document.getElementById('saveBtn').style.display = textBlocks.length > 0 ? '' : 'none';
+      document.getElementById('copyBtn').style.display = textBlocks.length > 0 ? '' : 'none';
     }
 
     function pushUndo() {
-      // Сохраняем копию текущего состояния textBlocks и selection
       undoStack.push({
         textBlocks: JSON.parse(JSON.stringify(textBlocks)),
         selections: getSelections()
       });
       if (undoStack.length > MAX_HISTORY) undoStack.shift();
-      // После любого действия redoStack сбрасывается
       redoStack = [];
+    }
+
+    // --- ЕДИНАЯ ГЛАВНАЯ ФУНКЦИЯ-ПОМОЩНИК (ИСПРАВЛЕНА) ---
+    function getGameTextInfo(txt) {
+      const result = {
+        rawGameText: txt,
+        nameAndPrefix: '',
+        isCorrupted: false
+      };
+
+      const hasTagHint = /<@@C/.test(txt);
+      const validNameTagRegex = /<@@C\[\d+\](?:.*?)@@C\[\d+\]>/;
+      const hasValidTag = validNameTagRegex.test(txt);
+
+      if (hasTagHint && !hasValidTag) {
+        result.isCorrupted = true;
+        return result;
+      }
+      
+      const fullMatch = txt.match(new RegExp(`^(.*?@@n)?(${validNameTagRegex.source})?(.*)$`));
+      if (fullMatch) {
+          const prefix = fullMatch[1] || '';
+          const nameTag = fullMatch[2] || '';
+          const dialogue = fullMatch[3] || '';
+
+          if (prefix || nameTag) {
+              result.nameAndPrefix = prefix + nameTag;
+              result.rawGameText = dialogue;
+          }
+      }
+      return result;
     }
 
     function renderTextBlocks() {
       const editor = document.getElementById('editor');
       editor.innerHTML = '';
-      // Отключаем/включаем кнопки undo/redo
       document.getElementById('undoBtn').disabled = undoStack.length === 0;
       document.getElementById('redoBtn').disabled = redoStack.length === 0;
+
+      if (textBlocks.length === 0) {
+        editor.innerHTML = '<p>Внутриигровой текст не найден.</p>';
+        return;
+      }
+      
       textBlocks.forEach((block, i) => {
         const div = document.createElement('div');
         div.className = 'block';
-        // Номер строки
         const label = document.createElement('label');
         label.textContent = `ShowText [строка ${block.idx+1}]:`;
         div.appendChild(label);
         div.appendChild(document.createElement('br'));
-        // Текстовое поле
         const textarea = document.createElement('textarea');
         textarea.value = block.text;
         textarea.setAttribute('data-block', i);
         textarea.style.width = '100%';
         textarea.style.height = '60px';
-        // Счётчик символов
         const counter = document.createElement('div');
         counter.style.fontSize = '12px';
         counter.style.color = '#888';
         counter.style.margin = '2px 0 6px 0';
-        
-        function updateCounter() {
-          const info = getGameTextInfo(textarea.value);
-          const total = info.length;
-          let selStart = textarea.selectionStart;
-          let selEnd = textarea.selectionEnd;
-          let sel = Math.abs(selEnd - selStart);
-          let nameLen = 0;
+        const plusBtn = document.createElement('button');
+        const minusBtn = document.createElement('button');
 
-          if (sel > 0 && selStart >= nameLen && selEnd >= nameLen) {
-            sel = Math.abs(selEnd - selStart);
-          } else if (sel > 0 && selEnd > nameLen && selStart < nameLen) {
-            sel = selEnd - nameLen;
-            if (sel < 0) sel = 0;
-          }
+        function updateAll() {
+          const text = textarea.value;
+          const info = getGameTextInfo(text);
+          const len = info.rawGameText.replace(/@/g, '').length;
 
-          if (sel > 0) {
-            counter.textContent = `Игровых символов: ${total} (выделено: ${sel})`;
-          } else {
-            counter.textContent = `Игровых символов: ${total}`;
-          }
-        }
-        updateCounter();
-        
-        function getTextLen(txt) {
-          let gameText = txt;
-          let afterName = null;
-          // Это та же самая логика, что и в работающем счётчике
-          const nameTagRegex = /<@@C\[\d+\].*?@@C\[\d+\]>/;
-
-          let nameMatch = txt.match(new RegExp(`^(.*?@@n)?(${nameTagRegex.source})(.*)$`));
-          if (nameMatch) {
-            afterName = nameMatch[3];
-          } else {
-            let nameMatch2 = txt.match(new RegExp(`^(${nameTagRegex.source})(.*)$`));
-            if (nameMatch2) {
-              afterName = nameMatch2[2];
-            } else {
-              let nMatch = txt.match(/^(.*?@@n)(.*)$/);
-              if (nMatch) {
-                afterName = nMatch[2];
-              }
-            }
-          }
-
-          if (afterName !== null) {
-            gameText = afterName;
-          }
-          return gameText.length;
-        }
-
-        function getGameText(txt) {
-          let gameText = txt;
-          let afterName = null;
-          // ИСПРАВЛЕННОЕ РЕГУЛЯРНОЕ ВЫРАЖЕНИЕ
-          const nameTagRegex = /<@@C\[\d+\].*?@@C\[\d+\]>/;
-
-          let nameMatch = txt.match(new RegExp(`^(.*?@@n)?(${nameTagRegex.source})(.*)$`));
-          if (nameMatch) {
-            afterName = nameMatch[3];
-          } else {
-            let nameMatch2 = txt.match(new RegExp(`^(${nameTagRegex.source})(.*)$`));
-            if (nameMatch2) {
-              afterName = nameMatch2[2];
-            } else {
-              let nMatch = txt.match(/^(.*?@@n)(.*)$/);
-              if (nMatch) {
-                afterName = nMatch[2];
-              }
-            }
-          }
-
-          if (afterName !== null) {
-            gameText = afterName;
-          }
-          return gameText;
-        }
-
-        function updateTextareaStyle() {
-          const txt = textarea.value;
-          const len = getGameText(txt).replace(/@/g, '').length;
-          let isCorrupted = false;
-
-          // --- НОВАЯ ИСПРАВЛЕННАЯ ЛОГИКА ---
-          const hasTagHint = /<@@C/.test(txt);
-          // Это выражение ищет ЛЮБЫЕ символы между кодами цвета, что гораздо надёжнее
-          const validNameTagRegex = /<@@C\[\d+\](.*?)@@C\[\d+\]>/;
-          const hasValidTag = validNameTagRegex.test(txt);
-
-          if (hasTagHint && !hasValidTag) {
-            isCorrupted = true;
-          }
-          // --- КОНЕЦ ---
-
-          if (len > 50 || isCorrupted) {
+          if (len > 50 || info.isCorrupted) {
             textarea.style.background = '#ffd6d6';
             plusBtn.style.display = (len > 50) ? '' : 'none';
           } else {
             textarea.style.background = '';
             plusBtn.style.display = 'none';
           }
+          minusBtn.style.display = (text.trim() === '' && textBlocks.length > 1) ? '' : 'none';
 
-          if (txt.trim() === '' && textBlocks.length > 1) {
-            minusBtn.style.display = '';
-          } else {
-            minusBtn.style.display = 'none';
+          let selStart = textarea.selectionStart;
+          let selEnd = textarea.selectionEnd;
+          let sel = Math.abs(selEnd - selStart);
+          let nameLen = info.nameAndPrefix.length;
+          let selGame = 0;
+
+          if (sel > 0 && selStart >= nameLen && selEnd >= nameLen) {
+            selGame = Math.abs(selEnd - selStart);
+          } else if (sel > 0 && selEnd > nameLen && selStart < nameLen) {
+            selGame = selEnd - nameLen;
+            if (selGame < 0) selGame = 0;
           }
-          updateCounter();
-        }
 
+          if (selGame > 0) {
+            counter.textContent = `Игровых символов: ${len} (выделено: ${selGame})`;
+          } else {
+            counter.textContent = `Игровых символов: ${len}`;
+          }
+        }
+        
         textarea.addEventListener('input', function() {
           pushUndo();
           textBlocks[i].text = textarea.value;
-          updateTextareaStyle();
+          updateAll();
         });
         textarea.addEventListener('keydown', function(e) {
           if (e.ctrlKey && (e.key === 'z' || e.key === 'Z')) {
-            e.preventDefault();
-            document.getElementById('undoBtn').click();
+            e.preventDefault(); document.getElementById('undoBtn').click();
           }
           if (e.ctrlKey && (e.key === 'y' || e.key === 'Y')) {
-            e.preventDefault();
-            document.getElementById('redoBtn').click();
+            e.preventDefault(); document.getElementById('redoBtn').click();
           }
         });
-        textarea.addEventListener('select', function() {
-          updateCounter();
-        });
+        textarea.addEventListener('select', updateAll);
+        
         div.appendChild(textarea);
         div.appendChild(counter);
         
-        const plusBtn = document.createElement('button');
         plusBtn.textContent = '+';
-        plusBtn.style.display = getTextLen(block.text) > 50 ? '' : 'none';
         plusBtn.style.marginTop = '4px';
         plusBtn.onclick = function() {
           pushUndo();
-          const raw = textarea.value;
-          const info = getGameTextInfo(raw);
-          let textPart = info.text;
-          let namePart = raw.substring(0, raw.length - textPart.length);
-          let words = textPart.split(/(\s+)/).filter(Boolean);
+          const info = getGameTextInfo(textarea.value);
+          const namePart = info.nameAndPrefix;
+          const textPart = info.rawGameText;
           let acc = '';
-          let iword = 0;
-          while (iword < words.length) {
-            let testLen = (acc + words[iword]).length;
-            if (testLen > 50) break;
-            acc += words[iword];
-            iword++;
+          let rest = '';
+
+          if (wrapMode === 'equal') {
+            const totalLen = textPart.length;
+            const midPoint = Math.floor(totalLen / 2);
+            let splitIndex = textPart.lastIndexOf(' ', midPoint);
+            if (splitIndex === -1) { 
+                splitIndex = textPart.indexOf(' ', midPoint);
+            }
+            if (splitIndex === -1) {
+                acc = textPart;
+                rest = '';
+            } else {
+                acc = textPart.substring(0, splitIndex);
+                rest = textPart.substring(splitIndex + 1);
+            }
+          } else { 
+            const words = textPart.split(' ');
+            let firstLineWords = [];
+            for (const word of words) {
+                firstLineWords.push(word);
+                if (firstLineWords.join(' ').replace(/@/g, '').length > 50) {
+                    firstLineWords.pop();
+                    break;
+                }
+            }
+            acc = firstLineWords.join(' ');
+            rest = words.slice(firstLineWords.length).join(' ');
           }
-          if (acc.trim() === '' && words.length > 0) {
-            acc = words[0];
-            iword = 1;
-          }
-          let rest = words.slice(iword).join('');
+
           textarea.value = namePart + acc.trimEnd();
           textBlocks[i].text = textarea.value;
           textBlocks.splice(i+1, 0, {
             idx: textBlocks[i].idx + 1,
-            orig: '',
             text: rest.trimStart()
           });
           for (let j = i+2; j < textBlocks.length; j++) {
@@ -292,9 +260,7 @@
         div.appendChild(document.createElement('br'));
         div.appendChild(plusBtn);
         
-        const minusBtn = document.createElement('button');
         minusBtn.textContent = '-';
-        minusBtn.style.display = 'none';
         minusBtn.style.marginLeft = '8px';
         minusBtn.onclick = function() {
           pushUndo();
@@ -305,31 +271,25 @@
           renderTextBlocks();
         };
         div.appendChild(minusBtn);
-        updateTextareaStyle();
+        
+        updateAll();
         editor.appendChild(div);
       });
+
       document.getElementById('undoBtn').onclick = function() {
         if (undoStack.length > 0) {
-          redoStack.push({
-            textBlocks: JSON.parse(JSON.stringify(textBlocks)),
-            selections: getSelections()
-          });
-          if (redoStack.length > MAX_HISTORY) redoStack.shift();
+          redoStack.push({ textBlocks: JSON.parse(JSON.stringify(textBlocks)), selections: getSelections() });
           const state = undoStack.pop();
-          textBlocks = JSON.parse(JSON.stringify(state.textBlocks));
+          textBlocks = state.textBlocks;
           renderTextBlocks();
           setTimeout(() => setSelections(state.selections), 0);
         }
       };
       document.getElementById('redoBtn').onclick = function() {
         if (redoStack.length > 0) {
-          undoStack.push({
-            textBlocks: JSON.parse(JSON.stringify(textBlocks)),
-            selections: getSelections()
-          });
-          if (undoStack.length > MAX_HISTORY) undoStack.shift();
+          undoStack.push({ textBlocks: JSON.parse(JSON.stringify(textBlocks)), selections: getSelections() });
           const state = redoStack.pop();
-          textBlocks = JSON.parse(JSON.stringify(state.textBlocks));
+          textBlocks = state.textBlocks;
           renderTextBlocks();
           setTimeout(() => setSelections(state.selections), 0);
         }
@@ -344,10 +304,7 @@
       let newLines = [...originalLines];
       textBlocks.forEach(block => {
         let newText = block.text.replace(/@/g, '\\').replace(/\n/g, '\\n').replace(/"/g, '\\"');
-        newLines[block.idx] = newLines[block.idx].replace(
-          /\[(.*)\]/,
-          `["${newText}"]`
-        );
+        newLines[block.idx] = newLines[block.idx].replace(/\[(.*)\]/, `["${newText}"]`);
       });
       const blob = new Blob([newLines.join('\n')], {type: 'text/plain'});
       const a = document.createElement('a');
@@ -364,46 +321,21 @@
         alert('Ошибка копирования!');
       });
     };
-
-    // --- ГЛАВНАЯ ФУНКЦИЯ-ПОМОЩНИК ---
-    function getGameTextInfo(txt) {
-      // Возвращает { text, length, isCorrupted }
-      // 1. Проверяем валидный тег имени
-      const validNameTagRegex = /<@@C\[\d+\][\w\s-]*@@C\[\d+\]>/;
-      const hasTagHint = /<@@C/.test(txt);
-      const hasValidTag = validNameTagRegex.test(txt);
-      let isCorrupted = false;
-      let gameText = txt;
-
-      // Логика отделения игрового текста
-      let afterName = null;
-      let nameMatch = txt.match(/^(.*?@@n)?(<@@C\[\d+\][\w\s-]*@@C\[\d+\]>)(.*)$/);
-      if (nameMatch) {
-        afterName = nameMatch[3];
-      } else {
-        let nameMatch2 = txt.match(/^(<@@C\[\d+\][\w\s-]*@@C\[\d+\]>)(.*)$/);
-        if (nameMatch2) {
-          afterName = nameMatch2[2];
+    
+    document.getElementById('wrapModeBtn').onclick = function() {
+        const btn = this;
+        if (wrapMode === 'remainder') {
+            wrapMode = 'equal';
+            btn.textContent = 'Режим переноса: Равный';
+            btn.title = 'Переносится примерно половина слов';
         } else {
-          let nMatch = txt.match(/^(.*?@@n)(.*)$/);
-          if (nMatch) {
-            afterName = nMatch[2];
-          }
+            wrapMode = 'remainder';
+            btn.textContent = 'Режим переноса: Остаточный';
+            btn.title = 'Переносятся только слова, не вмещающиеся в лимит';
         }
-      }
-      if (afterName !== null) {
-        gameText = afterName;
-      }
+    };
+    document.getElementById('wrapModeBtn').title = 'Переносятся только слова, не вмещающиеся в лимит';
 
-      // Проверка на сломанный тег
-      if (hasTagHint && !hasValidTag) {
-        isCorrupted = true;
-      }
-
-      // Итоговая длина без служебных символов
-      const length = gameText.replace(/@/g, '').length;
-      return { text: gameText, length, isCorrupted };
-    }
   </script>
 </body>
 </html>
