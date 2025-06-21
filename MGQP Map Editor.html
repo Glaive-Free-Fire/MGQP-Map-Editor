@@ -34,7 +34,7 @@
 <body>
   <button id="undoBtn" class="control-btn" style="bottom:20px;right:80px;font-size:20px;">←</button>
   <button id="redoBtn" class="control-btn" style="bottom:20px;right:30px;font-size:20px;">→</button>
-  <button id="wrapModeBtn" class="control-btn" style="bottom:20px;left:20px;">Режим переноса: Остаточный</button>
+  <button id="wrapModeBtn" class="control-btn" style="top:20px;right:20px;">Режим переноса: Остаточный</button>
   
   <h1>MGQP Map Editor</h1>
   
@@ -61,6 +61,9 @@
     let redoStack = [];
     const MAX_HISTORY = 10;
     let wrapMode = 'remainder';
+    let japaneseBlockMapping = [];
+    let japBlocks = [];
+    let manualJapaneseMapping = [];
 
     function getSelections() {
       return Array.from(document.querySelectorAll('#editor textarea')).map(t => ({
@@ -101,6 +104,45 @@
         reader.readAsText(file, 'utf-8');
     });
 
+    function resetJapaneseBlockMapping() {
+      // Сопоставляем японские блоки только с подходящими русскими строками (по типу: с именем/без имени)
+      japaneseBlockMapping = [];
+      let used = new Array(textBlocks.length).fill(false);
+      for (let j = 0; j < japaneseTextBlocks.length; j++) {
+        const japText = japaneseTextBlocks[j].text;
+        const japHasName = /^【.*】/.test(japText);
+        let found = false;
+        for (let i = 0; i < textBlocks.length; i++) {
+          if (used[i]) continue;
+          if (textBlocks[i].idx === undefined) continue;
+          const ruHasName = /<@@C\[\d+\]/.test(textBlocks[i].text);
+          if (japHasName === ruHasName) {
+            japaneseBlockMapping[j] = i;
+            used[i] = true;
+            found = true;
+            break;
+          }
+        }
+        if (!found) japaneseBlockMapping[j] = -1;
+      }
+    }
+
+    function moveJapaneseBlock(japIdx, direction) {
+      // direction: -1 (вверх), 1 (вниз)
+      let current = japaneseBlockMapping[japIdx];
+      if (current === -1) return;
+      let i = current + direction;
+      while (i >= 0 && i < textBlocks.length) {
+        // Только главные строки
+        if (textBlocks[i].idx !== undefined && !japaneseBlockMapping.includes(i)) {
+          japaneseBlockMapping[japIdx] = i;
+          renderTextBlocks();
+          return;
+        }
+        i += direction;
+      }
+    }
+
     function extractTexts() {
       textBlocks = [];
       const textCmdRegex = /^\s*ShowText\(\[(.*)\]\)/;
@@ -112,31 +154,97 @@
           textBlocks.push({ idx, text });
         }
       });
+      resetJapaneseBlockMapping();
       renderTextBlocks();
     }
 
     function extractJapaneseTexts(lines) {
-        const tempBlocks = [];
-        const textCmdRegex = /^\s*ShowText\(\["(.*)"\]\)/;
-        const nameRegex = /^【.*】$/;
-        lines.forEach((line) => {
-            const match = line.match(textCmdRegex);
-            if (match) {
-                tempBlocks.push(match[1]);
-            }
-        });
-        japaneseTextBlocks = [];
-        for (let i = 0; i < tempBlocks.length; i++) {
-            const currentText = tempBlocks[i];
-            if (nameRegex.test(currentText) && (i + 1 < tempBlocks.length)) {
-                const nextText = tempBlocks[i+1];
-                japaneseTextBlocks.push({ text: `${currentText}\n${nextText}` });
-                i++;
-            } else {
-                japaneseTextBlocks.push({ text: currentText });
-            }
+      const tempBlocks = [];
+      const textCmdRegex = /^\s*ShowText\(\["(.*)"\]\)/;
+      lines.forEach((line) => {
+        const match = line.match(textCmdRegex);
+        if (match) { tempBlocks.push(match[1]); }
+      });
+      japBlocks = [];
+      const nameRegex = /^【.*】$/;
+      for (let i = 0; i < tempBlocks.length; i++) {
+        const currentText = tempBlocks[i];
+        if (nameRegex.test(currentText) && (i + 1 < tempBlocks.length)) {
+          const nextText = tempBlocks[i+1];
+          japBlocks.push({ type: 'name', text: `${currentText}\n${nextText}` });
+          i++;
+        } else {
+          japBlocks.push({ type: 'no_name', text: currentText });
         }
+      }
+      linkAndRender();
+    }
+
+    function linkAndRender() {
+      // Очищаем все привязки
+      textBlocks.forEach(block => { delete block.japaneseLink; });
+      if (textBlocks.length === 0 || japBlocks.length === 0) {
         renderTextBlocks();
+        return;
+      }
+      // Находим индексы японских и русских блоков с именем
+      let japNameIndices = [];
+      for (let i = 0; i < japBlocks.length; i++) {
+        if (japBlocks[i].type === 'name') japNameIndices.push(i);
+      }
+      let rusNameIndices = [];
+      for (let i = 0; i < textBlocks.length; i++) {
+        if (/<@@C\[\d+\]/.test(textBlocks[i].text)) rusNameIndices.push(i);
+      }
+      // Добавляем границы для крайних сегментов
+      japNameIndices = [-1, ...japNameIndices, japBlocks.length];
+      rusNameIndices = [-1, ...rusNameIndices, textBlocks.length];
+      // Для каждого сегмента между именами
+      japaneseBlockMapping = [];
+      for (let seg = 0; seg < japNameIndices.length - 1; seg++) {
+        let japStart = japNameIndices[seg];
+        let japEnd = japNameIndices[seg + 1];
+        let rusStart = rusNameIndices[seg];
+        let rusEnd = rusNameIndices[seg + 1];
+        // Привязываем японские блоки без имени к первым русским без имени в этом сегменте
+        let japNoName = [];
+        for (let j = japStart + 1; j < japEnd; j++) {
+          if (japBlocks[j].type === 'no_name') japNoName.push(j);
+        }
+        let rusNoName = [];
+        for (let r = rusStart + 1; r < rusEnd; r++) {
+          if (!/<@@C\[\d+\]/.test(textBlocks[r].text)) rusNoName.push(r);
+        }
+        for (let k = 0; k < japNoName.length; k++) {
+          let japIdx = japNoName[k];
+          // Если есть ручная привязка — используем её
+          let manualIdx = manualJapaneseMapping[japIdx];
+          if (manualIdx !== undefined && rusNoName.includes(manualIdx)) {
+            textBlocks[manualIdx].japaneseLink = { type: 'no_name', text: japBlocks[japIdx].text };
+            japaneseBlockMapping[japIdx] = manualIdx;
+          } else if (rusNoName[k] !== undefined && !Object.values(manualJapaneseMapping).includes(rusNoName[k])) {
+            textBlocks[rusNoName[k]].japaneseLink = { type: 'no_name', text: japBlocks[japIdx].text };
+            japaneseBlockMapping[japIdx] = rusNoName[k];
+          } else {
+            japaneseBlockMapping[japIdx] = -1;
+          }
+        }
+      }
+      // ЯВНОЕ СОПОСТАВЛЕНИЕ СТРОК С ИМЕНАМИ
+      for (let i = 1; i < japNameIndices.length - 1; i++) {
+        const japIdx = japNameIndices[i];
+        const rusIdx = rusNameIndices[i];
+        if (
+          japBlocks[japIdx] &&
+          japBlocks[japIdx].type === 'name' &&
+          textBlocks[rusIdx] &&
+          /<@@C\[\d+\]/.test(textBlocks[rusIdx].text)
+        ) {
+          textBlocks[rusIdx].japaneseLink = { type: 'name', text: japBlocks[japIdx].text };
+          japaneseBlockMapping[japIdx] = rusIdx;
+        }
+      }
+      renderTextBlocks();
     }
 
     function pushUndo() {
@@ -176,6 +284,37 @@
       return result;
     }
 
+    function moveJapaneseLinkDown(rusIdx) {
+      // Находим японский блок, привязанный к этой строке (только для no_name)
+      let japIdx = -1;
+      for (let i = 0; i < japBlocks.length; i++) {
+        if (japBlocks[i].type === 'no_name' && manualJapaneseMapping[i] === rusIdx) {
+          japIdx = i;
+          break;
+        }
+      }
+      if (japIdx === -1) {
+        // Если нет ручной привязки, ищем по текущему сопоставлению
+        for (let i = 0; i < japBlocks.length; i++) {
+          if (japBlocks[i].type === 'no_name' && japaneseBlockMapping[i] === rusIdx) {
+            japIdx = i;
+            break;
+          }
+        }
+      }
+      if (japIdx === -1) return;
+      // Ищем следующую подходящую строку без имени
+      let nextIdx = rusIdx + 1;
+      while (nextIdx < textBlocks.length) {
+        if (!/<@@C\[\d+\]/.test(textBlocks[nextIdx].text) && !Object.values(manualJapaneseMapping).includes(nextIdx)) {
+          manualJapaneseMapping[japIdx] = nextIdx;
+          linkAndRender();
+          return;
+        }
+        nextIdx++;
+      }
+    }
+
     function renderTextBlocks() {
       const editor = document.getElementById('editor');
       editor.innerHTML = '';
@@ -189,8 +328,6 @@
         return;
       }
       
-      let japIdx = 0;
-
       textBlocks.forEach((block, i) => {
         const div = document.createElement('div');
         div.className = 'block';
@@ -198,21 +335,13 @@
         label.textContent = block.idx !== undefined ? `ShowText [строка ${block.idx+1}]:` : 'ShowText [продолжение]:';
         div.appendChild(label);
         
-        // --- ФИНАЛЬНЫЙ АЛГОРИТМ СИНХРОНИЗАЦИИ ---
-        const ruHasName = /<@@C\[\d+\]/.test(block.text);
-        
-        // Показываем японский текст только если тип русской строки совпадает с типом японской
-        if (japIdx < japaneseTextBlocks.length) {
-            const japText = japaneseTextBlocks[japIdx].text;
-            const japHasName = /^【.*】/.test(japText);
-
-            if (japHasName === ruHasName) {
-                const pre = document.createElement('pre');
-                pre.className = 'japanese-original';
-                pre.textContent = japText.replace(/\\n/g, '\n');
-                div.appendChild(pre);
-                japIdx++; // Продвигаем счётчик, так как мы использовали этот блок
-            }
+        // Показываем японский блок только если есть привязка
+        if (block.japaneseLink) {
+          const japaneseText = block.japaneseLink.text;
+          const pre = document.createElement('pre');
+          pre.className = 'japanese-original';
+          pre.textContent = japaneseText.replace(/\\n/g, '\n');
+          div.appendChild(pre);
         }
         
         const textarea = document.createElement('textarea');
@@ -232,6 +361,18 @@
         div.appendChild(document.createElement('br'));
         div.appendChild(plusBtn);
         div.appendChild(minusBtn);
+        
+        // Кнопка "Доп Строка" для строк без имени, если над ними есть японский блок без имени
+        if (!/<@@C\[\d+\]/.test(block.text) && block.japaneseLink && block.japaneseLink.type === 'no_name') {
+          const extraBtn = document.createElement('button');
+          extraBtn.textContent = 'Доп Строка';
+          extraBtn.title = 'Сместить японский блок на следующую строку';
+          extraBtn.style.marginLeft = '8px';
+          extraBtn.onclick = function() {
+            moveJapaneseLinkDown(i);
+          };
+          div.appendChild(extraBtn);
+        }
         
         function updateAll() {
           const text = textarea.value;
@@ -359,38 +500,48 @@
     }
 
     document.getElementById('saveBtn').onclick = function() {
-        let linesToSave = [...originalLines];
-        let insertOffset = 0; // Смещение для вставки новых строк
-
-        textBlocks.forEach(block => {
-            if (block.idx !== undefined) {
-                // Это оригинальный блок, обновляем его
-                const originalLineIndex = block.idx;
-                const newText = block.text.replace(/@/g, '\\').replace(/\n/g, '\\n').replace(/"/g, '\\"');
-                linesToSave[originalLineIndex + insertOffset] = originalLines[originalLineIndex].replace(/\[(.*)\]/, `["${newText}"]`);
-            } else {
-                // Это новая, добавленная строка
-                const newText = block.text.replace(/@/g, '\\').replace(/\n/g, '\\n').replace(/"/g, '\\"');
-                // Нам нужно найти индекс предыдущего "главного" блока, чтобы вставить строку после него
-                let lastMainBlockIdx = -1;
-                for (let j = textBlocks.indexOf(block) - 1; j >= 0; j--) {
-                    if (textBlocks[j].idx !== undefined) {
-                        lastMainBlockIdx = textBlocks[j].idx;
-                        break;
-                    }
-                }
-                if (lastMainBlockIdx !== -1) {
-                    linesToSave.splice(lastMainBlockIdx + 1 + insertOffset, 0, `    ShowText(["${newText}"])`);
-                    insertOffset++;
-                }
+      document.querySelectorAll('textarea[data-block]').forEach(ta => {
+        const i = +ta.dataset.block;
+        if(textBlocks[i]) textBlocks[i].text = ta.value;
+      });
+      let newLines = [...originalLines];
+      let lineInsertOffset = 0;
+      textBlocks.forEach(block => {
+        if (block.idx !== undefined) {
+          // Это главный блок, обновляем его
+          const newText = block.text.replace(/@/g, '\\').replace(/\n/g, '\\n').replace(/"/g, '\\"');
+          // Сохраняем отступ из оригинальной строки
+          const originalLine = originalLines[block.idx];
+          const indentMatch = originalLine.match(/^(\s*)/);
+          const indent = indentMatch ? indentMatch[1] : '';
+          newLines[block.idx + lineInsertOffset] = originalLine.replace(/\[(.*)\]/, `["${newText}"]`);
+          newLines[block.idx + lineInsertOffset] = indent + newLines[block.idx + lineInsertOffset].trimStart();
+        } else {
+          // Это продолжение, вставляем его как новую строку
+          const newText = block.text.replace(/@/g, '\\').replace(/\n/g, '\\n').replace(/"/g, '\\"');
+          // Находим отступ предыдущей главной строки
+          let lastMainBlockIdx = -1;
+          for (let j = textBlocks.indexOf(block) - 1; j >= 0; j--) {
+            if (textBlocks[j].idx !== undefined) {
+              lastMainBlockIdx = textBlocks[j].idx;
+              break;
             }
-        });
-
-        const blob = new Blob([linesToSave.join('\n')], {type: 'text/plain'});
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = 'Map001_edited.txt';
-        a.click();
+          }
+          let indent = '';
+          if (lastMainBlockIdx !== -1) {
+            const originalLine = originalLines[lastMainBlockIdx];
+            const indentMatch = originalLine.match(/^(\s*)/);
+            indent = indentMatch ? indentMatch[1] : '';
+          }
+          newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, indent + `ShowText(["${newText}"])`);
+          lineInsertOffset++;
+        }
+      });
+      const blob = new Blob([newLines.join('\n')], {type: 'text/plain'});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'Map001_edited.txt';
+      a.click();
     };
 
     document.getElementById('copyBtn').onclick = function() {
