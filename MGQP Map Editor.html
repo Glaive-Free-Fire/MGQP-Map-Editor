@@ -368,10 +368,14 @@
           extraBtn.textContent = 'Доп Строка';
           extraBtn.title = 'Сместить японский блок на следующую строку';
           extraBtn.style.marginLeft = '8px';
+          // Оборачиваем в отдельный div для выравнивания вправо
+          const rightDiv = document.createElement('div');
+          rightDiv.style.float = 'right';
+          rightDiv.appendChild(extraBtn);
           extraBtn.onclick = function() {
             moveJapaneseLinkDown(i);
           };
-          div.appendChild(extraBtn);
+          div.appendChild(rightDiv);
         }
         
         function updateAll() {
