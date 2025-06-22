@@ -1,31 +1,34 @@
 # MGQP Map Editor
-![Version](https://img.shields.io/badge/version-1.2.10-blue)
+![Version](https://img.shields.io/badge/version-1.2.20-blue)
 
-A simple, browser-based, single-file HTML tool designed for **bilingual editing and translation** of in-game dialogue from `MapXXX.txt` files. It provides a user-friendly interface for translators to edit text while respecting character limits and complex formatting tags.
+A simple, browser-based, single-file HTML tool designed for **bilingual editing and translation** of in-game dialogue and other text commands from `MapXXX.txt` files. It provides a user-friendly interface for translators to edit text while respecting character limits and complex formatting tags.
 
 This tool is built to be used offline, running entirely in your web browser without needing a server or internet connection.
 
-## ✨ Features (v1.2.10)
+## ✨ Features (v1.2.20)
 
--   **Bilingual Side-by-Side View:** Load an original Japanese map file to display the original text above each dialogue box for easy reference.
-    -   **Advanced Initial Mapping:** The script automatically performs an initial synchronization by matching dialogue segments between named speakers.
-    -   **Manual Sync Correction:** An **"Доп Строка"** (Extra Line) button appears on dialogue lines, allowing you to manually push the Japanese original text down to the next available slot. This gives you full control to fix synchronization issues caused by splitting lines.
--   **Load Local Files:** Load `MapXXX.txt` files directly from your computer into the browser.
--   **Automatic Dialogue Extraction:** Scans the file and extracts only the `ShowText(["..."])` commands for editing, ignoring all other script logic.
--   **Live Character Counter:** Each text box displays a real-time count of "in-game" characters.
+-   **Expanded Command Parsing:** Automatically extracts not just `ShowText`, but also other key commands for a more complete translation workflow:
+    -   `Display Name` (Имена локаций)
+    -   `ShowChoices` (Варианты выбора)
+    -   `When` (Текст, который отображается при выборе)
+-   **Advanced Bilingual Synchronization:** The core feature for comparing translation with the original.
+    -   **Intelligent Initial Mapping:** The script performs a sophisticated initial sync, matching not only dialogue with/without names but also other command types like `ShowChoices`.
+    -   **Manual Sync Correction:** An **"Доп Строка"** (Extra Line) button provides manual control to fix any synchronization errors by pushing the Japanese text to the next available slot.
+    -   **Missing Translation Alerts:** If the Japanese file contains text that is missing in the translation file, the editor will automatically insert a **"ТРЕБУЕТСЯ ПЕРЕВОД"** (TRANSLATION REQUIRED) placeholder block, ensuring no lines are missed.
+-   **Live Character Counter:** Each text box displays a real-time count of "in-game" characters. For non-dialogue lines, it shows a simple character count.
     -   Ignores invisible control codes like `@@n` (newline).
     -   Ignores character name tags (e.g., `<@@C[6]Name@@C[0]>`).
     -   Ignores special quote symbols (`@`).
--   **Visual Limit Warning:** Text areas automatically turn **red** if the visible character count exceeds the 50-character limit.
+-   **Visual Limit Warning:** Text areas for dialogue automatically turn **red** if the visible character count exceeds the 50-character limit.
 -   **Corrupted Tag Detection:** Automatically highlights text areas in **red** if a character name tag is broken or syntactically incorrect, preventing game-breaking errors.
--   **Advanced Line Splitting:** A **`+`** button appears for long lines to split them. This feature supports two distinct modes:
+-   **Advanced Line Splitting:** A **`+`** button appears for long dialogue lines to split them. This feature supports two distinct modes:
     -   **Remainder Mode:** (Default) Fills the first line up to the 50-character limit and moves only the remaining words to the new line.
-    -   **Equal Mode:** Splits the text into two lines of roughly equal length, which is useful for balancing dialogue.
--   **Wrap Mode Toggle:** A new button in the UI allows you to easily switch between "Remainder" and "Equal" splitting modes.
--   **Empty Line Deletion:** A **`-`** button appears for empty text areas, allowing for easy cleanup of redundant dialogue boxes.
+    -   **Equal Mode:** Splits the text into two lines of roughly equal length.
+-   **Wrap Mode Toggle:** A button in the UI allows you to easily switch between "Remainder" and "Equal" splitting modes.
+-   **Empty Line Deletion:** A **`-`** button appears for empty text areas, allowing for easy cleanup.
 -   **Undo/Redo Support:** Full history support with `Ctrl+Z` / `Ctrl+Y` and on-screen buttons.
 -   **Correct Saving of Split Lines:** Saves your changes into a new `.txt` file. Lines split with the `+` button are correctly saved as new, separate `ShowText` commands in the output file.
--   **Copy Utility:** A button to copy all extracted text blocks to the clipboard for use in other tools.
+-   **Dynamic Filename:** The saved file is automatically named based on the original file (e.g., `Map001.txt` becomes `Map001_edited.txt`).
 
 ## 🚀 How to Use
 
@@ -39,20 +42,19 @@ This tool is built to be used offline, running entirely in your web browser with
 
 ## UI Guide
 
--   **Red Background:** This indicates an error in the text area. It means one of two things:
+-   **Red Background:** Indicates an error in a dialogue box. It means one of two things:
     1.  The in-game character count is **over 50**.
-    2.  The character name tag (e.g., `<@@C[6]...`) is **broken or incomplete**. You must fix the tag syntax to remove the red highlight.
+    2.  The character name tag (e.g., `<@@C[6]...`) is **broken or incomplete**.
 -   **Japanese Original Text:** A non-editable gray box that appears above a translation field when a Japanese source file is loaded. This text is selectable for easy copying.
--   **"Доп Строка" (Extra Line) Button:** This button appears on dialogue lines that have Japanese text above them. If your translation takes up an extra line and pushes the synchronization off, click this button to move the Japanese text down to the next available line.
--   **Character Counter:** Shows `Игровых символов: ##`. This is the final character count that will appear in the game.
--   **`+` Button:** Appears only when the character count is over 50. Click it to intelligently split the line according to the currently selected Wrap Mode.
--   **`-` Button:** Appears only when a text area is completely empty. Click it to remove that `ShowText` command from the file.
+-   **"Доп Строка" (Extra Line) Button:** Appears on dialogue lines that have Japanese text above them. If your translation takes up an extra line and pushes the synchronization off, click this button to move the Japanese text down to the next available slot.
+-   **`+` Button:** Appears only when a dialogue line's character count is over 50. Click it to split the line according to the currently selected Wrap Mode.
+-   **`-` Button:** Appears only when a text area is completely empty. Click it to remove that line from the file.
 -   **Wrap Mode Button:** Located in the top-right corner. Click it to toggle the behavior of the `+` button between "Remainder Split" and "Equal Split".
 
 ## Technical Details
 
 -   The tool is designed to parse text files containing RPG Maker-style event commands.
--   It specifically finds and isolates lines matching the `ShowText(["..."])` pattern.
+-   It finds and isolates lines for various commands, including `ShowText`, `DisplayName`, `ShowChoices`, and `When`.
 -   For safe in-browser editing, it internally converts all backslash (`\`) control characters into at-symbols (`@`) and restores them perfectly upon saving.
 -   Features a segment-based mapping algorithm for initial text synchronization and provides manual controls for fine-tuning.
 
