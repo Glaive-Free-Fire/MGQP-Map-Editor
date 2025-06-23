@@ -1,18 +1,19 @@
 # MGQP Map Editor
-![Version](https://img.shields.io/badge/version-1.2.20-blue)
+![Version](https://img.shields.io/badge/version-1.2.30-blue)
 
 A simple, browser-based, single-file HTML tool designed for **bilingual editing and translation** of in-game dialogue and other text commands from `MapXXX.txt` files. It provides a user-friendly interface for translators to edit text while respecting character limits and complex formatting tags.
 
 This tool is built to be used offline, running entirely in your web browser without needing a server or internet connection.
 
-## ✨ Features (v1.2.20)
+## ✨ Features (v1.2.30)
 
 -   **Expanded Command Parsing:** Automatically extracts not just `ShowText`, but also other key commands for a more complete translation workflow:
     -   `Display Name` (Имена локаций)
     -   `ShowChoices` (Варианты выбора)
     -   `When` (Текст, который отображается при выборе)
+    -   `Script` & `ScriptMore` (для редактирования скриптовых команд)
 -   **Advanced Bilingual Synchronization:** The core feature for comparing translation with the original.
-    -   **Intelligent Initial Mapping:** The script performs a sophisticated initial sync, matching not only dialogue with/without names but also other command types like `ShowChoices`.
+    -   **Intelligent Initial Mapping:** The script performs a sophisticated initial sync by matching dialogue segments between named speakers and by command types.
     -   **Manual Sync Correction:** An **"Доп Строка"** (Extra Line) button provides manual control to fix any synchronization errors by pushing the Japanese text to the next available slot.
     -   **Missing Translation Alerts:** If the Japanese file contains text that is missing in the translation file, the editor will automatically insert a **"ТРЕБУЕТСЯ ПЕРЕВОД"** (TRANSLATION REQUIRED) placeholder block, ensuring no lines are missed.
 -   **Live Character Counter:** Each text box displays a real-time count of "in-game" characters. For non-dialogue lines, it shows a simple character count.
@@ -42,7 +43,7 @@ This tool is built to be used offline, running entirely in your web browser with
 
 ## UI Guide
 
--   **Red Background:** Indicates an error in a dialogue box. It means one of two things:
+-   **Red Background:** This indicates an error in a dialogue box. It means one of two things:
     1.  The in-game character count is **over 50**.
     2.  The character name tag (e.g., `<@@C[6]...`) is **broken or incomplete**.
 -   **Japanese Original Text:** A non-editable gray box that appears above a translation field when a Japanese source file is loaded. This text is selectable for easy copying.
@@ -54,7 +55,7 @@ This tool is built to be used offline, running entirely in your web browser with
 ## Technical Details
 
 -   The tool is designed to parse text files containing RPG Maker-style event commands.
--   It finds and isolates lines for various commands, including `ShowText`, `DisplayName`, `ShowChoices`, and `When`.
+-   It finds and isolates lines for various commands, including `ShowText`, `DisplayName`, `ShowChoices`, `When`, and `Script`.
 -   For safe in-browser editing, it internally converts all backslash (`\`) control characters into at-symbols (`@`) and restores them perfectly upon saving.
 -   Features a segment-based mapping algorithm for initial text synchronization and provides manual controls for fine-tuning.
 
