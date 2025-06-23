@@ -169,6 +169,7 @@
       const whenRegex = /^\s*When\(\[(\d+),\s*"(.*)"\]\)/;
       const scriptRegex = /^\s*Script\(\[(.*)\]\)/;
       const scriptMoreRegex = /^\s*ScriptMore\(\[(.*)\]\)/;
+      const showTextAttrRegex = /^\s*ShowTextAttributes\(\[(.*)\]\)/;
       
       originalLines.forEach((line, idx) => {
         // ShowText
@@ -232,6 +233,13 @@
         match = line.match(scriptMoreRegex);
         if (match) {
           textBlocks.push({ idx, text: match[1], type: 'ScriptMore' });
+          return;
+        }
+
+        // ShowTextAttributes
+        match = line.match(showTextAttrRegex);
+        if (match) {
+          textBlocks.push({ idx, text: match[1], type: 'ShowTextAttributes' });
           return;
         }
       });
@@ -333,7 +341,7 @@
             text: currentBlock.text,
             blockType: 'ShowText'
           });
-        } else {
+            } else {
           // Для других типов блоков просто добавляем их
           japBlocks.push({ 
             type: 'no_name', 
@@ -568,16 +576,23 @@
       }
       
       textBlocks.forEach((block, i) => {
+        // Не отображаем ShowTextAttributes в редакторе
+        if (block.type === 'ShowTextAttributes') return;
         // --- ПРОПУСКАЕМ Display Name, если он не должен отображаться ---
         if (block.type === 'DisplayName') {
-          let japDisplayName = '';
-          if (block.japaneseLink) japDisplayName = block.japaneseLink.text.trim();
-          const ruDisplayName = block.text.trim();
-          // Если оба пустые — не отображаем
-          if (japDisplayName === '' && ruDisplayName === '') return;
-          // Если японский пустой — не отображаем (даже если русский не пустой)
-          if (japDisplayName === '' && ruDisplayName !== '') return;
-          // Если японский не пустой — отображаем всегда (даже если русский пустой)
+          // Если японский файл не загружен — скрываем только если пустой
+          if (!block.japaneseLink) {
+            const ruDisplayName = block.text.trim();
+            if (ruDisplayName === '') return;
+          } else {
+            let japDisplayName = block.japaneseLink.text ? block.japaneseLink.text.trim() : '';
+            const ruDisplayName = block.text.trim();
+            // Если оба пустые — не отображаем
+            if (japDisplayName === '' && ruDisplayName === '') return;
+            // Если японский пустой — не отображаем (даже если русский не пустой)
+            if (japDisplayName === '' && ruDisplayName !== '') return;
+            // Если японский не пустой — отображаем всегда (даже если русский пустой)
+          }
         }
         const div = document.createElement('div');
         div.className = 'block';
@@ -657,42 +672,40 @@
 
         function updateAll() {
           const text = textarea.value;
-          // Разная логика для разных типов блоков
-          if (block.type === 'ShowText') {
-            const info = getGameTextInfo(text);
-            // Новый способ подсчёта: удаляем управляющие коды @@C[...]
+          // Логика для ShowText и [продолжение]
+          if (block.type === 'ShowText' || block.type === undefined) {
+          const info = getGameTextInfo(text);
             const visibleText = info.rawGameText.replace(/@@C\[[^\]]*\]/g, '').replace(/@/g, '');
             const len = visibleText.length;
 
-            if (len > 50 || info.isCorrupted) {
-              textarea.style.background = '#ffd6d6';
-              plusBtn.style.display = (len > 50) ? '' : 'none';
-            } else {
-              textarea.style.background = '';
-              plusBtn.style.display = 'none';
-            }
-            minusBtn.style.display = (text.trim() === '' && textBlocks.length > 1) ? '' : 'none';
+          if (len > 50 || info.isCorrupted) {
+            textarea.style.background = '#ffd6d6';
+            plusBtn.style.display = (len > 50) ? '' : 'none';
+          } else {
+            textarea.style.background = '';
+            plusBtn.style.display = 'none';
+          }
+          minusBtn.style.display = (text.trim() === '' && textBlocks.length > 1) ? '' : 'none';
 
-            let selStart = textarea.selectionStart;
-            let selEnd = textarea.selectionEnd;
-            let sel = Math.abs(selEnd - selStart);
-            let nameLen = info.nameAndPrefix.length;
-            let selGame = 0;
+          let selStart = textarea.selectionStart;
+          let selEnd = textarea.selectionEnd;
+          let sel = Math.abs(selEnd - selStart);
+          let nameLen = info.nameAndPrefix.length;
+          let selGame = 0;
 
-            // Для выделения тоже убираем управляющие коды
-            if (sel > 0 && selStart >= nameLen && selEnd >= nameLen) {
+          if (sel > 0 && selStart >= nameLen && selEnd >= nameLen) {
               const selected = info.rawGameText.substring(selStart - nameLen, selEnd - nameLen);
               selGame = selected.replace(/@@C\[[^\]]*\]/g, '').replace(/@/g, '').length;
-            } else if (sel > 0 && selEnd > nameLen && selStart < nameLen) {
+          } else if (sel > 0 && selEnd > nameLen && selStart < nameLen) {
               const selected = info.rawGameText.substring(0, selEnd - nameLen);
               selGame = selected.replace(/@@C\[[^\]]*\]/g, '').replace(/@/g, '').length;
-              if (selGame < 0) selGame = 0;
-            }
+            if (selGame < 0) selGame = 0;
+          }
 
-            if (selGame > 0) {
-              counter.textContent = `Игровых символов: ${len} (выделено: ${selGame})`;
-            } else {
-              counter.textContent = `Игровых символов: ${len}`;
+          if (selGame > 0) {
+            counter.textContent = `Игровых символов: ${len} (выделено: ${selGame})`;
+          } else {
+            counter.textContent = `Игровых символов: ${len}`;
             }
           } else {
             // Для других типов блоков
@@ -724,18 +737,17 @@
         plusBtn.onclick = function() {
           pushUndo();
           const info = getGameTextInfo(textarea.value);
-          const namePart = info.nameAndPrefix;
-          const textPart = info.rawGameText;
+          let namePart = info.nameAndPrefix;
+          let textPart = info.rawGameText;
           let acc = '';
           let rest = '';
 
+          // Логика разделения текста (остается без изменений)
           if (wrapMode === 'equal') {
             const totalLen = textPart.length;
             const midPoint = Math.floor(totalLen / 2);
             let splitIndex = textPart.lastIndexOf(' ', midPoint);
-            if (splitIndex === -1) { 
-                splitIndex = textPart.indexOf(' ', midPoint);
-            }
+            if (splitIndex === -1) { splitIndex = textPart.indexOf(' ', midPoint); }
             if (splitIndex === -1) {
                 acc = textPart;
                 rest = '';
@@ -757,9 +769,43 @@
             rest = words.slice(firstLineWords.length).join(' ');
           }
 
+          // В первую строку — namePart + acc, во вторую — только rest (без namePart)
           textarea.value = namePart + acc.trimEnd();
           textBlocks[i].text = textarea.value;
-          textBlocks.splice(i + 1, 0, { text: rest.trimStart() });
+
+          // --- Новый механизм разбиения окна ---
+          // 1. Находим начало текущего "окна" (индекс последнего ShowTextAttributes)
+          let windowStartIndex = 0;
+          for (let j = i - 1; j >= 0; j--) {
+            if (textBlocks[j].type === 'ShowTextAttributes') {
+              windowStartIndex = j + 1;
+              break;
+            }
+          }
+          // 2. Считаем строки ShowText в текущем окне до текущего блока
+          let linesInWindow = 0;
+          for (let j = windowStartIndex; j <= i; j++) {
+            if (textBlocks[j].type === 'ShowText' || textBlocks[j].type === undefined) {
+              linesInWindow++;
+            }
+          }
+          // 3. Если мы разделяем 4-ю строку, нужно вставить ShowTextAttributes
+          if (linesInWindow >= 4 && rest.trim() !== '') {
+            // Найти текст последнего атрибута для копирования
+            let attrText = '["",0,0,2]';
+            for (let j = i; j >= 0; j--) {
+              if (textBlocks[j].type === 'ShowTextAttributes') {
+                attrText = textBlocks[j].text;
+                break;
+              }
+            }
+            // Вставляем новый ShowTextAttributes, а затем новую строку ShowText
+            textBlocks.splice(i + 1, 0, { type: 'ShowTextAttributes', text: attrText, idx: undefined, generated: true });
+            textBlocks.splice(i + 2, 0, { text: rest.trimStart(), type: 'ShowText', idx: undefined });
+          } else {
+            // В противном случае, просто добавляем новую строку как продолжение
+            textBlocks.splice(i + 1, 0, { text: rest.trimStart(), type: 'ShowText', idx: undefined });
+          }
           renderTextBlocks();
         };
         
@@ -767,6 +813,12 @@
         minusBtn.style.marginLeft = '8px';
         minusBtn.onclick = function() {
           pushUndo();
+          // Если предыдущий блок — ShowTextAttributes и это первая ShowText после него, удаляем оба
+          if (i > 0 && textBlocks[i].type === 'ShowText' && textBlocks[i - 1].type === 'ShowTextAttributes') {
+            textBlocks.splice(i - 1, 2);
+            renderTextBlocks();
+            return;
+          }
           textBlocks.splice(i, 1);
           renderTextBlocks();
         };
@@ -819,6 +871,9 @@
               const newText = block.text.replace(/@/g, '\\').replace(/\n/g, '\\n').replace(/"/g, '\\"');
               newLine = originalLine.replace(/\[(.*)\]/, `["${newText}"]`);
               break;
+            case 'ShowTextAttributes':
+              newLine = originalLine.replace(/\[(.*)\]/, `[${block.text}]`);
+              break;
             case 'DisplayName':
               const displayText = block.text.replace(/"/g, '\\"');
               newLine = originalLine.replace(/"(.*)"/, `"${displayText}"`);
@@ -848,8 +903,7 @@
           newLines[block.idx + lineInsertOffset] = indent + newLine.trimStart();
           blockIndexMap.set(blockIndex, block.idx + lineInsertOffset);
         } else {
-          // Это продолжение, вставляем его как новую строку (только для ShowText)
-          const newText = block.text.replace(/@/g, '\\').replace(/\n/g, '\\n').replace(/"/g, '\\"');
+          // Это продолжение, вставляем его как новую строку (ShowText или ShowTextAttributes)
           // Находим отступ предыдущей главной строки
           let lastMainBlockIdx = -1;
           for (let j = blockIndex - 1; j >= 0; j--) {
@@ -864,9 +918,16 @@
             const indentMatch = originalLine.match(/^(\s*)/);
             indent = indentMatch ? indentMatch[1] : '';
           }
-          newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, indent + `ShowText(["${newText}"])`);
-          lineInsertOffset++;
-          blockIndexMap.set(blockIndex, lastMainBlockIdx + 1 + lineInsertOffset - 1);
+          if (block.type === 'ShowTextAttributes') {
+            newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, indent + `ShowTextAttributes([${block.text}])`);
+            lineInsertOffset++;
+            blockIndexMap.set(blockIndex, lastMainBlockIdx + 1 + lineInsertOffset - 1);
+          } else {
+            const newText = block.text.replace(/@/g, '\\').replace(/\n/g, '\\n').replace(/"/g, '\\"');
+            newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, indent + `ShowText(["${newText}"])`);
+            lineInsertOffset++;
+            blockIndexMap.set(blockIndex, lastMainBlockIdx + 1 + lineInsertOffset - 1);
+          }
         }
       });
       
