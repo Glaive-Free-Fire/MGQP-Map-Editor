@@ -958,6 +958,9 @@
         newLines.splice(linesToRemove[i], 1);
       }
       
+      // Исправляем все @ на \ во всём файле
+      newLines = newLines.map(line => line.replace(/@/g, '\\'));
+      
       // Формируем имя файла для сохранения
       let saveName = 'Map001_edited.txt';
       if (loadedFileName) {
