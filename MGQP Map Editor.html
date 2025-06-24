@@ -8,9 +8,16 @@
     textarea { width: 100%; height: 60px; box-sizing: border-box; }
     .block { margin-bottom: 20px; padding: 10px; border: 1px solid #ddd; border-radius: 6px; }
     label { font-weight: bold; }
+    .control-panel {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      display: flex;
+      gap: 12px;
+      z-index: 1000;
+    }
     .control-btn {
-        position: fixed;
-        z-index: 1000;
+        position: static;
         font-size: 14px;
         padding: 4px 12px;
         border: 1px solid #ccc;
@@ -32,9 +39,14 @@
   </style>
 </head>
 <body>
-  <button id="undoBtn" class="control-btn" style="bottom:20px;right:80px;font-size:20px;">←</button>
-  <button id="redoBtn" class="control-btn" style="bottom:20px;right:30px;font-size:20px;">→</button>
-  <button id="wrapModeBtn" class="control-btn" style="top:20px;right:20px;">Режим переноса: Остаточный</button>
+  <div class="control-panel">
+    <button id="wrapModeBtn" class="control-btn">Режим переноса: Остаточный</button>
+    <button id="toggleScriptsBtn" class="control-btn">Скрыть Скрипты</button>
+    <button id="undoBtn" class="control-btn" style="font-size:20px;">←</button>
+    <button id="redoBtn" class="control-btn" style="font-size:20px;">→</button>
+    <button id="saveBtn" class="control-btn" style="display:none;">Скачать изменённый файл</button>
+    <button id="copyBtn" class="control-btn" style="display:none;">Скопировать всё извлечённое</button>
+  </div>
   
   <h1>MGQP Map Editor</h1>
   
@@ -50,8 +62,6 @@
   </div>
 
   <div id="editor"></div>
-  <button id="saveBtn" style="display:none;">Скачать изменённый файл</button>
-  <button id="copyBtn" style="display:none;">Скопировать всё извлечённое</button>
 
   <script>
     let originalLines = [];
@@ -65,6 +75,7 @@
     let japBlocks = [];
     let manualJapaneseMapping = [];
     let loadedFileName = '';
+    let hideScripts = true;
 
     function getSelections() {
       return Array.from(document.querySelectorAll('#editor textarea')).map(t => ({
@@ -89,7 +100,7 @@
       loadedFileName = file.name;
       const reader = new FileReader();
       reader.onload = function(evt) {
-        originalLines = evt.target.result.replace(/\\/g, '@').split('\n');
+        originalLines = evt.target.result.split('\n');
         extractTexts();
       };
       reader.readAsText(file, 'utf-8');
@@ -122,7 +133,7 @@
           
           // Для ShowText блоков проверяем наличие имени
           if (textBlocks[i].type === 'ShowText') {
-            const ruHasName = /<@@C\[\d+\]/.test(textBlocks[i].text);
+            const ruHasName = /<∾∾C\[\d+\]/.test(textBlocks[i].text);
             if (japHasName === ruHasName) {
               japaneseBlockMapping[j] = i;
               used[i] = true;
@@ -176,7 +187,7 @@
         let match = line.match(textCmdRegex);
         if (match) {
           let text = match[1];
-          text = text.replace(/^"(.*)"$/, '$1').replace(/\\n/g, '\n');
+          text = text.replace(/^"(.*)"$/, '$1').replace(/\\n/g, '\n').replace(/\\/g, '∾');
           textBlocks.push({ idx, text, type: 'ShowText' });
           return;
         }
@@ -184,7 +195,7 @@
         // Display Name
         match = line.match(displayNameRegex);
         if (match) {
-          let text = match[1];
+          let text = match[1].replace(/\\/g, '∾');
           textBlocks.push({ idx, text, type: 'DisplayName' });
           return;
         }
@@ -196,7 +207,7 @@
           let defaultChoice = match[2];
           // Разбираем варианты выбора
           const choices = choicesText.split('", "').map(choice => 
-            choice.replace(/^"/, '').replace(/"$/, '')
+            choice.replace(/^"/, '').replace(/"$/, '').replace(/\\/g, '∾')
           );
           textBlocks.push({ 
             idx, 
@@ -212,7 +223,7 @@
         match = line.match(whenRegex);
         if (match) {
           let choiceIndex = match[1];
-          let text = match[2];
+          let text = match[2].replace(/\\/g, '∾');
           textBlocks.push({ 
             idx, 
             text, 
@@ -405,7 +416,7 @@
       
       let rusNameIndices = [-1];
       textBlocks.forEach((b, i) => {
-        if (b.type === 'ShowText' && /<@@C\[\d+\]/.test(b.text)) rusNameIndices.push(i);
+        if (b.type === 'ShowText' && /<∾∾C\[\d+\]/.test(b.text)) rusNameIndices.push(i);
       });
       rusNameIndices.push(textBlocks.length);
       
@@ -437,7 +448,7 @@
         
         let rusNoNameIndices = [];
         for (let r = rusStart; r < rusEnd; r++) {
-            if (textBlocks[r].type === 'ShowText' && !/<@@C\[\d+\]/.test(textBlocks[r].text) && !rusLinked[r]) {
+            if (textBlocks[r].type === 'ShowText' && !/<∾∾C\[\d+\]/.test(textBlocks[r].text) && !rusLinked[r]) {
                 rusNoNameIndices.push(r);
             }
         }
@@ -498,25 +509,26 @@
     function getGameTextInfo(txt) {
       const result = {
         rawGameText: txt,
-        nameAndPrefix: '',
+        fullPrefix: '',        // Полный префикс для первой строки (например, @@n<...>), но теперь <∾∾C[...]
+        continuationPrefix: '', // Префикс для строк-продолжений (только <...>)
         isCorrupted: false
       };
-      const hasTagHint = /<@@C/.test(txt);
-      const validNameTagRegex = /<@@C\[\d+\](?:.*?)@@C\[\d+\]>/;
+      const hasTagHint = /<∾∾C/.test(txt);
+      const validNameTagRegex = /<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/;
       const hasValidTag = validNameTagRegex.test(txt);
-
       if (hasTagHint && !hasValidTag) {
         result.isCorrupted = true;
         return result;
       }
-      
-      const fullMatch = txt.match(new RegExp(`^(.*?@@n)?(${validNameTagRegex.source})?(.*)$`));
+      // Обновленный регэксп для разделения @@n и тега имени (с учётом ∾)
+      const fullMatch = txt.match(/^(@@n)?(<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>)?(.*)$/);
       if (fullMatch) {
-          const prefix = fullMatch[1] || '';
-          const nameTag = fullMatch[2] || '';
+          const newlinePrefix = fullMatch[1] || ''; // '@@n' или пустая строка
+          const nameTag = fullMatch[2] || '';       // '<...>' или пустая строка
           const dialogue = fullMatch[3] || '';
-          if (prefix || nameTag) {
-              result.nameAndPrefix = prefix + nameTag;
+          if (newlinePrefix || nameTag) {
+              result.fullPrefix = newlinePrefix + nameTag;
+              result.continuationPrefix = nameTag; // Самое важное: здесь нет '@@n'
               result.rawGameText = dialogue;
           }
       }
@@ -550,7 +562,7 @@
       while (nextIdx < textBlocks.length) {
         if (textBlocks[nextIdx].type === currentBlockType && !Object.values(manualJapaneseMapping).includes(nextIdx)) {
           // Для ShowText дополнительно проверяем отсутствие имени
-          if (currentBlockType === 'ShowText' && /<@@C\[\d+\]/.test(textBlocks[nextIdx].text)) {
+          if (currentBlockType === 'ShowText' && /<∾∾C\[\d+\]/.test(textBlocks[nextIdx].text)) {
             nextIdx++;
             continue;
           }
@@ -576,6 +588,8 @@
       }
       
       textBlocks.forEach((block, i) => {
+        // Скрываем скриптовые строки, если включён режим hideScripts
+        if (hideScripts && (block.type === 'Script' || block.type === 'ScriptMore')) return;
         // Не отображаем ShowTextAttributes в редакторе
         if (block.type === 'ShowTextAttributes') return;
         // --- ПРОПУСКАЕМ Display Name, если он не должен отображаться ---
@@ -675,7 +689,7 @@
           // Логика для ShowText и [продолжение]
           if (block.type === 'ShowText' || block.type === undefined) {
           const info = getGameTextInfo(text);
-            const visibleText = info.rawGameText.replace(/@@C\[[^\]]*\]/g, '').replace(/@/g, '');
+            const visibleText = info.rawGameText.replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/g, '').replace(/∾/g, '');
             const len = visibleText.length;
 
           if (len > 50 || info.isCorrupted) {
@@ -690,15 +704,15 @@
           let selStart = textarea.selectionStart;
           let selEnd = textarea.selectionEnd;
           let sel = Math.abs(selEnd - selStart);
-          let nameLen = info.nameAndPrefix.length;
+          let nameLen = info.fullPrefix ? info.fullPrefix.length : 0;
           let selGame = 0;
 
           if (sel > 0 && selStart >= nameLen && selEnd >= nameLen) {
               const selected = info.rawGameText.substring(selStart - nameLen, selEnd - nameLen);
-              selGame = selected.replace(/@@C\[[^\]]*\]/g, '').replace(/@/g, '').length;
+              selGame = selected.replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/g, '').replace(/∾/g, '').length;
           } else if (sel > 0 && selEnd > nameLen && selStart < nameLen) {
               const selected = info.rawGameText.substring(0, selEnd - nameLen);
-              selGame = selected.replace(/@@C\[[^\]]*\]/g, '').replace(/@/g, '').length;
+              selGame = selected.replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/g, '').replace(/∾/g, '').length;
             if (selGame < 0) selGame = 0;
           }
 
@@ -709,7 +723,7 @@
             }
           } else {
             // Для других типов блоков
-            const len = text.replace(/@/g, '').length;
+            const len = text.replace(/∾/g, '').length;
             textarea.style.background = '';
             plusBtn.style.display = 'none';
             minusBtn.style.display = (text.trim() === '' && textBlocks.length > 1) ? '' : 'none';
@@ -737,7 +751,7 @@
         plusBtn.onclick = function() {
           pushUndo();
           const info = getGameTextInfo(textarea.value);
-          let namePart = info.nameAndPrefix;
+          let namePart = info.fullPrefix;
           let textPart = info.rawGameText;
           let acc = '';
           let rest = '';
@@ -760,7 +774,7 @@
             let firstLineWords = [];
             for (const word of words) {
                 firstLineWords.push(word);
-                if (firstLineWords.join(' ').replace(/@/g, '').length > 50) {
+                if (firstLineWords.join(' ').replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/g, '').replace(/∾/g, '').length > 50) {
                     firstLineWords.pop();
                     break;
                 }
@@ -862,32 +876,32 @@
         if (block.idx !== undefined) {
           // Это главный блок, обновляем его
           const originalLine = originalLines[block.idx];
-          const indentMatch = originalLine.match(/^(\s*)/);
-          const indent = indentMatch ? indentMatch[1] : '';
+          const indentMatch = originalLine.match(/^\s*/);
+          const indent = indentMatch ? indentMatch[0] : '';
           
           let newLine;
           switch (block.type) {
             case 'ShowText':
-              const newText = block.text.replace(/@/g, '\\').replace(/\n/g, '\\n').replace(/"/g, '\\"');
+              const newText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n').replace(/"/g, '\\"');
               newLine = originalLine.replace(/\[(.*)\]/, `["${newText}"]`);
               break;
             case 'ShowTextAttributes':
               newLine = originalLine.replace(/\[(.*)\]/, `[${block.text}]`);
               break;
             case 'DisplayName':
-              const displayText = block.text.replace(/"/g, '\\"');
+              const displayText = block.text.replace(/∾/g, '\\').replace(/"/g, '\\"');
               newLine = originalLine.replace(/"(.*)"/, `"${displayText}"`);
               break;
             case 'ShowChoices':
               // Разбираем текст обратно на варианты выбора
               const choices = block.text.split(' | ');
               const choicesFormatted = choices.map(choice => 
-                `"${choice.replace(/"/g, '\\"')}"`
+                `"${choice.replace(/∾/g, '\\').replace(/"/g, '\\"')}"`
               ).join(', ');
               newLine = originalLine.replace(/\[\[(.*)\],\s*(\d+)\]/, `[[${choicesFormatted}], ${block.defaultChoice || 0}]`);
               break;
             case 'When':
-              const whenText = block.text.replace(/"/g, '\\"');
+              const whenText = block.text.replace(/∾/g, '\\').replace(/"/g, '\\"');
               newLine = originalLine.replace(/\[(\d+),\s*"(.*)"\]/, `[${block.choiceIndex || 0}, "${whenText}"]`);
               break;
             case 'Script':
@@ -915,15 +929,15 @@
           let indent = '';
           if (lastMainBlockIdx !== -1) {
             const originalLine = originalLines[lastMainBlockIdx];
-            const indentMatch = originalLine.match(/^(\s*)/);
-            indent = indentMatch ? indentMatch[1] : '';
+            const indentMatch = originalLine.match(/^\s*/);
+            indent = indentMatch ? indentMatch[0] : '';
           }
           if (block.type === 'ShowTextAttributes') {
             newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, indent + `ShowTextAttributes([${block.text}])`);
             lineInsertOffset++;
             blockIndexMap.set(blockIndex, lastMainBlockIdx + 1 + lineInsertOffset - 1);
           } else {
-            const newText = block.text.replace(/@/g, '\\').replace(/\n/g, '\\n').replace(/"/g, '\\"');
+            const newText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n').replace(/"/g, '\\"');
             newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, indent + `ShowText(["${newText}"])`);
             lineInsertOffset++;
             blockIndexMap.set(blockIndex, lastMainBlockIdx + 1 + lineInsertOffset - 1);
@@ -958,9 +972,6 @@
         newLines.splice(linesToRemove[i], 1);
       }
       
-      // Исправляем все @ на \ во всём файле
-      newLines = newLines.map(line => line.replace(/@/g, '\\'));
-      
       // Формируем имя файла для сохранения
       let saveName = 'Map001_edited.txt';
       if (loadedFileName) {
@@ -979,35 +990,54 @@
     };
 
     document.getElementById('copyBtn').onclick = function() {
-      let copyText = textBlocks.map(block => {
-        if(block.idx === undefined) {
-            return `[продолжение]: ${block.text}`
+      // Регулярное выражение для русских имён
+      const ruNameTagRegex = /<∾∾C\[\d+\]/;
+      // Регулярное выражение для японских имён
+      const japNameRegex = /^【.*】$/;
+      
+      let outputLines = [];
+
+      for (let i = 0; i < textBlocks.length; i++) {
+        const block = textBlocks[i];
+
+        // Пропускаем типы, которые не нужно копировать (например, атрибуты и скрипты)
+        if (block.type === 'ShowTextAttributes' || block.type === 'Script' || block.type === 'ScriptMore') {
+          continue;
         }
-        let typeLabel;
-        switch (block.type) {
-          case 'ShowText':
-            typeLabel = 'ShowText';
-            break;
-          case 'DisplayName':
-            typeLabel = 'Display Name';
-            break;
-          case 'ShowChoices':
-            typeLabel = 'ShowChoices';
-            break;
-          case 'When':
-            typeLabel = 'When';
-            break;
-          case 'Script':
-            typeLabel = 'Script';
-            break;
-            case 'ScriptMore':
-            typeLabel = 'ScriptMore';
-            break;
-          default:
-            typeLabel = 'Unknown';
+
+        let label = '';
+        if (block.idx !== undefined) {
+            let typeLabel = block.type || 'Unknown';
+            // Приводим названия типов к единому стилю для красоты
+            if (block.type === 'DisplayName') typeLabel = 'Display Name';
+            if (block.type === 'ShowChoices') typeLabel = 'ShowChoices';
+            if (block.type === 'ScriptMore') typeLabel = 'ScriptMore';
+            label = `[${typeLabel} строка ${block.idx+1}]: `;
+        } else {
+            label = '[продолжение]: ';
         }
-        return `[${typeLabel} строка ${block.idx+1}]: ${block.text}`
-      }).join('\n\n');
+        
+        const isNameBlock = ruNameTagRegex.test(block.text) || japNameRegex.test(block.text);
+
+        // Если текущий блок ShowText является блоком имени и есть следующая строка
+        if (block.type === 'ShowText' && isNameBlock && (i + 1 < textBlocks.length)) {
+            const nextBlock = textBlocks[i+1];
+            // И если следующий блок - это диалог (а не другое имя или тип)
+            const nextIsDialogue = nextBlock.type === 'ShowText' && !ruNameTagRegex.test(nextBlock.text) && !japNameRegex.test(nextBlock.text);
+            
+            if (nextIsDialogue) {
+                // Объединяем имя и диалог в одну строку
+                outputLines.push(label + `${block.text} ${nextBlock.text}`);
+                i++; // Пропускаем следующую строку, так как мы её уже использовали
+                continue;
+            }
+        }
+        
+        // Для всех остальных случаев просто добавляем блок как есть
+        outputLines.push(label + block.text);
+      }
+
+      const copyText = outputLines.join('\n\n');
       navigator.clipboard.writeText(copyText).then(() => {
         alert('Текст скопирован в буфер обмена!');
       }, () => {
@@ -1028,6 +1058,14 @@
         }
     };
     document.getElementById('wrapModeBtn').title = 'Переносятся только слова, не вмещающиеся в лимит';
+
+    // Кнопка скрытия/отображения скриптов
+    document.getElementById('toggleScriptsBtn').onclick = function() {
+      hideScripts = !hideScripts;
+      this.textContent = hideScripts ? 'Скрыть Скрипты' : 'Показать Скрипты';
+      renderTextBlocks();
+    };
+    document.getElementById('toggleScriptsBtn').title = 'Скрыть или показать строки Script и ScriptMore';
 
   </script>
 </body>
