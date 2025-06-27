@@ -655,6 +655,10 @@
         textarea.setAttribute('data-block', i);
         div.appendChild(textarea);
 
+        // --- Сохраняем ссылку на textarea для дубликат-логики ---
+        block.dom = block.dom || {};
+        block.dom.rusInput = textarea;
+
         const counter = document.createElement('div');
         counter.style.fontSize = '12px';
         counter.style.color = '#888';
@@ -667,6 +671,106 @@
         div.appendChild(document.createElement('br'));
         div.appendChild(plusBtn);
         div.appendChild(minusBtn);
+        
+        // --- Расширенная обработка дубликатов японского текста ---
+        if (block.type === 'ShowText' && block.japaneseLink && block.japaneseLink.text) {
+          try {
+            const currentJap = block.japaneseLink.text.trim();
+            // ищем индекс оригинала, без выхода из функции
+            const origIdx = textBlocks.findIndex((b, idx2) =>
+              idx2 < i &&
+              b.japaneseLink &&
+              b.japaneseLink.text.trim() === currentJap
+            );
+            // если оригинал не найден, просто пропускаем логику дубликата
+            if (origIdx !== -1) {
+              const rusInputEl = block.dom && block.dom.rusInput;
+              if (rusInputEl) {
+                const dupBtn = document.createElement('button');
+                dupBtn.textContent = 'Дубликат';
+                dupBtn.title = `Повтор строки ${textBlocks[origIdx].idx + 1}`;
+                dupBtn.style.marginLeft = '8px';
+                div.appendChild(dupBtn);
+
+                // Функция для получения объединённого текста (в одну строку)
+                const collectText = start => {
+                  let end = start + 1;
+                  while (
+                    end < textBlocks.length &&
+                    textBlocks[end].type === 'ShowText' &&
+                    (!textBlocks[end].japaneseLink || !textBlocks[end].japaneseLink.text.trim())
+                  ) end++;
+                  return textBlocks.slice(start, end)
+                    .map(b => b.dom?.rusInput?.value.trim() || '')
+                    .filter(v => v)
+                    .join(' ');
+                };
+
+                // Функция для получения счётчика символов блока
+                const getCharCount = blockIdx => {
+                  const block = textBlocks[blockIdx];
+                  if (!block || !block.dom?.rusInput) return 0;
+                  
+                  const text = block.dom.rusInput.value;
+                  if (block.type === 'ShowText' || block.type === undefined) {
+                    const info = getGameTextInfo(text);
+                    const visibleText = info.rawGameText.replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/g, '').replace(/∾/g, '').trim();
+                    return visibleText.length;
+                  } else {
+                    return text.replace(/∾/g, '').length;
+                  }
+                };
+
+                // Получаем счётчики символов
+                const origCount = getCharCount(origIdx);
+                const currCount = getCharCount(i);
+
+                // Функция обновления цвета кнопки
+                const updateDupStyle = () => {
+                  const origText = collectText(origIdx);
+                  const currText = collectText(i);
+                  const newOrigCount = getCharCount(origIdx);
+                  const newCurrCount = getCharCount(i);
+                  
+                  // Зеленая, если текст совпадает или счётчики символов равны
+                  if (currText === origText || newCurrCount === newOrigCount) {
+                    dupBtn.style.backgroundColor = '#8f8';
+                  } else {
+                    dupBtn.style.backgroundColor = '#f88';
+                  }
+                };
+
+                // Клик: вставить объединённый текст
+                dupBtn.addEventListener('click', () => {
+                  const origText = collectText(origIdx);
+                  rusInputEl.value = origText;
+                  rusInputEl.dispatchEvent(new Event('input', { bubbles: true }));
+                  updateDupStyle();
+                });
+
+                // Слушатели изменений на всех связанных ShowText
+                const attachListeners = start => {
+                  let end = start + 1;
+                  while (
+                    end < textBlocks.length &&
+                    textBlocks[end].type === 'ShowText' &&
+                    (!textBlocks[end].japaneseLink || !textBlocks[end].japaneseLink.text.trim())
+                  ) end++;
+                  for (let k = start; k < end; k++) {
+                    textBlocks[k].dom?.rusInput?.addEventListener('input', updateDupStyle);
+                  }
+                };
+                attachListeners(origIdx);
+                attachListeners(i);
+
+                // Инициализация цвета
+                updateDupStyle();
+              }
+            }
+          } catch (e) {
+            console.error('Ошибка обработки дубликата на строке', block.idx + 1, e);
+          }
+        }
         
         // Кнопка "Доп Строка" для всех типов блоков с японскими привязками
         if (block.japaneseLink && block.japaneseLink.type === 'no_name') {
@@ -689,7 +793,7 @@
           // Логика для ShowText и [продолжение]
           if (block.type === 'ShowText' || block.type === undefined) {
           const info = getGameTextInfo(text);
-            const visibleText = info.rawGameText.replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/g, '').replace(/∾/g, '');
+            const visibleText = info.rawGameText.replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/g, '').replace(/∾/g, '').trim();
             const len = visibleText.length;
 
           if (len > 50 || info.isCorrupted) {
