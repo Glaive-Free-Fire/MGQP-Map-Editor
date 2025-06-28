@@ -42,8 +42,19 @@
   <div class="control-panel">
     <button id="wrapModeBtn" class="control-btn">Режим переноса: Остаточный</button>
     <button id="toggleScriptsBtn" class="control-btn">Скрыть Скрипты</button>
-    <button id="undoBtn" class="control-btn" style="font-size:20px;">←</button>
-    <button id="redoBtn" class="control-btn" style="font-size:20px;">→</button>
+
+    <!-- Новые кнопки для Undo/Redo -->
+    <button id="undoBtn" class="control-btn" title="Отменить (Ctrl+Z)" style="font-size:20px;">↺</button>
+    <button id="redoBtn" class="control-btn" title="Повторить (Ctrl+Y)" style="font-size:20px;">↻</button>
+
+    <!-- Старые стрелки теперь для навигации по «красным» строкам -->
+    <button id="prevRedBtn" class="control-btn" title="Предыдущая красная строка">←</button>
+    <span style="align-self:center; font-weight:bold; margin:0 6px;">Исправить</span>
+    <button id="nextRedBtn" class="control-btn" title="Следующая красная строка">→</button>
+
+    <!-- новая кнопка для оборачивания выделения в ∿"..."∿ -->
+    <button id="wrapSlashesBtn" class="control-btn" disabled title='Wrap selection in ∿"..."∿'>"\...\"</button>
+
     <button id="saveBtn" class="control-btn" style="display:none;">Скачать изменённый файл</button>
     <button id="copyBtn" class="control-btn" style="display:none;">Скопировать всё извлечённое</button>
   </div>
@@ -64,9 +75,45 @@
   <div id="editor"></div>
 
   <script>
+    // ————————————————————————————————————————————
+    // Кнопка "\...\": обёртывает любой выделенный текст в ∿"…∿"
+    const wrapBtn = document.getElementById('wrapSlashesBtn');
+    // — track which textarea was last focused:
+    let currentTextarea = null;
+    document.addEventListener('focusin', e => {
+      if (e.target.tagName === 'TEXTAREA') currentTextarea = e.target;
+    });
+
+    function updateWrapBtn() {
+      // enable only when we have a textarea with a non-empty selection
+      if (currentTextarea) {
+        wrapBtn.disabled = currentTextarea.selectionStart === currentTextarea.selectionEnd;
+      } else {
+        wrapBtn.disabled = true;
+      }
+    }
+
+    // Обёртывание выделения в ∿"…∿"
+    wrapBtn.addEventListener('click', () => {
+      const textarea = currentTextarea;
+      if (!textarea) return;
+      const start = textarea.selectionStart, end = textarea.selectionEnd;
+      if (start === end) return;
+      const orig = textarea.value;
+      const selected = orig.slice(start, end);
+      const wrapped = `∿"${selected}"∿`;
+      textarea.value = orig.slice(0, start) + wrapped + orig.slice(end);
+      // восстановим курсор после вставки
+      const newPos = start + wrapped.length;
+      textarea.setSelectionRange(newPos, newPos);
+      // обновляем состояние undo, и кнопку
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      updateWrapBtn();
+    });
+    // ————————————————————————————————————————————
+
     let originalLines = [];
     let textBlocks = [];
-    let japaneseTextBlocks = [];
     let undoStack = [];
     let redoStack = [];
     const MAX_HISTORY = 10;
@@ -76,6 +123,10 @@
     let manualJapaneseMapping = [];
     let loadedFileName = '';
     let hideScripts = true;
+
+    // навигация по красным полям: массив найденных индексов и указатель
+    let redIndices = [];
+    let redPointer = -1;
 
     function getSelections() {
       return Array.from(document.querySelectorAll('#editor textarea')).map(t => ({
@@ -118,23 +169,21 @@
     });
 
     function resetJapaneseBlockMapping() {
-      // Сопоставляем японские блоки с подходящими русскими строками
-      japaneseBlockMapping = [];
       let used = new Array(textBlocks.length).fill(false);
       
-      for (let j = 0; j < japaneseTextBlocks.length; j++) {
-        const japText = japaneseTextBlocks[j].text;
-        const japHasName = /^【.*】/.test(japText);
+      for (let j = 0; j < japBlocks.length; j++) {
+        const japText = japBlocks[j].text;
         let found = false;
         
         for (let i = 0; i < textBlocks.length; i++) {
-          if (used[i]) continue;
-          if (textBlocks[i].idx === undefined) continue;
-          
+          // пропускаем уже использованные, без idx и помеченные как generated
+          if (used[i])       { continue; }
+          if (textBlocks[i].idx === undefined) { continue; }
+          if (textBlocks[i].generated) { continue; }
           // Для ShowText блоков проверяем наличие имени
           if (textBlocks[i].type === 'ShowText') {
             const ruHasName = /<∾∾C\[\d+\]/.test(textBlocks[i].text);
-            if (japHasName === ruHasName) {
+            if (ruHasName === /^【.*】$/.test(japText)) {
               japaneseBlockMapping[j] = i;
               used[i] = true;
               found = true;
@@ -149,8 +198,9 @@
             break;
           }
         }
-        
-        if (!found) japaneseBlockMapping[j] = -1;
+        if (!found) {
+          japaneseBlockMapping[j] = -1;
+        }
       }
     }
 
@@ -172,7 +222,6 @@
 
     function extractTexts() {
       textBlocks = [];
-      
       // Регулярные выражения для разных типов строк
       const textCmdRegex = /^\s*ShowText\(\[(.*)\]\)/;
       const displayNameRegex = /^\s*Display Name\s*=\s*"(.*)"/;
@@ -183,29 +232,30 @@
       const showTextAttrRegex = /^\s*ShowTextAttributes\(\[(.*)\]\)/;
       
       originalLines.forEach((line, idx) => {
+        // помечаем, что строка «сгенерирована» (есть "#+")
+        const isGenerated = /#\+/.test(line);
         // ShowText
         let match = line.match(textCmdRegex);
         if (match) {
-          let text = match[1];
-          text = text.replace(/^"(.*)"$/, '$1').replace(/\\n/g, '\n').replace(/\\/g, '∾');
-          textBlocks.push({ idx, text, type: 'ShowText' });
+          let text = match[1]
+            .replace(/^"(.*)"$/, '$1')
+            .replace(/\\n/g, '\n')
+            .replace(/\\/g, '∾');
+          textBlocks.push({ idx, text, type: 'ShowText', generated: isGenerated });
           return;
         }
-        
         // Display Name
         match = line.match(displayNameRegex);
         if (match) {
           let text = match[1].replace(/\\/g, '∾');
-          textBlocks.push({ idx, text, type: 'DisplayName' });
+          textBlocks.push({ idx, text, type: 'DisplayName', generated: isGenerated });
           return;
         }
-        
         // ShowChoices
         match = line.match(showChoicesRegex);
         if (match) {
           let choicesText = match[1];
           let defaultChoice = match[2];
-          // Разбираем варианты выбора
           const choices = choicesText.split('", "').map(choice => 
             choice.replace(/^"/, '').replace(/"$/, '').replace(/\\/g, '∾')
           );
@@ -214,11 +264,11 @@
             text: choices.join(' | '), 
             type: 'ShowChoices',
             choices: choices,
-            defaultChoice: parseInt(defaultChoice)
+            defaultChoice: parseInt(defaultChoice),
+            generated: isGenerated
           });
           return;
         }
-        
         // When
         match = line.match(whenRegex);
         if (match) {
@@ -228,33 +278,30 @@
             idx, 
             text, 
             type: 'When',
-            choiceIndex: parseInt(choiceIndex)
+            choiceIndex: parseInt(choiceIndex),
+            generated: isGenerated
           });
           return;
         }
-        
         // Script
         match = line.match(scriptRegex);
         if (match) {
-          textBlocks.push({ idx, text: match[1], type: 'Script' });
+          textBlocks.push({ idx, text: match[1], type: 'Script', generated: isGenerated });
           return;
         }
-        
         // ScriptMore
         match = line.match(scriptMoreRegex);
         if (match) {
-          textBlocks.push({ idx, text: match[1], type: 'ScriptMore' });
+          textBlocks.push({ idx, text: match[1], type: 'ScriptMore', generated: isGenerated });
           return;
         }
-
         // ShowTextAttributes
         match = line.match(showTextAttrRegex);
         if (match) {
-          textBlocks.push({ idx, text: match[1], type: 'ShowTextAttributes' });
+          textBlocks.push({ idx, text: match[1], type: 'ShowTextAttributes', generated: isGenerated });
           return;
         }
       });
-      
       resetJapaneseBlockMapping();
       renderTextBlocks();
     }
@@ -263,7 +310,9 @@
         const tempBlocks = [];
       
       // Регулярные выражения для разных типов японских строк
-        const textCmdRegex = /^\s*ShowText\(\["(.*)"\]\)/;
+      // Теперь разрешаем пробелы после '[' и перед ']',
+      // и захватываем всё внутри кавычек (ленивый режим)
+      const textCmdRegex = /^\s*ShowText\(\[\s*"([\s\S]*?)"\s*\]\)/;
       const displayNameRegex = /^\s*Display Name\s*=\s*"(.*)"/;
       const showChoicesRegex = /^\s*ShowChoices\(\[\[(.*)\],\s*(\d+)\]\)/;
       const whenRegex = /^\s*When\(\[(\d+),\s*"(.*)"\]\)/;
@@ -369,66 +418,76 @@
     }
 
     function linkAndRender() {
-      // Очищаем все предыдущие привязки
       textBlocks.forEach(block => { delete block.japaneseLink; });
       japaneseBlockMapping = new Array(japBlocks.length).fill(-1);
       manualJapaneseMapping = []; // Сброс ручных привязок при перезагрузке
+
+      // --- собираем только «основные» (оригинальные) русские блоки, у которых idx !== undefined
+      const rusMainIndices = textBlocks.reduce((arr, b, i) => {
+        if (b.idx !== undefined && !b.generated) arr.push(i);
+        return arr;
+      }, []);
+      const rusMainBlocks = rusMainIndices.map(i => textBlocks[i]);
 
       if (textBlocks.length === 0 || japBlocks.length === 0) {
         renderTextBlocks();
         return;
       }
-      
       let rusLinked = new Array(textBlocks.length).fill(false);
 
-      // 1. ПРИОРИТЕТНАЯ ПРИВЯЗКА ДЛЯ НЕ-ShowText БЛОКОВ
-      // Сначала сопоставляем блоки, которые можно идентифицировать однозначно по типу.
+      // 1. ПРИОРИТЕТНАЯ ПРИВЯЗКА ДЛЯ НЕ-ShowText БЛОКОВ, пропуская все сгенерированные
       const blockTypesToMatch = ['DisplayName', 'ShowChoices', 'When', 'Script', 'ScriptMore'];
       blockTypesToMatch.forEach(type => {
         const japIndices = japBlocks.map((b, i) => b.blockType === type ? i : -1).filter(i => i !== -1);
-        const rusIndices = textBlocks.map((b, i) => b.type === type ? i : -1).filter(i => i !== -1);
-        
-        // Сопоставляем по порядку для каждого типа
+        const rusMainTypeIndices = rusMainBlocks
+          .map((b, j) => b.type === type ? j : -1)
+          .filter(j => j !== -1);
+        const rusIndices = rusMainTypeIndices.map(j => rusMainIndices[j]);
         const len = Math.min(japIndices.length, rusIndices.length);
-        for (let i = 0; i < len; i++) {
-          const japIdx = japIndices[i];
-          const rusIdx = rusIndices[i];
-          
-          // Проверяем, что блоки еще не сопоставлены
-          if (japaneseBlockMapping[japIdx] === -1 && !rusLinked[rusIdx]) {
-            // Для "When" и "ShowChoices" можно добавить доп. проверки, но пока достаточно по порядку
-            if (type === 'When' && textBlocks[rusIdx].choiceIndex !== japBlocks[japIdx].choiceIndex) continue;
-            
-            textBlocks[rusIdx].japaneseLink = { type: 'no_name', text: japBlocks[japIdx].text };
-            japaneseBlockMapping[japIdx] = rusIdx;
-            rusLinked[rusIdx] = true;
+        for (let k = 0; k < len; k++) {
+          const japIdx = japIndices[k];
+          const realRusIdx = rusIndices[k];
+          if (typeof realRusIdx === 'number'
+              && textBlocks[realRusIdx]
+              && !textBlocks[realRusIdx].generated
+              && japaneseBlockMapping[japIdx] === -1
+              && !rusLinked[realRusIdx]) {
+            if (type === 'When' && textBlocks[realRusIdx].choiceIndex !== japBlocks[japIdx].choiceIndex) continue;
+            textBlocks[realRusIdx].japaneseLink = { type: 'no_name', text: japBlocks[japIdx].text };
+            japaneseBlockMapping[japIdx] = realRusIdx;
+            rusLinked[realRusIdx] = true;
           }
         }
       });
-      
+
       // 2. СЕГМЕНТАЦИЯ И ПРИВЯЗКА ShowText БЛОКОВ
-      // Теперь работаем только с блоками ShowText, используя "имена" как разделители.
       let japNameIndices = [-1];
       japBlocks.forEach((b, i) => {
         if (b.blockType === 'ShowText' && b.type === 'name') japNameIndices.push(i);
       });
       japNameIndices.push(japBlocks.length);
-      
-      let rusNameIndices = [-1];
-      textBlocks.forEach((b, i) => {
-        if (b.type === 'ShowText' && /<∾∾C\[\d+\]/.test(b.text)) rusNameIndices.push(i);
+
+      // Аналогично — только по оригинальным русским блокам:
+      let rusMainNameIndices = [-1];
+      rusMainBlocks.forEach((b, j) => {
+        if (b.type === 'ShowText' && /<∾∾C\[\d+\]/.test(b.text)) rusMainNameIndices.push(j);
       });
-      rusNameIndices.push(textBlocks.length);
-      
-      // 2.1. Привязка блоков с именами
+      rusMainNameIndices.push(rusMainBlocks.length);
+
+      // 2.1. Привязка блоков с именами (опять же — skip generated)
       for (let i = 1; i < japNameIndices.length - 1; i++) {
         const japIdx = japNameIndices[i];
-        // Ищем соответствующий русский блок с именем, который еще не занят
-        const rusIdx = rusNameIndices[i]
-        if (rusIdx !== undefined && rusIdx !== -1 && !rusLinked[rusIdx]) {
-            textBlocks[rusIdx].japaneseLink = { type: 'name', text: japBlocks[japIdx].text };
-            japaneseBlockMapping[japIdx] = rusIdx;
-            rusLinked[rusIdx] = true;
+        const rusMainIdx = rusMainNameIndices[i];
+        if (Number.isInteger(rusMainIdx) && rusMainIdx >= 0 && rusMainIdx < rusMainIndices.length) {
+          const realRusIdx = rusMainIndices[rusMainIdx];
+          if (realRusIdx !== undefined
+              && textBlocks[realRusIdx]
+              && !textBlocks[realRusIdx].generated
+              && !rusLinked[realRusIdx]) {
+            textBlocks[realRusIdx].japaneseLink = { type: 'name', text: japBlocks[japIdx].text };
+            japaneseBlockMapping[japIdx] = realRusIdx;
+            rusLinked[realRusIdx] = true;
+          }
         }
       }
 
@@ -436,40 +495,43 @@
       for (let seg = 0; seg < japNameIndices.length - 1; seg++) {
         let japStart = japNameIndices[seg] + 1;
         let japEnd = japNameIndices[seg + 1];
-        let rusStart = (rusNameIndices[seg] !== undefined ? rusNameIndices[seg] : -1) + 1;
-        let rusEnd = rusNameIndices[seg + 1] !== undefined ? rusNameIndices[seg + 1] : textBlocks.length;
+        let rusMainStart = (rusMainNameIndices[seg] !== undefined ? rusMainNameIndices[seg] : -1) + 1;
+        let rusMainEnd = rusMainNameIndices[seg + 1] !== undefined ? rusMainNameIndices[seg + 1] : rusMainBlocks.length;
 
         let japNoNameIndices = [];
         for (let j = japStart; j < japEnd; j++) {
-            if (japBlocks[j].blockType === 'ShowText' && japBlocks[j].type === 'no_name' && japaneseBlockMapping[j] === -1) {
-                japNoNameIndices.push(j);
-            }
+          if (japBlocks[j].blockType === 'ShowText' && japBlocks[j].type === 'no_name' && japaneseBlockMapping[j] === -1) {
+            japNoNameIndices.push(j);
+          }
         }
-        
-        let rusNoNameIndices = [];
-        for (let r = rusStart; r < rusEnd; r++) {
-            if (textBlocks[r].type === 'ShowText' && !/<∾∾C\[\d+\]/.test(textBlocks[r].text) && !rusLinked[r]) {
-                rusNoNameIndices.push(r);
-            }
+
+        let rusMainNoNameIndices = [];
+        for (let r = rusMainStart; r < rusMainEnd; r++) {
+          if (rusMainBlocks[r].type === 'ShowText' && !/<∾∾C\[\d+\]/.test(rusMainBlocks[r].text) && !rusLinked[rusMainIndices[r]]) {
+            rusMainNoNameIndices.push(r);
+          }
         }
-        
-        // Сопоставляем по порядку внутри сегмента
-        const len = Math.min(japNoNameIndices.length, rusNoNameIndices.length);
+
+        const len = Math.min(japNoNameIndices.length, rusMainNoNameIndices.length);
         for (let k = 0; k < len; k++) {
           const japIdx = japNoNameIndices[k];
-          const rusIdx = rusNoNameIndices[k];
-          textBlocks[rusIdx].japaneseLink = { type: 'no_name', text: japBlocks[japIdx].text };
-          japaneseBlockMapping[japIdx] = rusIdx;
-          rusLinked[rusIdx] = true;
+          const rusMainNoNameIdx = rusMainNoNameIndices[k];
+          if (Number.isInteger(rusMainNoNameIdx) && rusMainNoNameIdx >= 0 && rusMainNoNameIdx < rusMainIndices.length) {
+            const realRusIdx = rusMainIndices[rusMainNoNameIdx];
+            if (realRusIdx !== undefined
+                && textBlocks[realRusIdx]
+                && !textBlocks[realRusIdx].generated) {
+              textBlocks[realRusIdx].japaneseLink = { type: 'no_name', text: japBlocks[japIdx].text };
+              japaneseBlockMapping[japIdx] = realRusIdx;
+              rusLinked[realRusIdx] = true;
+            }
+          }
         }
       }
-
       // 3. ОБРАБОТКА ОСТАВШИХСЯ ЯПОНСКИХ БЛОКОВ (если для них не нашлось русского)
       for (let j = 0; j < japBlocks.length; j++) {
         if (japaneseBlockMapping[j] === -1) {
-          // Найти место для вставки (по порядку)
           let insertAt = textBlocks.length;
-          // Стараться вставлять после предыдущего найденного блока
           for (let prev = j - 1; prev >= 0; prev--) {
             if (japaneseBlockMapping[prev] !== -1) {
               insertAt = japaneseBlockMapping[prev] + 1;
@@ -485,7 +547,6 @@
           textBlocks.splice(insertAt, 0, newBlock);
           newBlock.japaneseLink = { type: japBlocks[j].type, text: japBlocks[j].text };
           japaneseBlockMapping[j] = insertAt;
-          // Сдвигаем все последующие индексы в mapping
           for (let k = 0; k < japaneseBlockMapping.length; k++) {
             if (k !== j && japaneseBlockMapping[k] >= insertAt) {
               japaneseBlockMapping[k]++;
@@ -493,7 +554,6 @@
           }
         }
       }
-
       renderTextBlocks();
     }
 
@@ -533,45 +593,6 @@
           }
       }
       return result;
-    }
-
-    function moveJapaneseLinkDown(rusIdx) {
-      // Находим японский блок, привязанный к этой строке
-      let japIdx = -1;
-      for (let i = 0; i < japBlocks.length; i++) {
-        if (japBlocks[i].type === 'no_name' && manualJapaneseMapping[i] === rusIdx) {
-          japIdx = i;
-          break;
-        }
-      }
-      if (japIdx === -1) {
-        // Если нет ручной привязки, ищем по текущему сопоставлению
-        for (let i = 0; i < japBlocks.length; i++) {
-          if (japBlocks[i].type === 'no_name' && japaneseBlockMapping[i] === rusIdx) {
-            japIdx = i;
-            break;
-          }
-        }
-      }
-      if (japIdx === -1) return;
-      
-      // Ищем следующую подходящую строку того же типа
-      let nextIdx = rusIdx + 1;
-      const currentBlockType = textBlocks[rusIdx].type;
-      
-      while (nextIdx < textBlocks.length) {
-        if (textBlocks[nextIdx].type === currentBlockType && !Object.values(manualJapaneseMapping).includes(nextIdx)) {
-          // Для ShowText дополнительно проверяем отсутствие имени
-          if (currentBlockType === 'ShowText' && /<∾∾C\[\d+\]/.test(textBlocks[nextIdx].text)) {
-            nextIdx++;
-            continue;
-          }
-          manualJapaneseMapping[japIdx] = nextIdx;
-          linkAndRender();
-          return;
-        }
-        nextIdx++;
-      }
     }
 
     function renderTextBlocks() {
@@ -652,6 +673,11 @@
 
         const textarea = document.createElement('textarea');
         textarea.value = block.text;
+        // вешаем слушатели, чтобы активировать кнопку при выделении
+        textarea.addEventListener('select',  updateWrapBtn);
+        textarea.addEventListener('keyup',   updateWrapBtn);
+        textarea.addEventListener('mouseup', updateWrapBtn);
+        textarea.addEventListener('blur',    updateWrapBtn);
         textarea.setAttribute('data-block', i);
         div.appendChild(textarea);
 
@@ -710,13 +736,26 @@
                 const getCharCount = blockIdx => {
                   const block = textBlocks[blockIdx];
                   if (!block || !block.dom?.rusInput) return 0;
-                  
+
                   const text = block.dom.rusInput.value;
                   if (block.type === 'ShowText' || block.type === undefined) {
                     const info = getGameTextInfo(text);
-                    const visibleText = info.rawGameText.replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/g, '').replace(/∾/g, '').trim();
+
+                    // 1) Убираем «полные» теги <∾∾C[...]>…∾∾C[...]>
+                    // 2) Убираем оставшиеся коды ∾∾C[...]
+                    // 3) Убираем остаточные C[...] (на случай, если «∾» уже срезаны)
+                    // 4) Убираем одиночные символы-разделители ∾
+                    const visibleText = info.rawGameText
+                      .replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/g, '')
+                      .replace(/∾∾C\[\d+\]/g, '')
+                      .replace(/C\[\d+\]/g, '')
+                      .replace(/∾/g, '')
+                      .replace(/∿/g, '')
+                      .trim();
+
                     return visibleText.length;
                   } else {
+                    // Для других типов блоков просто убираем «∾»
                     return text.replace(/∾/g, '').length;
                   }
                 };
@@ -772,58 +811,61 @@
           }
         }
         
-        // Кнопка "Доп Строка" для всех типов блоков с японскими привязками
-        if (block.japaneseLink && block.japaneseLink.type === 'no_name') {
-          const extraBtn = document.createElement('button');
-          extraBtn.textContent = 'Доп Строка';
-          extraBtn.title = 'Сместить японский блок на следующую строку';
-          extraBtn.style.marginLeft = '8px';
-          // Оборачиваем в отдельный div для выравнивания вправо
-          const rightDiv = document.createElement('div');
-          rightDiv.style.float = 'right';
-          rightDiv.appendChild(extraBtn);
-          extraBtn.onclick = function() {
-            moveJapaneseLinkDown(i);
-          };
-          div.appendChild(rightDiv);
-        }
-
         function updateAll() {
           const text = textarea.value;
           // Логика для ShowText и [продолжение]
           if (block.type === 'ShowText' || block.type === undefined) {
-          const info = getGameTextInfo(text);
-            const visibleText = info.rawGameText.replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/g, '').replace(/∾/g, '').trim();
+            const info = getGameTextInfo(text);
+            // Новый способ очистки для подсчёта игровых символов
+            const visibleText = info.rawGameText
+              .replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/g, '')
+              .replace(/∾∾C\[\d+\]/g, '')
+              .replace(/C\[\d+\]/g, '')
+              .replace(/∾/g, '')
+              .replace(/∿/g, '')
+              .trim();
             const len = visibleText.length;
 
-          if (len > 50 || info.isCorrupted) {
-            textarea.style.background = '#ffd6d6';
-            plusBtn.style.display = (len > 50) ? '' : 'none';
-          } else {
-            textarea.style.background = '';
-            plusBtn.style.display = 'none';
-          }
-          minusBtn.style.display = (text.trim() === '' && textBlocks.length > 1) ? '' : 'none';
+            if (len > 50 || info.isCorrupted) {
+              textarea.style.background = '#ffd6d6';
+              plusBtn.style.display = (len > 50) ? '' : 'none';
+            } else {
+              textarea.style.background = '';
+              plusBtn.style.display = 'none';
+            }
+            minusBtn.style.display = (text.trim() === '' && textBlocks.length > 1) ? '' : 'none';
 
-          let selStart = textarea.selectionStart;
-          let selEnd = textarea.selectionEnd;
-          let sel = Math.abs(selEnd - selStart);
-          let nameLen = info.fullPrefix ? info.fullPrefix.length : 0;
-          let selGame = 0;
+            let selStart = textarea.selectionStart;
+            let selEnd = textarea.selectionEnd;
+            let sel = Math.abs(selEnd - selStart);
+            let nameLen = info.fullPrefix ? info.fullPrefix.length : 0;
+            let selGame = 0;
 
-          if (sel > 0 && selStart >= nameLen && selEnd >= nameLen) {
+            if (sel > 0 && selStart >= nameLen && selEnd >= nameLen) {
               const selected = info.rawGameText.substring(selStart - nameLen, selEnd - nameLen);
-              selGame = selected.replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/g, '').replace(/∾/g, '').length;
-          } else if (sel > 0 && selEnd > nameLen && selStart < nameLen) {
+              selGame = selected
+                .replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/g, '')
+                .replace(/∾∾C\[\d+\]/g, '')
+                .replace(/C\[\d+\]/g, '')
+                .replace(/∾/g, '')
+                .replace(/∿/g, '')
+                .length;
+            } else if (sel > 0 && selEnd > nameLen && selStart < nameLen) {
               const selected = info.rawGameText.substring(0, selEnd - nameLen);
-              selGame = selected.replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/g, '').replace(/∾/g, '').length;
-            if (selGame < 0) selGame = 0;
-          }
+              selGame = selected
+                .replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/g, '')
+                .replace(/∾∾C\[\d+\]/g, '')
+                .replace(/C\[\d+\]/g, '')
+                .replace(/∾/g, '')
+                .replace(/∿/g, '')
+                .length;
+              if (selGame < 0) selGame = 0;
+            }
 
-          if (selGame > 0) {
-            counter.textContent = `Игровых символов: ${len} (выделено: ${selGame})`;
-          } else {
-            counter.textContent = `Игровых символов: ${len}`;
+            if (selGame > 0) {
+              counter.textContent = `Игровых символов: ${len} (выделено: ${selGame})`;
+            } else {
+              counter.textContent = `Игровых символов: ${len}`;
             }
           } else {
             // Для других типов блоков
@@ -919,10 +961,10 @@
             }
             // Вставляем новый ShowTextAttributes, а затем новую строку ShowText
             textBlocks.splice(i + 1, 0, { type: 'ShowTextAttributes', text: attrText, idx: undefined, generated: true });
-            textBlocks.splice(i + 2, 0, { text: rest.trimStart(), type: 'ShowText', idx: undefined });
+            textBlocks.splice(i + 2, 0, { text: rest.trimStart(), type: 'ShowText', idx: undefined, generated: true });
           } else {
             // В противном случае, просто добавляем новую строку как продолжение
-            textBlocks.splice(i + 1, 0, { text: rest.trimStart(), type: 'ShowText', idx: undefined });
+            textBlocks.splice(i + 1, 0, { text: rest.trimStart(), type: 'ShowText', idx: undefined, generated: true });
           }
           renderTextBlocks();
         };
@@ -944,6 +986,9 @@
         updateAll();
         editor.appendChild(div);
       });
+
+      // после полной отрисовки — пересчитаем красные строки и включим/выключим стрелки
+      updateRedIndices();
 
       document.getElementById('undoBtn').onclick = function() {
         if (undoStack.length > 0) {
@@ -986,7 +1031,16 @@
           let newLine;
           switch (block.type) {
             case 'ShowText':
-              const newText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n').replace(/"/g, '\\"');
+              // 1) ∿ → placeholder единичного слэша
+              let txt = block.text.replace(/∿/g, '<<ONE>>');
+              // 2) newline → literal "\n" (двойной слэш для движка)
+              txt = txt.replace(/\n/g, '\\n');
+              // 3) любые группы ∾ → двойной слэш "\\"
+              txt = txt.replace(/∾+/g, '\\\\');
+              // 4) возвращаем placeholder → одиночный слэш "\"
+              txt = txt.replace(/<<ONE>>/g, '\\');
+              // 5) эскейпим кавычки
+              const newText = txt.replace(/(?<!\\)"/g, '\\"');
               newLine = originalLine.replace(/\[(.*)\]/, `["${newText}"]`);
               break;
             case 'ShowTextAttributes':
@@ -1037,12 +1091,16 @@
             indent = indentMatch ? indentMatch[0] : '';
           }
           if (block.type === 'ShowTextAttributes') {
-            newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, indent + `ShowTextAttributes([${block.text}])`);
+            newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, indent + `ShowTextAttributes([${block.text}])` + (block.generated ? ' #+' : ''));
             lineInsertOffset++;
             blockIndexMap.set(blockIndex, lastMainBlockIdx + 1 + lineInsertOffset - 1);
           } else {
-            const newText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n').replace(/"/g, '\\"');
-            newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, indent + `ShowText(["${newText}"])`);
+            let cont = block.text.replace(/∿/g, '<<ONE>>');
+            cont = cont.replace(/\n/g, '\\n');
+            cont = cont.replace(/∾+/g, '\\\\');
+            cont = cont.replace(/<<ONE>>/g, '\\');
+            const newText = cont.replace(/(?<!\\)"/g, '\\"');
+            newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, indent + `ShowText(["${newText}"])` + (block.generated ? ' #+' : ''));
             lineInsertOffset++;
             blockIndexMap.set(blockIndex, lastMainBlockIdx + 1 + lineInsertOffset - 1);
           }
@@ -1170,6 +1228,55 @@
       renderTextBlocks();
     };
     document.getElementById('toggleScriptsBtn').title = 'Скрыть или показать строки Script и ScriptMore';
+
+    // Собирает актуальный список индексов красных textarea
+    function updateRedIndices() {
+      redIndices = textBlocks
+        .map((_, i) => i)
+        .filter(i => {
+          const ta = textBlocks[i].dom?.rusInput;
+          return ta && window.getComputedStyle(ta).backgroundColor === 'rgb(255, 214, 214)';
+        });
+      // Если после пересчёта указатель ушёл за пределы — сбросим
+      if (redPointer >= redIndices.length) redPointer = -1;
+
+      // --- управление отключением кнопок ---
+      const prev = document.getElementById('prevRedBtn');
+      const next = document.getElementById('nextRedBtn');
+      const disabled = redIndices.length === 0;
+      prev.disabled = disabled;
+      next.disabled = disabled;
+    }
+
+    function moveToNextRed() {
+      updateRedIndices();
+      if (redIndices.length === 0) return;
+      // переходим к следующему, с циклом
+      redPointer = (redPointer + 1) % redIndices.length;
+      const idx = redIndices[redPointer];
+      const ta = document.querySelector(`textarea[data-block='${idx}']`);
+      ta.scrollIntoView({behavior:'smooth', block:'center'});
+      ta.focus();
+    }
+
+    function moveToPrevRed() {
+      updateRedIndices();
+      if (redIndices.length === 0) return;
+      // если ещё ни разу не двигались назад — ставим в конец
+      if (redPointer < 0) redPointer = 0;
+      redPointer = (redPointer - 1 + redIndices.length) % redIndices.length;
+      const idx = redIndices[redPointer];
+      const ta = document.querySelector(`textarea[data-block='${idx}']`);
+      ta.scrollIntoView({behavior:'smooth', block:'center'});
+      ta.focus();
+    }
+
+    // Привязываем кнопки
+    document.getElementById('nextRedBtn').onclick = moveToNextRed;
+    document.getElementById('prevRedBtn').onclick = moveToPrevRed;
+
+    // Инициализируем состояние стрелок при загрузке
+    updateRedIndices();
 
   </script>
 </body>
