@@ -1049,7 +1049,9 @@
               newLine = originalLine.replace(/\[(.*)\]/, `["${newText}"]`);
               break;
             case 'ShowTextAttributes':
-              newLine = originalLine.replace(/\[(.*)\]/, `[${block.text}]`);
+              // Добавляем #+ только если блок сгенерирован и не связан с японским блоком
+              const needPlus = block.generated && !block.japaneseLink;
+              newLine = originalLine.replace(/\[(.*)\]/, `[${block.text}]`) + (needPlus ? ' #+' : '');
               break;
             case 'DisplayName':
               const displayText = block.text.replace(/∾/g, '\\').replace(/"/g, '\\"');
@@ -1096,7 +1098,9 @@
             indent = indentMatch ? indentMatch[0] : '';
           }
           if (block.type === 'ShowTextAttributes') {
-            newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, indent + `ShowTextAttributes([${block.text}])` + (block.generated ? ' #+' : ''));
+            // Добавляем #+ только если блок сгенерирован и не связан с японским блоком
+            const needPlus = block.generated && !block.japaneseLink;
+            newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, indent + `ShowTextAttributes([${block.text}])` + (needPlus ? ' #+' : ''));
             lineInsertOffset++;
             blockIndexMap.set(blockIndex, lastMainBlockIdx + 1 + lineInsertOffset - 1);
           } else {
@@ -1105,9 +1109,11 @@
             cont = cont.replace(/∾+/g, '\\\\');
             cont = cont.replace(/<<ONE>>/g, '\\');
             cont = cont.replace(/\\{2,}n/g, '\\\\n');
-            cont = cont.replace(/\\(?=[\?\.\!\,—])/g, '');
+            cont = cont.replace(/\\(?=[\?\.!\,—])/g, '');
             let newText = cont.replace(/(?<!\\)"/g, '\\"');
-            newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, indent + `ShowText(["${newText}"])` + (block.generated ? ' #+' : ''));
+            // Добавляем #+ только если блок сгенерирован и не связан с японским блоком
+            const needPlus = block.generated && !block.japaneseLink;
+            newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, indent + `ShowText(["${newText}"])` + (needPlus ? ' #+' : ''));
             lineInsertOffset++;
             blockIndexMap.set(blockIndex, lastMainBlockIdx + 1 + lineInsertOffset - 1);
           }
