@@ -1,11 +1,11 @@
 # MGQP Map Editor
-![Version](https://img.shields.io/badge/version-1.3.0-blue)
+![Version](https://img.shields.io/badge/version-1.3.10-blue)
 
 A simple, browser-based, single-file HTML tool designed for **bilingual editing and translation** of in-game dialogue and other text commands from `MapXXX.txt` files. It provides a user-friendly interface for translators to edit text while respecting character limits and complex formatting tags.
 
 This tool is built to be used offline, running entirely in your web browser without needing a server or internet connection.
 
-## ✨ Features (v1.3.0)
+## ✨ Features (v1.3.10)
 
 -   **Expanded Command Parsing:** Automatically extracts not just `ShowText`, but also other key commands for a more complete translation workflow:
     -   `Display Name` (Имена локаций)
