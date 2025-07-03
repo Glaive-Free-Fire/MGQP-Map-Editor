@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <title>MGQP Map Editor v1.2.50</title>
+  <title>MGQP Map Editor v1.3.10</title>
   <style>
     body { font-family: sans-serif; margin: 20px; }
     textarea { width: 100%; height: 60px; box-sizing: border-box; }
@@ -879,8 +879,41 @@
         
         textarea.addEventListener('input', function() {
           pushUndo();
+          // --- Сохраняем старое значение до обновления ---
+          const oldText = textBlocks[i].text;
+          // ---
           textBlocks[i].text = textarea.value;
           updateAll();
+
+          // --- АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ ИМЕНИ ПЕРСОНАЖА ---
+          // Проверяем, есть ли тег <∾∾C[6]...∾∾C[0]> и японское имя над блоком
+          const nameTagMatch = textarea.value.match(/<∾∾C\[6\](.*?)∾∾C\[0\]>/);
+          if (block.japaneseLink && block.japaneseLink.type === 'name' && nameTagMatch) {
+            const newRuName = nameTagMatch[1];
+            const japName = block.japaneseLink.text.split('\n')[0].trim();
+            // Получаем старое имя из старого значения
+            const prevNameTagMatch = oldText.match(/<∾∾C\[6\](.*?)∾∾C\[0\]>/);
+            const prevRuName = prevNameTagMatch ? prevNameTagMatch[1] : null;
+            // Если имя не изменилось — ничего не делаем
+            if (prevRuName === newRuName) return;
+            // Проходим по всем ShowText с тем же японским именем
+            for (let j = 0; j < textBlocks.length; j++) {
+              if (j === i) continue; // не трогаем текущий
+              const b = textBlocks[j];
+              if (b.type === 'ShowText' && b.japaneseLink && b.japaneseLink.type === 'name') {
+                const bJapName = b.japaneseLink.text.split('\n')[0].trim();
+                if (bJapName === japName) {
+                  // Меняем имя только если оно отличается
+                  b.text = b.text.replace(/(<∾∾C\[6\]).*?(∾∾C\[0\]>)/, `$1${newRuName}$2`);
+                  // Если textarea уже отрисована — обновляем её значение
+                  if (b.dom && b.dom.rusInput) {
+                    b.dom.rusInput.value = b.text;
+                  }
+                }
+              }
+            }
+            // renderTextBlocks(); // Больше не вызываем, чтобы не сбивалась прокрутка
+          }
         });
         textarea.addEventListener('keydown', function(e) {
           if (e.ctrlKey && (e.key === 'z' || e.key === 'Z')) {
