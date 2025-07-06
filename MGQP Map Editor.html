@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <title>MGQP Map Editor v1.3.10</title>
+  <script src="Java scripts/restore-mode.js"></script>
   <style>
     body { font-family: sans-serif; margin: 20px; }
     textarea { width: 100%; height: 60px; box-sizing: border-box; }
@@ -57,6 +58,15 @@
 
     <button id="saveBtn" class="control-btn" style="display:none;">Скачать изменённый файл</button>
     <button id="copyBtn" class="control-btn" style="display:none;">Скопировать всё извлечённое</button>
+
+    <!-- Кнопка восстановления структуры -->
+    <button id="restoreStructBtn" class="control-btn" style="background:#cdf;">Восстановить структуру данных</button>
+
+    <!-- Лампочка и процент совпадения -->
+    <div id="matchLampContainer" style="display:none; text-align:center;">
+      <div id="matchPercent" style="font-size:13px; color:#444;">100%</div>
+      <div id="matchLamp" style="width:22px; height:22px; border-radius:50%; background:#8f8; border:1.5px solid #888; margin:0 auto;"></div>
+    </div>
   </div>
   
   <h1>MGQP Map Editor</h1>
@@ -75,6 +85,9 @@
   <div id="editor"></div>
 
   <script>
+    // Глобальные массивы инициализируем сразу
+    window.textBlocks = window.textBlocks || [];
+    window.japBlocks = window.japBlocks || [];
     // ————————————————————————————————————————————
     // Кнопка "\...\": обёртывает любой выделенный текст в ∿"…∿"
     const wrapBtn = document.getElementById('wrapSlashesBtn');
@@ -151,7 +164,8 @@
       loadedFileName = file.name;
       const reader = new FileReader();
       reader.onload = function(evt) {
-        originalLines = evt.target.result.split('\n');
+        window.originalLines = evt.target.result.split('\n');
+        originalLines = window.originalLines;
         extractTexts();
       };
       reader.readAsText(file, 'utf-8');
@@ -162,8 +176,9 @@
         if (!file) return;
         const reader = new FileReader();
         reader.onload = function(evt) {
-            const japaneseLines = evt.target.result.split('\n');
-            extractJapaneseTexts(japaneseLines);
+            window.japaneseLines = evt.target.result.split('\n');
+            japaneseLines = window.japaneseLines;
+            extractJapaneseTexts(window.japaneseLines);
         };
         reader.readAsText(file, 'utf-8');
     });
@@ -220,8 +235,207 @@
       }
     }
 
+    // Универсальная функция для определения, является ли ShowText блоком с именем
+    function isNameBlock(text) {
+      // Для русского: <∾∾C[6]...∾∾C[0]>
+      // Для японского: 【...】
+      return /<∾∾C\[6\].*?∾∾C\[0\]>/u.test(text) || /^【.*】$/.test(text);
+    }
+
+    // Функция для получения "структурных" блоков
+    function getStructureBlocks(blocks) {
+      // Только основные типы!
+      const allowedTypes = ['ShowText', 'DisplayName', 'ShowChoices', 'When'];
+      return blocks
+        .filter(b => !b.generated)
+        .filter(b => allowedTypes.includes(b.type))
+        .map(b => {
+          if (b.type === 'ShowText') {
+            const isName = isNameBlock(b.text);
+            return ['ShowText', isName];
+          }
+          return [b.type];
+        });
+    }
+
+    // --- Новая функция сравнения CommonEvent по последней инструкции ---
+    function extractRusBlocks(lines) {
+        // Возвращает массив типов по очереди для события (без #+)
+        return lines
+            .filter(line => !line.includes('#+'))
+            .map(line => {
+                if (line.includes('ShowTextAttributes')) return 'ShowTextAttributes';
+                if (line.includes('ShowChoices')) return 'ShowChoices';
+                if (line.includes('When')) return 'When';
+                if (line.includes('Display Name')) return 'DisplayName';
+                if (line.includes('ShowText')) {
+                    // Имя уже встроено в текст
+                    return 'ShowTextWithName';
+                }
+            })
+            .filter(Boolean);
+    }
+    function extractJapBlocks(lines) {
+        // Возвращает массив типов по очереди для события, склеивая пары "имя + текст"
+        const blocks = [];
+        for (let i = 0; i < lines.length; i++) {
+            if (lines[i].includes('ShowText([')) {
+                const nameMatch = lines[i].match(/ShowText\(\["【.*】"\]\)/);
+                if (nameMatch && i + 1 < lines.length && lines[i+1].includes('ShowText([')) {
+                    // Это пара: имя + текст. Склеиваем в один блок.
+                    blocks.push('ShowTextWithName');
+                    i++; // пропускаем следующую, т.к. уже склеили
+                    continue;
+                }
+                blocks.push('ShowTextWithName'); // одиночный ShowText тоже считаем с именем для честного сравнения
+            }
+            if (lines[i].includes('ShowTextAttributes')) blocks.push('ShowTextAttributes');
+            if (lines[i].includes('ShowChoices')) blocks.push('ShowChoices');
+            if (lines[i].includes('When')) blocks.push('When');
+            if (lines[i].includes('Display Name')) blocks.push('DisplayName');
+        }
+        return blocks;
+    }
+    function compareEventStructures(rusLines, japLines) {
+        const rusBlocks = extractRusBlocks(rusLines);
+        const japBlocks = extractJapBlocks(japLines);
+        return {
+            rusStruct: rusBlocks,
+            japStruct: japBlocks,
+            equal: JSON.stringify(rusBlocks) === JSON.stringify(japBlocks),
+            diff: rusBlocks.map((t, i) => [t, japBlocks[i]])
+        };
+    }
+    function parseCommonEventsForCompare(lines) {
+        // Возвращает массив событий: {num, name, lines: [...]} для всего файла
+        const events = [];
+        let currentEvent = null;
+        let inEvent = false;
+        let inPage = false;
+        let eventLines = [];
+        lines.forEach(line => {
+            let ce = line.match(/^CommonEvent (\d+)/);
+            if (ce) {
+                if (currentEvent) {
+                    currentEvent.lines = eventLines.slice();
+                    events.push(currentEvent);
+                }
+                currentEvent = { num: parseInt(ce[1]), name: '', lines: [] };
+                inEvent = true;
+                inPage = false;
+                eventLines = [];
+                return;
+            }
+            if (inEvent && line.match(/^Name\s*=\s*"(.*)"/)) {
+                currentEvent.name = RegExp.$1;
+                return;
+            }
+            if (line.match(/^\s*Page \d+/)) {
+                inPage = true;
+                return;
+            }
+            if (inPage) {
+                eventLines.push(line);
+            }
+        });
+        if (currentEvent) {
+            currentEvent.lines = eventLines.slice();
+            events.push(currentEvent);
+        }
+        return events;
+    }
+    function checkCommonEventStructureSmart(rusLines, japLines) {
+        const ruEvents = parseCommonEventsForCompare(rusLines);
+        const jpEvents = parseCommonEventsForCompare(japLines);
+        // Сопоставляем по номеру события
+        let matches = 0;
+        let mismatches = [];
+        let total = 0;
+        ruEvents.forEach(ruEv => {
+            // Ищем событие с тем же номером
+            const jpEv = jpEvents.find(e => e.num === ruEv.num);
+            if (!jpEv) return; // нет такого события в японском
+            // Сравниваем только если есть ShowText/ShowTextAttributes
+            const ruHasText = ruEv.lines.some(l => l.includes('ShowText'));
+            const jpHasText = jpEv.lines.some(l => l.includes('ShowText'));
+            if (!ruHasText && !jpHasText) return;
+            total++;
+            const cmp = compareEventStructures(ruEv.lines, jpEv.lines);
+            if (cmp.equal) {
+                matches++;
+            } else {
+                mismatches.push({num: ruEv.num, name: ruEv.name, diff: cmp.diff, ru: cmp.rusStruct, jp: cmp.japStruct});
+            }
+        });
+        const percent = total > 0 ? Math.round(matches / total * 100) : 100;
+        return { percent, total, matched: matches, mismatches };
+    }
+
+    function updateMatchLamp() {
+      const lampDiv = document.getElementById('matchLampContainer');
+      if (!window.originalLines || !window.japaneseLines || window.originalLines.length === 0 || window.japaneseLines.length === 0) {
+        lampDiv.style.display = 'none';
+        clearStructMismatchHighlight && clearStructMismatchHighlight();
+        return;
+      }
+      // --- Новая логика сравнения CommonEvent с учётом склейки именных строк ---
+      const result = checkCommonEventStructureSmart(window.originalLines, window.japaneseLines);
+      lampDiv.style.display = '';
+      document.getElementById('matchPercent').textContent = result.percent + '%';
+      const lamp = document.getElementById('matchLamp');
+      lamp.style.background = (result.percent === 100) ? '#8f8' : '#f66';
+      lamp.title = (result.percent === 100)
+        ? 'Структура CommonEvent полностью совпадает'
+        : 'Структура CommonEvent НЕ совпадает';
+      // Подробный отчёт в консоль
+      if (result.mismatches.length > 0) {
+        console.warn('Несовпадающие события:');
+        result.mismatches.forEach(m => {
+          console.warn(`CommonEvent[${m.num}] (${m.name}):`, '\nRU:', m.ru, '\nJP:', m.jp, '\nDIFF:', m.diff);
+        });
+      } else {
+        console.info('Все CommonEvent с ShowText совпадают по структуре!');
+      }
+    }
+
+    // Вспомогательные функции для визуального выделения несовпадающих блоков
+    function highlightStructMismatch(indices) {
+      // Сначала убираем все старые выделения
+      clearStructMismatchHighlight();
+      // Получаем только основные блоки (ShowText, DisplayName, ShowChoices, When, без generated)
+      const allowedTypes = ['ShowText', 'DisplayName', 'ShowChoices', 'When'];
+      let mainBlocks = window.textBlocks
+        .map((b, i) => ({b, i}))
+        .filter(obj => !obj.b.generated && allowedTypes.includes(obj.b.type));
+      indices.forEach(idx => {
+        if (mainBlocks[idx] && mainBlocks[idx].b.dom && mainBlocks[idx].b.dom.rusInput) {
+          mainBlocks[idx].b.dom.rusInput.style.outline = '2px solid #f00';
+        }
+      });
+    }
+    function clearStructMismatchHighlight() {
+      const allowedTypes = ['ShowText', 'DisplayName', 'ShowChoices', 'When'];
+      window.textBlocks.forEach(b => {
+        if (b.dom && b.dom.rusInput && allowedTypes.includes(b.type)) {
+          b.dom.rusInput.style.outline = '';
+        }
+      });
+    }
+
+    let mapDisplayName = '';
+
     function extractTexts() {
-      textBlocks = [];
+      window.textBlocks = textBlocks = [];
+      // --- Парсим Display Name отдельно ---
+      mapDisplayName = '';
+      for (let i = 0; i < originalLines.length; i++) {
+        const match = originalLines[i].match(/^\s*Display Name\s*=\s*"(.*)"/);
+        if (match) {
+          mapDisplayName = match[1];
+          break;
+        }
+      }
+      // --- Далее обычный парсинг, но пропускаем Display Name ---
       // Регулярные выражения для разных типов строк
       const textCmdRegex = /^\s*ShowText\(\[(.*)\]\)/;
       const displayNameRegex = /^\s*Display Name\s*=\s*"(.*)"/;
@@ -230,10 +444,9 @@
       const scriptRegex = /^\s*Script\(\[(.*)\]\)/;
       const scriptMoreRegex = /^\s*ScriptMore\(\[(.*)\]\)/;
       const showTextAttrRegex = /^\s*ShowTextAttributes\(\[(.*)\]\)/;
-      
       originalLines.forEach((line, idx) => {
-        // помечаем, что строка «сгенерирована» (есть "#+")
-        const isGenerated = /#\+/.test(line);
+        // --- Пропускаем Display Name ---
+        if (displayNameRegex.test(line)) return;
         // ShowText
         let match = line.match(textCmdRegex);
         if (match) {
@@ -241,14 +454,7 @@
             .replace(/^"(.*)"$/, '$1')
             .replace(/\\n/g, '\n')
             .replace(/\\/g, '∾');
-          textBlocks.push({ idx, text, type: 'ShowText', generated: isGenerated });
-          return;
-        }
-        // Display Name
-        match = line.match(displayNameRegex);
-        if (match) {
-          let text = match[1].replace(/\\/g, '∾');
-          textBlocks.push({ idx, text, type: 'DisplayName', generated: isGenerated });
+          textBlocks.push({ idx, text, type: 'ShowText', generated: /#\+/.test(line) });
           return;
         }
         // ShowChoices
@@ -265,7 +471,7 @@
             type: 'ShowChoices',
             choices: choices,
             defaultChoice: parseInt(defaultChoice),
-            generated: isGenerated
+            generated: /#\+/.test(line)
           });
           return;
         }
@@ -279,39 +485,41 @@
             text, 
             type: 'When',
             choiceIndex: parseInt(choiceIndex),
-            generated: isGenerated
+            generated: /#\+/.test(line)
           });
           return;
         }
         // Script
         match = line.match(scriptRegex);
         if (match) {
-          textBlocks.push({ idx, text: match[1], type: 'Script', generated: isGenerated });
+          textBlocks.push({ idx, text: match[1], type: 'Script', generated: /#\+/.test(line) });
           return;
         }
         // ScriptMore
         match = line.match(scriptMoreRegex);
         if (match) {
-          textBlocks.push({ idx, text: match[1], type: 'ScriptMore', generated: isGenerated });
+          textBlocks.push({ idx, text: match[1], type: 'ScriptMore', generated: /#\+/.test(line) });
           return;
         }
         // ShowTextAttributes
         match = line.match(showTextAttrRegex);
         if (match) {
-          textBlocks.push({ idx, text: match[1], type: 'ShowTextAttributes', generated: isGenerated });
+          textBlocks.push({ idx, text: match[1], type: 'ShowTextAttributes', generated: /#\+/.test(line) });
           return;
         }
       });
+      // --- определяем оригинальный DisplayName ---
+      window.originalDisplayName = null;
+      // (больше не ищем DisplayName в textBlocks)
       resetJapaneseBlockMapping();
       renderTextBlocks();
+      updateMatchLamp();
     }
 
     function extractJapaneseTexts(lines) {
         const tempBlocks = [];
-      
+      window.japDisplayName = '';
       // Регулярные выражения для разных типов японских строк
-      // Теперь разрешаем пробелы после '[' и перед ']',
-      // и захватываем всё внутри кавычек (ленивый режим)
       const textCmdRegex = /^\s*ShowText\(\[\s*"([\s\S]*?)"\s*\]\)/;
       const displayNameRegex = /^\s*Display Name\s*=\s*"(.*)"/;
       const showChoicesRegex = /^\s*ShowChoices\(\[\[(.*)\],\s*(\d+)\]\)/;
@@ -326,11 +534,10 @@
           tempBlocks.push({ text: match[1], type: 'ShowText', originalIdx: idx });
           return;
         }
-        
-        // Display Name
+        // Display Name (НЕ добавлять в japBlocks)
         match = line.match(displayNameRegex);
         if (match) {
-          tempBlocks.push({ text: match[1], type: 'DisplayName', originalIdx: idx });
+          window.japDisplayName = match[1];
           return;
         }
         
@@ -377,7 +584,7 @@
         }
       });
       
-      japBlocks = [];
+      window.japBlocks = japBlocks = [];
       const nameRegex = /^【.*】$/;
       
       // Обрабатываем ShowText блоки с именами (как раньше)
@@ -414,7 +621,60 @@
         }
       }
       
+      // --- Исключаем Display Name из japBlocks (на всякий случай) ---
+      window.japBlocks = japBlocks = japBlocks.filter(b => b.type !== 'DisplayName');
       linkAndRender();
+      updateMatchLamp();
+    }
+
+    function reorderTextBlocksByJapBlocks() {
+      if (!window.japBlocks || window.japBlocks.length === 0) return;
+      // --- Новый алгоритм: синхронизация по событиям CommonEvent ---
+      if (!window.japaneseLines || !window.originalLines) return;
+      // 1. Парсим японский и русский файлы на массив событий
+      const jpEvents = (typeof parseCommonEventsForCompare === 'function' ? parseCommonEventsForCompare : window.parseCommonEventsForCompare)(window.japaneseLines);
+      const ruEvents = (typeof parseCommonEventsForCompare === 'function' ? parseCommonEventsForCompare : window.parseCommonEventsForCompare)(window.originalLines);
+      let newOrder = [];
+      // 2. Для каждого события из японского файла:
+      jpEvents.forEach((jpEv, evIdx) => {
+        // Найти соответствующее событие в русском по номеру
+        const ruEv = ruEvents.find(e => e.num === jpEv.num);
+        // 3. Парсим japBlocks и textBlocks для этого события
+        // Собираем индексы japBlocks, относящиеся к этому событию
+        let jpStart = jpEv.lines.length > 0 ? jpEv.lines[0] : 0;
+        let jpEnd = jpStart + jpEv.lines.length;
+        // Но japBlocks — это плоский массив, поэтому ищем по mapping
+        // Для каждого блока внутри события:
+        for (let j = 0; j < jpEv.lines.length; j++) {
+          const japBlockIdx = jpStart + j;
+          const jpBlock = window.japBlocks[japBlockIdx];
+          let ruBlock = undefined;
+          if (ruEv && window.japaneseBlockMapping && typeof window.japaneseBlockMapping[japBlockIdx] === 'number' &&
+              isFinite(window.japaneseBlockMapping[japBlockIdx]) &&
+              window.japaneseBlockMapping[japBlockIdx] >= 0 &&
+              window.japaneseBlockMapping[japBlockIdx] < window.textBlocks.length) {
+            ruBlock = window.textBlocks[window.japaneseBlockMapping[japBlockIdx]];
+          }
+          if (ruBlock) {
+            newOrder.push(ruBlock);
+          } else {
+            newOrder.push({
+              text: '',
+              type: jpBlock ? (jpBlock.blockType || 'ShowText') : 'ShowText',
+              idx: undefined,
+              generated: true,
+              japaneseLink: jpBlock ? { type: jpBlock.type, text: jpBlock.text } : undefined
+            });
+          }
+        }
+      });
+      window.textBlocks = newOrder;
+      // ДОназначить japaneseLink для всех блоков, если ещё не назначен
+      for (let i = 0; i < window.textBlocks.length; i++) {
+        if (!window.textBlocks[i].japaneseLink && window.japBlocks && window.japBlocks[i]) {
+          window.textBlocks[i].japaneseLink = { type: window.japBlocks[i].type, text: window.japBlocks[i].text };
+        }
+      }
     }
 
     function linkAndRender() {
@@ -470,7 +730,7 @@
       // Аналогично — только по оригинальным русским блокам:
       let rusMainNameIndices = [-1];
       rusMainBlocks.forEach((b, j) => {
-        if (b.type === 'ShowText' && /<∾∾C\[\d+\]/.test(b.text)) rusMainNameIndices.push(j);
+        if (b.type === 'ShowText' && isNameBlock(b.text)) rusMainNameIndices.push(j);
       });
       rusMainNameIndices.push(rusMainBlocks.length);
 
@@ -507,7 +767,7 @@
 
         let rusMainNoNameIndices = [];
         for (let r = rusMainStart; r < rusMainEnd; r++) {
-          if (rusMainBlocks[r].type === 'ShowText' && !/<∾∾C\[\d+\]/.test(rusMainBlocks[r].text) && !rusLinked[rusMainIndices[r]]) {
+          if (rusMainBlocks[r].type === 'ShowText' && !isNameBlock(rusMainBlocks[r].text) && !rusLinked[rusMainIndices[r]]) {
             rusMainNoNameIndices.push(r);
           }
         }
@@ -554,6 +814,8 @@
           }
         }
       }
+      // --- после всех сопоставлений ---
+      reorderTextBlocksByJapBlocks();
       renderTextBlocks();
     }
 
@@ -608,12 +870,42 @@
         return;
       }
       
+      // --- Display Name сверху ---
+      const displayDiv = document.createElement('div');
+      displayDiv.style.marginBottom = '18px';
+      const label = document.createElement('label');
+      label.textContent = 'Display Name:';
+      label.style.fontWeight = 'bold';
+      label.style.marginRight = '8px';
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.id = 'mapDisplayName';
+      input.value = mapDisplayName;
+      input.style.width = '60%';
+      input.style.fontSize = '16px';
+      input.style.padding = '4px 8px';
+      input.style.marginLeft = '8px';
+      input.addEventListener('input', function() {
+        mapDisplayName = this.value;
+      });
+      displayDiv.appendChild(label);
+      displayDiv.appendChild(input);
+      // --- Показываем японский Display Name для справки ---
+      if (window.japDisplayName) {
+        const jpSpan = document.createElement('span');
+        jpSpan.style.color = '#888';
+        jpSpan.style.marginLeft = '10px';
+        jpSpan.textContent = ` (JP: ${window.japDisplayName})`;
+        displayDiv.appendChild(jpSpan);
+      }
+      editor.appendChild(displayDiv);
+      
       textBlocks.forEach((block, i) => {
         // Скрываем скриптовые строки, если включён режим hideScripts
         if (hideScripts && (block.type === 'Script' || block.type === 'ScriptMore')) return;
         // Не отображаем ShowTextAttributes в редакторе
         if (block.type === 'ShowTextAttributes') return;
-        // --- ПРОПУСКАЕМ Display Name, если он не должен отображаться ---
+        // --- Пропускаем Display Name, если он не должен отображаться ---
         if (block.type === 'DisplayName') {
           // Если японский файл не загружен — скрываем только если пустой
           if (!block.japaneseLink) {
@@ -1048,139 +1340,118 @@
         const i = +ta.dataset.block;
         if(textBlocks[i]) textBlocks[i].text = ta.value;
       });
-      let newLines = [...originalLines];
-      let lineInsertOffset = 0;
-      
-      // Создаем карту индексов для отслеживания изменений
-      let blockIndexMap = new Map();
-      
-      textBlocks.forEach((block, blockIndex) => {
-        if (block.idx !== undefined) {
-          // Это главный блок, обновляем его
-          const originalLine = originalLines[block.idx];
-          const indentMatch = originalLine.match(/^\s*/);
-          const indent = indentMatch ? indentMatch[0] : '';
-          
-          let newLine;
-          switch (block.type) {
-            case 'ShowText':
-              // 1) ∿ → placeholder единичного слэша
-              let txt = block.text.replace(/∿/g, '<<ONE>>');
-              // 2) реальные переносы → literal "\n"
-              txt = txt.replace(/\n/g, '\\n');
-              // 3) группы ∾ → "\\"
-              txt = txt.replace(/∾+/g, '\\\\');
-              // 4) возвращаем плейсхолдер → "\"
-              txt = txt.replace(/<<ONE>>/g, '\\');
-              // 5) сводим любые повторения слэшей перед "n" (>1) к ровно "\\n"
-              txt = txt.replace(/\\{2,}n/g, '\\\\n');
-              // 6) убираем слэши перед ?, !, . , и перед длинным тире
-              txt = txt.replace(/\\(?=[\?\.\!\,—])/g, '');
-              // 7) эскейпим кавычки
-              let newText = txt.replace(/(?<!\\)"/g, '\\"');
-              // итоговая строка
-              newLine = originalLine.replace(/\[(.*)\]/, `["${newText}"]`);
-              break;
-            case 'ShowTextAttributes':
-              // Добавляем #+ только если блок сгенерирован и не связан с японским блоком
-              const needPlus = block.generated && !block.japaneseLink;
-              newLine = originalLine.replace(/\[(.*)\]/, `[${block.text}]`) + (needPlus ? ' #+' : '');
-              break;
-            case 'DisplayName':
-              const displayText = block.text.replace(/∾/g, '\\').replace(/"/g, '\\"');
-              newLine = originalLine.replace(/"(.*)"/, `"${displayText}"`);
-              break;
-            case 'ShowChoices':
-              // Разбираем текст обратно на варианты выбора
-              const choices = block.text.split(' | ');
-              const choicesFormatted = choices.map(choice => 
-                `"${choice.replace(/∾/g, '\\').replace(/"/g, '\\"')}"`
-              ).join(', ');
-              newLine = originalLine.replace(/\[\[(.*)\],\s*(\d+)\]/, `[[${choicesFormatted}], ${block.defaultChoice || 0}]`);
-              break;
-            case 'When':
-              const whenText = block.text.replace(/∾/g, '\\').replace(/"/g, '\\"');
-              newLine = originalLine.replace(/\[(\d+),\s*"(.*)"\]/, `[${block.choiceIndex || 0}, "${whenText}"]`);
-              break;
-            case 'Script':
-              newLine = originalLine.replace(/\[(.*)\]/, `[${block.text}]`);
-              break;
-            case 'ScriptMore':
-              newLine = originalLine.replace(/\[(.*)\]/, `[${block.text}]`);
-              break;
-            default:
-              newLine = originalLine;
+      let exportLines;
+      if (window.restoreModeEnabled && window.japaneseLines && window.originalLines) {
+        // Жёсткий режим: экспортируем с восстановлением структуры
+        // Получаем список проблемных номеров событий
+        const result = checkCommonEventStructureSmart(window.originalLines, window.japaneseLines);
+        const mismatchedNums = result.mismatches.map(m => m.num);
+        exportLines = restoreRussianStructure(window.originalLines, window.japaneseLines, mismatchedNums);
+      } else {
+        // Обычный экспорт — из textBlocks
+        let newLines = [...originalLines];
+        let lineInsertOffset = 0;
+        let blockIndexMap = new Map();
+        // --- Исправленное обновление Display Name ---
+        let displayNameLine = `Display Name = "${mapDisplayName}"`;
+        let foundDisplayName = false;
+        for (let i = 0; i < newLines.length; i++) {
+          if (/^\s*Display Name\s*=/.test(newLines[i])) {
+            newLines[i] = displayNameLine;
+            foundDisplayName = true;
+            break;
           }
-          
-          newLines[block.idx + lineInsertOffset] = indent + newLine.trimStart();
-          blockIndexMap.set(blockIndex, block.idx + lineInsertOffset);
-        } else {
-          // Это продолжение, вставляем его как новую строку (ShowText или ShowTextAttributes)
-          // Находим отступ предыдущей главной строки
-          let lastMainBlockIdx = -1;
-          for (let j = blockIndex - 1; j >= 0; j--) {
-            if (textBlocks[j].idx !== undefined) {
-              lastMainBlockIdx = textBlocks[j].idx;
-              break;
-            }
-          }
-          let indent = '';
-          if (lastMainBlockIdx !== -1) {
-            const originalLine = originalLines[lastMainBlockIdx];
+        }
+        if (!foundDisplayName) {
+          newLines.unshift(displayNameLine);
+        }
+        // --- Удаляю старую логику ---
+        // newLines = newLines.filter(line => !/^\s*Display Name\s*=/.test(line));
+        // let firstCE = newLines.findIndex(line => /^CommonEvent /.test(line));
+        // if (firstCE === -1) firstCE = 0;
+        // newLines.splice(firstCE, 0, displayNameLine);
+        textBlocks.forEach((block, blockIndex) => {
+          if (block.idx !== undefined) {
+            const originalLine = originalLines[block.idx];
             const indentMatch = originalLine.match(/^\s*/);
-            indent = indentMatch ? indentMatch[0] : '';
-          }
-          if (block.type === 'ShowTextAttributes') {
-            // Добавляем #+ только если блок сгенерирован и не связан с японским блоком
-            const needPlus = block.generated && !block.japaneseLink;
-            newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, indent + `ShowTextAttributes([${block.text}])` + (needPlus ? ' #+' : ''));
-            lineInsertOffset++;
-            blockIndexMap.set(blockIndex, lastMainBlockIdx + 1 + lineInsertOffset - 1);
+            const indent = indentMatch ? indentMatch[0] : '';
+            let newLine;
+            switch (block.type) {
+              case 'ShowText':
+                let txt = block.text.replace(/∿/g, '<<ONE>>');
+                txt = txt.replace(/\n/g, '\\n');
+                txt = txt.replace(/∾+/g, '\\\\');
+                txt = txt.replace(/<<ONE>>/g, '\\');
+                txt = txt.replace(/\\{2,}n/g, '\\\\n');
+                txt = txt.replace(/\\(?=[\?\.!\,—])/g, '');
+                let newText = txt.replace(/(?<!\\)"/g, '\\"');
+                newLine = originalLine.replace(/\[(.*)\]/, `["${newText}"]`);
+                break;
+              case 'ShowTextAttributes':
+                newLine = originalLine.replace(/\[(.*)\]/, `[${block.text}]`);
+                break;
+              case 'DisplayName':
+                const displayText = block.text.replace(/∾/g, '\\').replace(/"/g, '\\"');
+                newLine = originalLine.replace(/"(.*)"/, `"${displayText}"`);
+                break;
+              case 'ShowChoices':
+                const choices = block.text.split(' | ');
+                const choicesFormatted = choices.map(choice => 
+                  `"${choice.replace(/∾/g, '\\').replace(/"/g, '\\"')}"`
+                ).join(', ');
+                newLine = originalLine.replace(/\[\[(.*)\],\s*(\d+)\]/, `[[${choicesFormatted}], ${block.defaultChoice || 0}]`);
+                break;
+              case 'When':
+                const whenText = block.text.replace(/∾/g, '\\').replace(/"/g, '\\"');
+                newLine = originalLine.replace(/\[(\d+),\s*"(.*)"\]/, `[${block.choiceIndex || 0}, "${whenText}"]`);
+                break;
+              case 'Script':
+                newLine = originalLine.replace(/\[(.*)\]/, `[${block.text}]`);
+                break;
+              case 'ScriptMore':
+                newLine = originalLine.replace(/\[(.*)\]/, `[${block.text}]`);
+                break;
+              default:
+                newLine = originalLine;
+            }
+            newLines[block.idx + lineInsertOffset] = indent + newLine.trimStart();
+            blockIndexMap.set(blockIndex, block.idx + lineInsertOffset);
           } else {
-            let cont = block.text.replace(/∿/g, '<<ONE>>');
-            cont = cont.replace(/\n/g, '\\n');
-            cont = cont.replace(/∾+/g, '\\\\');
-            cont = cont.replace(/<<ONE>>/g, '\\');
-            cont = cont.replace(/\\{2,}n/g, '\\\\n');
-            cont = cont.replace(/\\(?=[\?\.!\,—])/g, '');
-            let newText = cont.replace(/(?<!\\)"/g, '\\"');
-            // Добавляем #+ только если блок сгенерирован и не связан с японским блоком
-            const needPlus = block.generated && !block.japaneseLink;
-            newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, indent + `ShowText(["${newText}"])` + (needPlus ? ' #+' : ''));
-            lineInsertOffset++;
-            blockIndexMap.set(blockIndex, lastMainBlockIdx + 1 + lineInsertOffset - 1);
-          }
-        }
-      });
-      
-      // Удаляем все строки, которые не были обработаны (удаленные блоки)
-      let linesToRemove = [];
-      for (let i = 0; i < newLines.length; i++) {
-        const line = newLines[i].trim();
-        if (line.match(/^\s*ShowText\(\[.*\]\)/) || 
-            line.match(/^\s*Display Name\s*=\s*".*"/) ||
-            line.match(/^\s*ShowChoices\(\[\[.*\],\s*\d+\]\)/) ||
-            line.match(/^\s*When\(\[\d+,\s*".*"\]\)/)) {
-          // Проверяем, была ли эта строка обработана
-          let wasProcessed = false;
-          for (let [blockIndex, lineIndex] of blockIndexMap) {
-            if (lineIndex === i) {
-              wasProcessed = true;
-              break;
+            let lastMainBlockIdx = -1;
+            for (let j = blockIndex - 1; j >= 0; j--) {
+              if (textBlocks[j].idx !== undefined) {
+                lastMainBlockIdx = textBlocks[j].idx;
+                break;
+              }
+            }
+            let indent = '';
+            if (lastMainBlockIdx !== -1) {
+              const originalLine = originalLines[lastMainBlockIdx];
+              const indentMatch = originalLine.match(/^\s*/);
+              indent = indentMatch ? indentMatch[0] : '';
+            }
+            if (block.type === 'ShowTextAttributes') {
+              newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, indent + `ShowTextAttributes([${block.text}])`);
+              lineInsertOffset++;
+              blockIndexMap.set(blockIndex, lastMainBlockIdx + 1 + lineInsertOffset - 1);
+            } else {
+              let cont = block.text.replace(/∿/g, '<<ONE>>');
+              cont = cont.replace(/\n/g, '\\n');
+              cont = cont.replace(/∾+/g, '\\\\');
+              cont = cont.replace(/<<ONE>>/g, '\\');
+              cont = cont.replace(/\\{2,}n/g, '\\\\n');
+              cont = cont.replace(/\\(?=[\?\.!\,—])/g, '');
+              let newText = cont.replace(/(?<!\\)"/g, '\\"');
+              newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, indent + `ShowText(["${newText}"])`);
+              lineInsertOffset++;
+              blockIndexMap.set(blockIndex, lastMainBlockIdx + 1 + lineInsertOffset - 1);
             }
           }
-          if (!wasProcessed) {
-            linesToRemove.push(i);
-          }
-        }
+        });
+        // --- Удаление строк вне CommonEvent убрано! ---
+        exportLines = newLines;
       }
-      
-      // Удаляем строки в обратном порядке, чтобы индексы не сбились
-      for (let i = linesToRemove.length - 1; i >= 0; i--) {
-        newLines.splice(linesToRemove[i], 1);
-      }
-      
-      // Формируем имя файла для сохранения
+      // Дальше обычное сохранение:
       let saveName = 'Map001_edited.txt';
       if (loadedFileName) {
         const dotIdx = loadedFileName.lastIndexOf('.');
@@ -1190,7 +1461,7 @@
           saveName = loadedFileName + '_edited.txt';
         }
       }
-      const blob = new Blob([newLines.join('\n')], {type: 'text/plain'});
+      const blob = new Blob([exportLines.join('\n')], {type: 'text/plain'});
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
       a.download = saveName;
@@ -1323,6 +1594,12 @@
 
     // Инициализируем состояние стрелок при загрузке
     updateRedIndices();
+
+    // === Обработчик кнопки восстановления структуры ===
+    document.getElementById('restoreStructBtn').onclick = function() {
+      window.restoreModeEnabled = true;
+      alert("Жёсткий режим восстановления структуры активирован.\nИзменения CommonEvent будут применены только при сохранении!");
+    };
 
   </script>
 </body>
