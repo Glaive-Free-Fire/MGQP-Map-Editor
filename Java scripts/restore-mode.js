@@ -209,15 +209,39 @@
           const nameMatch = jpLines[j].match(/^\s*ShowText\(\["【(.+?)】"\]\)/);
           const textMatch = (j + 1 < jpLines.length) ? jpLines[j + 1].match(/^\s*ShowText\(\["([\s\S]*?)"\]\)/) : null;
           if (nameMatch && textMatch) {
-            const name = nameMatch[1].replace(/"/g, '\\"');
-            const text = textMatch[1].replace(/"/g, '\\"');
-            const merged = `ShowText(["\\n<\\C[6]${name}\\C[0]>${text}"])
-`;
-            resultLines.push(merged.trimEnd());
+            const name = nameMatch[1]
+              .replace(/\\/g, '\\\\')
+              .replace(/"/g, '\\"');
+            const text = textMatch[1]
+              .replace(/\\/g, '\\\\')
+              .replace(/"/g, '\\"');
+            const indent = jpLines[j].match(/^(\s*)/) ? jpLines[j].match(/^(\s*)/)[1] : '';
+            const merged = `${indent}ShowText(["\\n<\\C[6]${name}\\C[0]>${text}"])`;
+            // --- Новый патч: гарантированное исправление формата строки с именем ---
+            let finalMerged = merged;
+            // Проверяем, что строка имеет правильный формат с двойными слэшами
+            const formatCheck = merged.match(/^([ \t]*)ShowText\(\["(\\n|<\\C\[6\]|\\C\[0\]>)(.*)"\]\)/);
+            if (formatCheck) {
+              // Если формат неправильный, исправляем его
+              const indent = formatCheck[1] || '';
+              const content = formatCheck[3] || '';
+              // Ищем имя и текст в содержимом
+              const contentMatch = content.match(/^<\\C\[6\](.+?)<\\C\[0\]>(.*)$/);
+              if (contentMatch) {
+                let name = contentMatch[1] || '';
+                let text = contentMatch[2] || '';
+                // Экранируем слэши и кавычки
+                name = name.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+                text = text.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+                finalMerged = `${indent}ShowText(["\\n<\\C[6]${name}\\C[0]>${text}"])`;
+              }
+            }
+            resultLines.push(finalMerged + ' // RESTORED_FROM_JP');
             j += 2;
             continue;
           }
-          resultLines.push(jpLines[j]);
+          // Добавляем маркер к строкам, которые копируются из японского файла
+          resultLines.push(jpLines[j] + ' // RESTORED_FROM_JP');
           j++;
         }
       } else if (jpEv) {
