@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <title>MGQP Map Editor v1.3.10</title>
+  <title>MGQP Map Editor v1.3.50</title>
   <script src="Java scripts/restore-mode.js"></script>
   <style>
     body { font-family: sans-serif; margin: 20px; }
@@ -1435,22 +1435,40 @@
               lineInsertOffset++;
               blockIndexMap.set(blockIndex, lastMainBlockIdx + 1 + lineInsertOffset - 1);
             } else {
-              let cont = block.text.replace(/∿/g, '<<ONE>>');
-              cont = cont.replace(/\n/g, '\\n');
-              cont = cont.replace(/∾+/g, '\\\\');
-              cont = cont.replace(/<<ONE>>/g, '\\');
-              cont = cont.replace(/\\{2,}n/g, '\\\\n');
-              cont = cont.replace(/\\(?=[\?\.!\,—])/g, '');
-              let newText = cont.replace(/(?<!\\)"/g, '\\"');
-              newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, indent + `ShowText(["${newText}"])`);
-              lineInsertOffset++;
-              blockIndexMap.set(blockIndex, lastMainBlockIdx + 1 + lineInsertOffset - 1);
+              // --- Новый патч: если строка уже в нужном формате, не трогаем её ---
+              if (/^\\n<\\C\[6\]/.test(block.text)) {
+                newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, indent + `ShowText(["${block.text}"])`);
+                lineInsertOffset++;
+                blockIndexMap.set(blockIndex, lastMainBlockIdx + 1 + lineInsertOffset - 1);
+              } else {
+                let cont = block.text.replace(/∿/g, '<<ONE>>');
+                cont = cont.replace(/\n/g, '\\n');
+                cont = cont.replace(/∾+/g, '\\');
+                cont = cont.replace(/<<ONE>>/g, '\\');
+                cont = cont.replace(/\\{2,}n/g, '\\\\n');
+                cont = cont.replace(/\\(?=[\?\.!\,—])/g, '');
+                let newText = cont.replace(/(?<!\\)"/g, '\\"');
+                newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, indent + `ShowText(["${newText}"])`);
+                lineInsertOffset++;
+                blockIndexMap.set(blockIndex, lastMainBlockIdx + 1 + lineInsertOffset - 1);
+              }
             }
           }
         });
         // --- Удаление строк вне CommonEvent убрано! ---
         exportLines = newLines;
       }
+      // --- Новый патч: принудительное двойное экранирование строк с именами ---
+      exportLines = exportLines.map(line => {
+        // Применяем двойное экранирование только к строкам, которые были заменены из японского файла
+        if (line.includes(' // RESTORED_FROM_JP')) {
+          const cleanLine = line.replace(' // RESTORED_FROM_JP', '');
+          return cleanLine.replace(/\\n/g, '\\\\n')
+                         .replace(/\\C\[6\]/g, '\\\\C[6]')
+                         .replace(/\\C\[0\]/g, '\\\\C[0]');
+        }
+        return line;
+      });
       // Дальше обычное сохранение:
       let saveName = 'Map001_edited.txt';
       if (loadedFileName) {
