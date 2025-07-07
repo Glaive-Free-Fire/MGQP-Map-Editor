@@ -1,5 +1,18 @@
 // restore-mode.js
 (function(global) {
+  // === Функция экранирования первых трёх управляющих последовательностей ===
+  function escapeFirstThree(str) {
+    let count = 0;
+    let result = str.replace(/\\n|<\\?C\[6\]|\\?C\[0\]>/g, function(match) {
+      count++;
+      if (count === 1 && match === '\\n') return '\\\\n';
+      if (count === 2 && (match === '<\\C[6]' || match === '<C[6]')) return '<\\\\C[6]';
+      if (count === 3 && (match === '\\C[0]>' || match === 'C[0]>')) return '\\\\C[0]>';
+      return match;
+    });
+    return result;
+  }
+
   // Склеиваем ShowText с #+ с предыдущей ShowText
   function glueRuShowText(lines) {
     const out = [];
@@ -216,32 +229,31 @@
               .replace(/\\/g, '\\\\')
               .replace(/"/g, '\\"');
             const indent = jpLines[j].match(/^(\s*)/) ? jpLines[j].match(/^(\s*)/)[1] : '';
-            const merged = `${indent}ShowText(["\\n<\\C[6]${name}\\C[0]>${text}"])`;
+            const merged = `${indent}ShowText(["\\n<\\C[6]${name}\\C[0]>${text}"] )`;
             // --- Новый патч: гарантированное исправление формата строки с именем ---
             let finalMerged = merged;
             // Проверяем, что строка имеет правильный формат с двойными слэшами
-            const formatCheck = merged.match(/^([ \t]*)ShowText\(\["(\\n|<\\C\[6\]|\\C\[0\]>)(.*)"\]\)/);
+            const formatCheck = merged.match(/^([ \t]*)ShowText\(\["(.*)"\]\s*\)/);
             if (formatCheck) {
-              // Если формат неправильный, исправляем его
               const indent = formatCheck[1] || '';
-              const content = formatCheck[3] || '';
-              // Ищем имя и текст в содержимом
-              const contentMatch = content.match(/^<\\C\[6\](.+?)<\\C\[0\]>(.*)$/);
+              const content = formatCheck[2] || '';
+              // Ищем паттерн \n<\C[6]Имя\C[0]>Текст
+              const contentMatch = content.match(/^\\n<\\C\[6\](.+?)\\C\[0\]>(.*)$/);
               if (contentMatch) {
                 let name = contentMatch[1] || '';
                 let text = contentMatch[2] || '';
-                // Экранируем слэши и кавычки
                 name = name.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
                 text = text.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-                finalMerged = `${indent}ShowText(["\\n<\\C[6]${name}\\C[0]>${text}"])`;
+                // --- Применяем escapeFirstThree для правильного экранирования ---
+                const escapedContent = escapeFirstThree(`\\n<\\C[6]${name}\\C[0]>${text}`);
+                finalMerged = `${indent}ShowText(["${escapedContent}"])`;
               }
             }
-            resultLines.push(finalMerged + ' // RESTORED_FROM_JP');
+            resultLines.push(finalMerged);
             j += 2;
             continue;
           }
-          // Добавляем маркер к строкам, которые копируются из японского файла
-          resultLines.push(jpLines[j] + ' // RESTORED_FROM_JP');
+          resultLines.push(jpLines[j]);
           j++;
         }
       } else if (jpEv) {

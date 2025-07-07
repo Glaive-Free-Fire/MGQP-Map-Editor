@@ -129,15 +129,20 @@ document.addEventListener('DOMContentLoaded', function() {
       });
       previewLines = (window.getExportLines ? window.getExportLines(newLines, textBlocks) : newLines);
     }
-    // Двойное экранирование для строк с именами (как при экспорте)
+    // Двойное экранирование только для строк с именами (шаблон: \n<\C[6]Имя\C[0]>)
     previewLines = previewLines.map(line => {
-      if (line.includes(' // RESTORED_FROM_JP')) {
-        const cleanLine = line.replace(' // RESTORED_FROM_JP', '');
-        return cleanLine.replace(/\n/g, '\\n')
-                       .replace(/\C\[6\]/g, '\\C[6]')
-                       .replace(/\C\[0\]/g, '\\C[0]');
-      }
-      return line;
+      let cleanLine = line.replace(' // RESTORED_FROM_JP', '');
+      let before = cleanLine;
+      // === Новая логика: только первые три управляющих последовательности делаем двойными ===
+      let count = 0;
+      cleanLine = cleanLine.replace(/\\n|<\\?C\[6\]|\\?C\[0\]>/g, function(match) {
+        count++;
+        if (count === 1 && match === '\\n') return '\\\\n';
+        if (count === 2 && (match === '<\\C[6]' || match === '<C[6]')) return '<\\\\C[6]';
+        if (count === 3 && (match === '\\C[0]>' || match === 'C[0]>')) return '\\\\C[0]>';
+        return match;
+      });
+      return cleanLine;
     });
     document.getElementById('previewArea').value = previewLines.join('\n');
     // --- Сравнение с редактором ---
