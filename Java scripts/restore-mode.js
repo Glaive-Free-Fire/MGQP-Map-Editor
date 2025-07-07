@@ -25,7 +25,7 @@
     }
     if (buffer !== null) out.push(buffer);
     return out;
-  }
+    }
 
   // Разбить lines на CommonEvent-блоки (с заголовком, страницами и содержимым)
   function parseCommonEvents(lines) {
@@ -158,8 +158,8 @@
       let b = ruBlocks[i];
       if (b.type === type && !b.generated && !used.has(i)) {
         return i;
-      }
-    }
+            }
+          }
     return -1;
   }
 
@@ -256,7 +256,7 @@
       let nextStart = (evIdx + 1 < ceIndices.length) ? ceIndices[evIdx + 1] : ruLines.length;
       for (let i = thisEnd; i < nextStart; i++) {
         resultLines.push(ruLines[i]);
-      }
+  }
     }
     // 4. Добавляем все строки после последнего CommonEvent
     let lastEv = ruEvents[ruEvents.length - 1];
