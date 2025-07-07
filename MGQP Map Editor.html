@@ -1266,17 +1266,26 @@
       };
     }
 
+    // === Функция экранирования первых трёх управляющих последовательностей ===
+    function escapeFirstThree(str) {
+      let count = 0;
+      let result = str.replace(/\\n|<\\?C\[6\]|\\?C\[0\]>/g, function(match) {
+        count++;
+        if (count === 1 && match === '\\n') return '\\\\n';
+        if (count === 2 && (match === '<\\C[6]' || match === '<C[6]')) return '<\\\\C[6]';
+        if (count === 3 && (match === '\\C[0]>' || match === 'C[0]>')) return '\\\\C[0]>';
+        return match;
+      });
+      return result;
+    }
+
     document.getElementById('saveBtn').onclick = function() {
       document.querySelectorAll('textarea[data-block]').forEach(ta => {
         const i = +ta.dataset.block;
         if(textBlocks[i]) textBlocks[i].text = ta.value;
       });
-      // --- ЛОГИРОВАНИЕ: все блоки [продолжение]: ---
-      // const continuationBlocks = textBlocks.filter(b => b.idx === undefined);
-      // console.log('[LOG] Блоки [продолжение]: перед сохранением:', continuationBlocks);
       let exportLines;
       if (window.restoreModeEnabled && window.japaneseLines && window.originalLines) {
-        // Жёсткий режим: экспортируем с восстановлением структуры
         const result = checkCommonEventStructureSmart(window.originalLines, window.japaneseLines);
         const mismatchedNums = result.mismatches.map(m => m.num);
         exportLines = restoreRussianStructure(window.originalLines, window.japaneseLines, mismatchedNums);
@@ -1296,8 +1305,6 @@
         if (!foundDisplayName) {
           newLines.unshift(displayNameLine);
         }
-        // --- ЛОГИРОВАНИЕ: начало обработки textBlocks ---
-        // console.log('[LOG] Все textBlocks перед экспортом:', textBlocks);
         textBlocks.forEach((block, blockIndex) => {
           if (block.idx !== undefined) {
             const originalLine = originalLines[block.idx];
@@ -1313,7 +1320,9 @@
                 txt = txt.replace(/\\{2,}n/g, '\\\\n');
                 txt = txt.replace(/\\(?=[\?\.!\,—])/g, '');
                 let newText = txt.replace(/(?<!\\)"/g, '\\"');
-                newLine = originalLine.replace(/\[(.*)\]/, `["${newText}"]`);
+                // --- Экранируем только первые три управляющих последовательности ---
+                let escaped = escapeFirstThree(newText);
+                newLine = originalLine.replace(/\[(.*)\]/, `["${escaped}"]`);
                 break;
               case 'ShowTextAttributes':
                 newLine = originalLine.replace(/\[(.*)\]/, `[${block.text}]`);
