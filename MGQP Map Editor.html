@@ -2,8 +2,10 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <title>MGQP Map Editor v1.3.50</title>
+  <title>MGQP Map Editor v1.3.60</title>
   <script src="Java scripts/restore-mode.js"></script>
+  <script src="Java scripts/test_mode.js"></script>
+  <script src="Java scripts/main_script.js"></script>
   <style>
     body { font-family: sans-serif; margin: 20px; }
     textarea { width: 100%; height: 60px; box-sizing: border-box; }
@@ -82,6 +84,16 @@
     </div>
   </div>
 
+  <!-- Вкладки редактора и предпросмотра -->
+  <div style="margin-bottom: 18px;">
+    <button id="tabEditor" class="control-btn" style="font-weight:bold;">Редактор</button>
+    <button id="tabPreview" class="control-btn">Предпросмотр файла</button>
+  </div>
+  <div id="tabContentEditor"></div>
+  <div id="tabContentPreview" style="display:none;">
+    <textarea id="previewArea" readonly style="width:100%;height:400px;font-family:monospace;font-size:15px;background:#f9f9f9;"></textarea>
+    <div id="previewDiffs" style="margin-top:10px;"></div>
+  </div>
   <div id="editor"></div>
 
   <script>
@@ -389,12 +401,12 @@
         : 'Структура CommonEvent НЕ совпадает';
       // Подробный отчёт в консоль
       if (result.mismatches.length > 0) {
-        console.warn('Несовпадающие события:');
+        // console.warn('Несовпадающие события:');
         result.mismatches.forEach(m => {
-          console.warn(`CommonEvent[${m.num}] (${m.name}):`, '\nRU:', m.ru, '\nJP:', m.jp, '\nDIFF:', m.diff);
+          // console.warn(`CommonEvent[${m.num}] (${m.name}):`, '\nRU:', m.ru, '\nJP:', m.jp, '\nDIFF:', m.diff);
         });
       } else {
-        console.info('Все CommonEvent с ShowText совпадают по структуре!');
+        // console.info('Все CommonEvent с ShowText совпадают по структуре!');
       }
     }
 
@@ -454,7 +466,9 @@
             .replace(/^"(.*)"$/, '$1')
             .replace(/\\n/g, '\n')
             .replace(/\\/g, '∾');
-          textBlocks.push({ idx, text, type: 'ShowText', generated: /#\+/.test(line) });
+          // --- Новый флаг manualPlus: true для ShowText с #+ ---
+          const isManualPlus = /#\+/.test(line) && idx !== undefined;
+          textBlocks.push({ idx, text, type: 'ShowText', generated: /#\+/.test(line), manualPlus: isManualPlus });
           return;
         }
         // ShowChoices
@@ -828,35 +842,6 @@
       redoStack = [];
     }
 
-    function getGameTextInfo(txt) {
-      const result = {
-        rawGameText: txt,
-        fullPrefix: '',        // Полный префикс для первой строки (например, @@n<...>), но теперь <∾∾C[...]
-        continuationPrefix: '', // Префикс для строк-продолжений (только <...>)
-        isCorrupted: false
-      };
-      const hasTagHint = /<∾∾C/.test(txt);
-      const validNameTagRegex = /<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/;
-      const hasValidTag = validNameTagRegex.test(txt);
-      if (hasTagHint && !hasValidTag) {
-        result.isCorrupted = true;
-        return result;
-      }
-      // Обновленный регэксп для разделения @@n и тега имени (с учётом ∾)
-      const fullMatch = txt.match(/^(@@n)?(<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>)?(.*)$/);
-      if (fullMatch) {
-          const newlinePrefix = fullMatch[1] || ''; // '@@n' или пустая строка
-          const nameTag = fullMatch[2] || '';       // '<...>' или пустая строка
-          const dialogue = fullMatch[3] || '';
-          if (newlinePrefix || nameTag) {
-              result.fullPrefix = newlinePrefix + nameTag;
-              result.continuationPrefix = nameTag; // Самое важное: здесь нет '@@n'
-              result.rawGameText = dialogue;
-          }
-      }
-      return result;
-    }
-
     function renderTextBlocks() {
       const editor = document.getElementById('editor');
       editor.innerHTML = '';
@@ -1099,74 +1084,12 @@
               }
             }
           } catch (e) {
-            console.error('Ошибка обработки дубликата на строке', block.idx + 1, e);
+            // console.error('Ошибка обработки дубликата на строке', block.idx + 1, e);
           }
         }
         
         function updateAll() {
-          const text = textarea.value;
-          // Логика для ShowText и [продолжение]
-          if (block.type === 'ShowText' || block.type === undefined) {
-            const info = getGameTextInfo(text);
-            // Новый способ очистки для подсчёта игровых символов
-            const visibleText = info.rawGameText
-              .replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/g, '')
-              .replace(/∾∾C\[\d+\]/g, '')
-              .replace(/C\[\d+\]/g, '')
-              .replace(/∾/g, '')
-              .replace(/∿/g, '')
-              .trim();
-            const len = visibleText.length;
-
-            if (len > 50 || info.isCorrupted) {
-              textarea.style.background = '#ffd6d6';
-              plusBtn.style.display = (len > 50) ? '' : 'none';
-            } else {
-              textarea.style.background = '';
-              plusBtn.style.display = 'none';
-            }
-            minusBtn.style.display = (text.trim() === '' && textBlocks.length > 1) ? '' : 'none';
-
-            let selStart = textarea.selectionStart;
-            let selEnd = textarea.selectionEnd;
-            let sel = Math.abs(selEnd - selStart);
-            let nameLen = info.fullPrefix ? info.fullPrefix.length : 0;
-            let selGame = 0;
-
-            if (sel > 0 && selStart >= nameLen && selEnd >= nameLen) {
-              const selected = info.rawGameText.substring(selStart - nameLen, selEnd - nameLen);
-              selGame = selected
-                .replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/g, '')
-                .replace(/∾∾C\[\d+\]/g, '')
-                .replace(/C\[\d+\]/g, '')
-                .replace(/∾/g, '')
-                .replace(/∿/g, '')
-                .length;
-            } else if (sel > 0 && selEnd > nameLen && selStart < nameLen) {
-              const selected = info.rawGameText.substring(0, selEnd - nameLen);
-              selGame = selected
-                .replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/g, '')
-                .replace(/∾∾C\[\d+\]/g, '')
-                .replace(/C\[\d+\]/g, '')
-                .replace(/∾/g, '')
-                .replace(/∿/g, '')
-                .length;
-              if (selGame < 0) selGame = 0;
-            }
-
-            if (selGame > 0) {
-              counter.textContent = `Игровых символов: ${len} (выделено: ${selGame})`;
-            } else {
-              counter.textContent = `Игровых символов: ${len}`;
-            }
-          } else {
-            // Для других типов блоков
-            const len = text.replace(/∾/g, '').length;
-            textarea.style.background = '';
-            plusBtn.style.display = 'none';
-            minusBtn.style.display = (text.trim() === '' && textBlocks.length > 1) ? '' : 'none';
-            counter.textContent = `Символов: ${len}`;
-          }
+          window.updateAllForBlock(block, textarea, plusBtn, minusBtn, counter, textBlocks);
         }
         
         textarea.addEventListener('input', function() {
@@ -1296,8 +1219,16 @@
         
         minusBtn.textContent = '-';
         minusBtn.style.marginLeft = '8px';
+        // --- Всегда показываем кнопку для manualPlus ---
+        minusBtn.style.display = (block.manualPlus || (block.text.trim() === '' && textBlocks.length > 1)) ? '' : 'none';
         minusBtn.onclick = function() {
           pushUndo();
+          // Если manualPlus — просто удаляем
+          if (block.manualPlus) {
+            textBlocks.splice(i, 1);
+            renderTextBlocks();
+            return;
+          }
           // Если предыдущий блок — ShowTextAttributes и это первая ShowText после него, удаляем оба
           if (i > 0 && textBlocks[i].type === 'ShowText' && textBlocks[i - 1].type === 'ShowTextAttributes') {
             textBlocks.splice(i - 1, 2);
@@ -1340,19 +1271,19 @@
         const i = +ta.dataset.block;
         if(textBlocks[i]) textBlocks[i].text = ta.value;
       });
+      // --- ЛОГИРОВАНИЕ: все блоки [продолжение]: ---
+      // const continuationBlocks = textBlocks.filter(b => b.idx === undefined);
+      // console.log('[LOG] Блоки [продолжение]: перед сохранением:', continuationBlocks);
       let exportLines;
       if (window.restoreModeEnabled && window.japaneseLines && window.originalLines) {
         // Жёсткий режим: экспортируем с восстановлением структуры
-        // Получаем список проблемных номеров событий
         const result = checkCommonEventStructureSmart(window.originalLines, window.japaneseLines);
         const mismatchedNums = result.mismatches.map(m => m.num);
         exportLines = restoreRussianStructure(window.originalLines, window.japaneseLines, mismatchedNums);
       } else {
-        // Обычный экспорт — из textBlocks
         let newLines = [...originalLines];
         let lineInsertOffset = 0;
         let blockIndexMap = new Map();
-        // --- Исправленное обновление Display Name ---
         let displayNameLine = `Display Name = "${mapDisplayName}"`;
         let foundDisplayName = false;
         for (let i = 0; i < newLines.length; i++) {
@@ -1365,11 +1296,8 @@
         if (!foundDisplayName) {
           newLines.unshift(displayNameLine);
         }
-        // --- Удаляю старую логику ---
-        // newLines = newLines.filter(line => !/^\s*Display Name\s*=/.test(line));
-        // let firstCE = newLines.findIndex(line => /^CommonEvent /.test(line));
-        // if (firstCE === -1) firstCE = 0;
-        // newLines.splice(firstCE, 0, displayNameLine);
+        // --- ЛОГИРОВАНИЕ: начало обработки textBlocks ---
+        // console.log('[LOG] Все textBlocks перед экспортом:', textBlocks);
         textBlocks.forEach((block, blockIndex) => {
           if (block.idx !== undefined) {
             const originalLine = originalLines[block.idx];
@@ -1417,6 +1345,8 @@
             newLines[block.idx + lineInsertOffset] = indent + newLine.trimStart();
             blockIndexMap.set(blockIndex, block.idx + lineInsertOffset);
           } else {
+            // --- ЛОГИРОВАНИЕ: обработка блока [продолжение]: ---
+            // console.log(`[LOG] Обработка блока [продолжение]:`, block);
             let lastMainBlockIdx = -1;
             for (let j = blockIndex - 1; j >= 0; j--) {
               if (textBlocks[j].idx !== undefined) {
@@ -1431,15 +1361,20 @@
               indent = indentMatch ? indentMatch[0] : '';
             }
             if (block.type === 'ShowTextAttributes') {
-              newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, indent + `ShowTextAttributes([${block.text}])`);
+              newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, indent + `ShowText([${block.text}])`);
               lineInsertOffset++;
               blockIndexMap.set(blockIndex, lastMainBlockIdx + 1 + lineInsertOffset - 1);
+              // console.log(`[LOG] Вставлен ShowTextAttributes [продолжение]:`, block);
             } else {
-              // --- Новый патч: если строка уже в нужном формате, не трогаем её ---
               if (/^\\n<\\C\[6\]/.test(block.text)) {
-                newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, indent + `ShowText(["${block.text}"])`);
+                let lineToInsert = indent + `ShowText(["${block.text}"])`;
+                if (block.type === 'ShowText' && block.generated) {
+                  lineToInsert += ' #+';
+                }
+                newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, lineToInsert);
                 lineInsertOffset++;
                 blockIndexMap.set(blockIndex, lastMainBlockIdx + 1 + lineInsertOffset - 1);
+                // console.log(`[LOG] Вставлен ShowText с именем [продолжение]:`, block);
               } else {
                 let cont = block.text.replace(/∿/g, '<<ONE>>');
                 cont = cont.replace(/\n/g, '\\n');
@@ -1448,28 +1383,52 @@
                 cont = cont.replace(/\\{2,}n/g, '\\\\n');
                 cont = cont.replace(/\\(?=[\?\.!\,—])/g, '');
                 let newText = cont.replace(/(?<!\\)"/g, '\\"');
-                newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, indent + `ShowText(["${newText}"])`);
+                let lineToInsert = indent + `ShowText(["${newText}"])`;
+                if (block.type === 'ShowText' && block.generated) {
+                  lineToInsert += ' #+';
+                }
+                newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, lineToInsert);
                 lineInsertOffset++;
                 blockIndexMap.set(blockIndex, lastMainBlockIdx + 1 + lineInsertOffset - 1);
+                // console.log(`[LOG] Вставлен ShowText [продолжение]:`, block);
               }
             }
           }
         });
-        // --- Удаление строк вне CommonEvent убрано! ---
-        exportLines = newLines;
-      }
-      // --- Новый патч: принудительное двойное экранирование строк с именами ---
-      exportLines = exportLines.map(line => {
-        // Применяем двойное экранирование только к строкам, которые были заменены из японского файла
-        if (line.includes(' // RESTORED_FROM_JP')) {
-          const cleanLine = line.replace(' // RESTORED_FROM_JP', '');
-          return cleanLine.replace(/\\n/g, '\\\\n')
-                         .replace(/\\C\[6\]/g, '\\\\C[6]')
-                         .replace(/\\C\[0\]/g, '\\\\C[0]');
+        // --- ЛОГИРОВАНИЕ: после обработки textBlocks ---
+        // console.log('[LOG] newLines после обработки textBlocks:', newLines);
+        // --- Функция форматирования текста для экспорта (exportFormat) ---
+        function exportFormat(text) {
+          let cont = text.replace(/∿/g, '<<ONE>>');
+          cont = cont.replace(/\n/g, '\\n');
+          cont = cont.replace(/∾+/g, '\\');
+          cont = cont.replace(/<<ONE>>/g, '\\');
+          cont = cont.replace(/\\{2,}n/g, '\\\\n');
+          cont = cont.replace(/\\(?=[\?\.!\,—])/g, '');
+          let newText = cont.replace(/(?<!\\)"/g, '\\"');
+          return newText;
         }
-        return line;
-      });
-      // Дальше обычное сохранение:
+        // --- Общая функция фильтрации exportLines ---
+        function getExportLines(newLines, textBlocks) {
+          return newLines.filter((line, idx) => {
+            if (/ShowText\(\[".*"\]\)\s*#\+/.test(line)) {
+              const lineText = line.match(/ShowText\(\["(.*)"\]\)/)?.[1];
+              const found = textBlocks.find(b =>
+                b.type === 'ShowText' &&
+                b.generated &&
+                exportFormat(b.text) === lineText
+              );
+              return !!found;
+            }
+            return true;
+          });
+        }
+        // --- Новый фильтр для exportLines по решению.txt ---
+        exportLines = getExportLines(newLines, textBlocks);
+      }
+      // --- ЛОГИРОВАНИЕ: итоговый exportLines ---
+      // console.log('[LOG] Итоговый exportLines:', exportLines);
+      // --- остальной код сохранения ---
       let saveName = 'Map001_edited.txt';
       if (loadedFileName) {
         const dotIdx = loadedFileName.lastIndexOf('.');
@@ -1618,6 +1577,85 @@
       window.restoreModeEnabled = true;
       alert("Жёсткий режим восстановления структуры активирован.\nИзменения CommonEvent будут применены только при сохранении!");
     };
+
+    document.addEventListener('DOMContentLoaded', function() {
+      // Перемещаем editor внутрь tabContentEditor только один раз
+      var editorDiv = document.getElementById('editor');
+      var tabContentEditor = document.getElementById('tabContentEditor');
+      if (editorDiv && tabContentEditor && editorDiv.parentNode !== tabContentEditor) {
+        tabContentEditor.appendChild(editorDiv);
+      }
+    });
+
+    // === Обновление списка ошибок под предпросмотром ===
+    function updatePreviewErrors() {
+      const diffsDiv = document.getElementById('previewDiffs');
+      if (!window.textBlocks || window.textBlocks.length === 0) {
+        diffsDiv.innerHTML = '';
+        return;
+      }
+      const errors = [];
+      window.textBlocks.forEach((block, i) => {
+        if (block.type === 'ShowText' || block.type === undefined) {
+          const info = window.getGameTextInfo(block.text);
+          const visibleText = info.rawGameText
+            .replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/g, '')
+            .replace(/∾∾C\[\d+\]/g, '')
+            .replace(/C\[\d+\]/g, '')
+            .replace(/∾/g, '')
+            .replace(/∿/g, '')
+            .trim();
+          const len = visibleText.length;
+          if (len > 50) {
+            errors.push({
+              idx: block.idx,
+              label: block.idx !== undefined ? `строка ${block.idx+1}` : '[продолжение]',
+              type: 'ShowText',
+              reason: `Превышен лимит символов: ${len} > 50`
+            });
+          }
+          if (info.isCorrupted) {
+            errors.push({
+              idx: block.idx,
+              label: block.idx !== undefined ? `строка ${block.idx+1}` : '[продолжение]',
+              type: 'ShowText',
+              reason: 'Повреждён тег имени (<∾∾C[6]...∾∾C[0]>) или синтаксис строки'
+            });
+          }
+        }
+      });
+      if (errors.length === 0) {
+        diffsDiv.innerHTML = '<span style="color:#393">Ошибок не обнаружено.</span>';
+        return;
+      }
+      let html = '<b>Ошибки в строках:</b><ul style="color:#b00; margin-top:4px;">';
+      errors.forEach(err => {
+        html += `<li><b>${err.label}</b> (${err.type}): ${err.reason}</li>`;
+      });
+      html += '</ul>';
+      diffsDiv.innerHTML = html;
+    }
+
+    // --- Переключение вкладок: обновляем предпросмотр и ошибки ---
+    document.getElementById('tabEditor').onclick = function() {
+      document.getElementById('tabContentEditor').style.display = '';
+      document.getElementById('tabContentPreview').style.display = 'none';
+    };
+    document.getElementById('tabPreview').onclick = function() {
+      document.getElementById('tabContentEditor').style.display = 'none';
+      document.getElementById('tabContentPreview').style.display = '';
+      // --- обновляем предпросмотр ---
+      if (typeof document.getElementById('saveBtn').onclick === 'function') {
+        // эмулируем экспорт, но не сохраняем файл
+        document.getElementById('saveBtn').onclick.preview = true;
+        document.getElementById('saveBtn').onclick();
+        document.getElementById('saveBtn').onclick.preview = false;
+      }
+      // --- обновляем ошибки ---
+      updatePreviewErrors();
+    };
+    // --- Также обновляем ошибки при каждом изменении textBlocks ---
+    window.updatePreviewErrors = updatePreviewErrors;
 
   </script>
 </body>
