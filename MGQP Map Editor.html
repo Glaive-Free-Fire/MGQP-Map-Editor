@@ -39,6 +39,45 @@
         user-select: text;
         font-size: 16px;
     }
+    /* --- Плавающая панель вкладок --- */
+    .floating-tab-panel {
+      position: fixed;
+      right: 28px;
+      bottom: 28px;
+      z-index: 2000;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      background: rgba(255,255,255,0.95);
+      box-shadow: 0 2px 12px rgba(0,0,0,0.10);
+      border-radius: 10px;
+      padding: 12px 10px;
+      border: 1px solid #ccc;
+    }
+    .floating-tab-panel .control-btn {
+      font-size: 14px;
+      padding: 5px 10px;
+      min-width: 130px;
+      border-radius: 5px;
+      font-weight: bold;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+      transition: background 0.2s, color 0.2s;
+    }
+    .floating-tab-panel .control-btn:active {
+      background: #e0e0e0;
+    }
+    @media (max-width: 600px) {
+      .floating-tab-panel {
+        right: 8px;
+        bottom: 8px;
+        padding: 6px 4px;
+      }
+      .floating-tab-panel .control-btn {
+        font-size: 15px;
+        min-width: 120px;
+        padding: 6px 10px;
+      }
+    }
   </style>
 </head>
 <body>
@@ -85,7 +124,7 @@
   </div>
 
   <!-- Вкладки редактора и предпросмотра -->
-  <div style="margin-bottom: 18px;">
+  <div class="floating-tab-panel">
     <button id="tabEditor" class="control-btn" style="font-weight:bold;">Редактор</button>
     <button id="tabPreview" class="control-btn">Предпросмотр файла</button>
   </div>
@@ -643,22 +682,14 @@
 
     function reorderTextBlocksByJapBlocks() {
       if (!window.japBlocks || window.japBlocks.length === 0) return;
-      // --- Новый алгоритм: синхронизация по событиям CommonEvent ---
       if (!window.japaneseLines || !window.originalLines) return;
-      // 1. Парсим японский и русский файлы на массив событий
       const jpEvents = (typeof parseCommonEventsForCompare === 'function' ? parseCommonEventsForCompare : window.parseCommonEventsForCompare)(window.japaneseLines);
       const ruEvents = (typeof parseCommonEventsForCompare === 'function' ? parseCommonEventsForCompare : window.parseCommonEventsForCompare)(window.originalLines);
       let newOrder = [];
-      // 2. Для каждого события из японского файла:
       jpEvents.forEach((jpEv, evIdx) => {
-        // Найти соответствующее событие в русском по номеру
         const ruEv = ruEvents.find(e => e.num === jpEv.num);
-        // 3. Парсим japBlocks и textBlocks для этого события
-        // Собираем индексы japBlocks, относящиеся к этому событию
         let jpStart = jpEv.lines.length > 0 ? jpEv.lines[0] : 0;
         let jpEnd = jpStart + jpEv.lines.length;
-        // Но japBlocks — это плоский массив, поэтому ищем по mapping
-        // Для каждого блока внутри события:
         for (let j = 0; j < jpEv.lines.length; j++) {
           const japBlockIdx = jpStart + j;
           const jpBlock = window.japBlocks[japBlockIdx];
@@ -670,8 +701,10 @@
             ruBlock = window.textBlocks[window.japaneseBlockMapping[japBlockIdx]];
           }
           if (ruBlock) {
-            newOrder.push(ruBlock);
+            // Копируем блок из русского файла (с текстом)
+            newOrder.push({...ruBlock});
           } else {
+            // Если нет соответствия — добавляем заглушку
             newOrder.push({
               text: '',
               type: jpBlock ? (jpBlock.blockType || 'ShowText') : 'ShowText',
@@ -682,12 +715,15 @@
           }
         }
       });
-      window.textBlocks = newOrder;
       // ДОназначить japaneseLink для всех блоков, если ещё не назначен
-      for (let i = 0; i < window.textBlocks.length; i++) {
-        if (!window.textBlocks[i].japaneseLink && window.japBlocks && window.japBlocks[i]) {
-          window.textBlocks[i].japaneseLink = { type: window.japBlocks[i].type, text: window.japBlocks[i].text };
+      for (let i = 0; i < newOrder.length; i++) {
+        if (!newOrder[i].japaneseLink && window.japBlocks && window.japBlocks[i]) {
+          newOrder[i].japaneseLink = { type: window.japBlocks[i].type, text: window.japBlocks[i].text };
         }
+      }
+      // ВАЖНО: не пересоздаём window.textBlocks полностью, если newOrder короче!
+      if (newOrder.length > 0 && newOrder.filter(b => b.text && b.text.trim()).length > 0) {
+        window.textBlocks = newOrder;
       }
     }
 
@@ -1264,6 +1300,8 @@
           setTimeout(() => setSelections(state.selections), 0);
         }
       };
+      // Восстанавливаем scrollTop после любого рендера редактора
+      restoreEditorScroll();
     }
 
     // === Функция экранирования первых трёх управляющих последовательностей ===
@@ -1645,27 +1683,78 @@
       diffsDiv.innerHTML = html;
     }
 
-    // --- Переключение вкладок: обновляем предпросмотр и ошибки ---
-    document.getElementById('tabEditor').onclick = function() {
-      document.getElementById('tabContentEditor').style.display = '';
-      document.getElementById('tabContentPreview').style.display = 'none';
-    };
-    document.getElementById('tabPreview').onclick = function() {
-      document.getElementById('tabContentEditor').style.display = 'none';
-      document.getElementById('tabContentPreview').style.display = '';
-      // --- обновляем предпросмотр ---
-      if (typeof document.getElementById('saveBtn').onclick === 'function') {
-        // эмулируем экспорт, но не сохраняем файл
-        document.getElementById('saveBtn').onclick.preview = true;
-        document.getElementById('saveBtn').onclick();
-        document.getElementById('saveBtn').onclick.preview = false;
-      }
-      // --- обновляем ошибки ---
-      updatePreviewErrors();
-    };
+
     // --- Также обновляем ошибки при каждом изменении textBlocks ---
     window.updatePreviewErrors = updatePreviewErrors;
 
+    // === Управление прокруткой редактора ===
+    let editorScrollTop = 0;
+    function saveEditorScroll() {
+      const editorDiv = document.getElementById('editor');
+      if (editorDiv) {
+        editorScrollTop = editorDiv.scrollTop;
+      }
+    }
+    function restoreEditorScroll() {
+      const editorDiv = document.getElementById('editor');
+      if (editorDiv) {
+        setTimeout(() => {
+          editorDiv.scrollTop = editorScrollTop || 0;
+        }, 0);
+      }
+    }
+    
+    // === Сохранение и восстановление позиции по scrollTop ===
+    window.editorScrollPosition = 0;
+    function saveEditorBlockPosition() {
+      const editorDiv = document.getElementById('editor');
+      const tabContentEditor = document.getElementById('tabContentEditor');
+      // Проверяем, что вкладка редактора видима
+      if (tabContentEditor.style.display === 'none') {
+        return;
+      }
+      // Сохраняем позицию прокрутки окна браузера
+      window.editorScrollPosition = window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop;
+    }
+    function restoreEditorBlockPosition() {
+      const editorDiv = document.getElementById('editor');
+      const savedPosition = window.editorScrollPosition || 0;
+      // Прокручиваем окно браузера
+      window.scrollTo(0, savedPosition);
+    }
+
+    // Универсальный обработчик вкладок
+    function showTab(tab) {
+      if (tab === 'editor') {
+        document.getElementById('tabContentEditor').style.display = '';
+        document.getElementById('tabContentPreview').style.display = 'none';
+        document.getElementById('tabEditor').style.fontWeight = 'bold';
+        document.getElementById('tabPreview').style.fontWeight = 'normal';
+        // После рендера восстанавливаем позицию по блоку
+        setTimeout(restoreEditorBlockPosition, 0);
+      } else if (tab === 'preview') {
+        saveEditorBlockPosition();
+        document.getElementById('tabContentEditor').style.display = 'none';
+        document.getElementById('tabContentPreview').style.display = '';
+        document.getElementById('tabEditor').style.fontWeight = 'normal';
+        document.getElementById('tabPreview').style.fontWeight = 'bold';
+        if (typeof window.updatePreviewArea === 'function') window.updatePreviewArea();
+        if (typeof window.updatePreviewErrors === 'function') window.updatePreviewErrors();
+      }
+    }
+    
+    // Следим за прокруткой редактора и привязываем обработчики
+    document.addEventListener('DOMContentLoaded', function() {
+      const editorDiv = document.getElementById('editor');
+      if (editorDiv) {
+        editorDiv.addEventListener('scroll', function() {
+          editorScrollTop = editorDiv.scrollTop;
+        });
+      }
+      // Привязываем только один обработчик для каждой вкладки
+      document.getElementById('tabEditor').onclick = () => showTab('editor');
+      document.getElementById('tabPreview').onclick = () => showTab('preview');
+    });
   </script>
 </body>
 </html>
