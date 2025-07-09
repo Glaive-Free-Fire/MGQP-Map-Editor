@@ -1,16 +1,5 @@
 document.addEventListener('DOMContentLoaded', function() {
-  function showTab(tab) {
-    document.getElementById('tabContentEditor').style.display = (tab === 'editor') ? '' : 'none';
-    document.getElementById('tabContentPreview').style.display = (tab === 'preview') ? '' : 'none';
-    document.getElementById('tabEditor').style.fontWeight = (tab === 'editor') ? 'bold' : 'normal';
-    document.getElementById('tabPreview').style.fontWeight = (tab === 'preview') ? 'bold' : 'normal';
-  }
-  document.getElementById('tabEditor').onclick = () => showTab('editor');
-  document.getElementById('tabPreview').onclick = () => {
-    updatePreviewArea();
-    showTab('preview');
-    window.updatePreviewErrors();
-  };
+  // (Функции прокрутки теперь будут в HTML)
   // --- Функция генерации preview ---
   window.updatePreviewArea = function() {
     // Генерируем экспортируемое содержимое (до сохранения)
