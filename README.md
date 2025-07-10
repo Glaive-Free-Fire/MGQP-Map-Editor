@@ -1,66 +1,113 @@
 # MGQP Map Editor
-![Version](https://img.shields.io/badge/version-1.3.60-blue)
 
-A powerful, browser-based, single-file HTML tool designed for **bilingual editing and translation** of in-game dialogue and other text commands from `MapXXX.txt` files. It provides a user-friendly interface for translators to edit text while respecting character limits and complex formatting tags.
+A visual editor for translating and fixing MGQP / MGQ Paradox map script files.  
+Current version: **1.3.80**
 
-This tool is built to be used offline, running entirely in your web browser without needing a server or internet connection.
+## Main Features
 
-## ✨ Features (v1.3.60)
+- Fast markup, validation, and export of map files in CommonEvent format.
+- Japanese original file support: structure comparison, error highlighting, and restoration.
+- Navigation between "red" (error-prone or too long) lines with instant correction tools.
+- Undo/Redo support for editing safety.
+- **Batch Processing:** Mass check of entire folders for structure errors and event mismatches (third tab).
 
--   **Expanded Command Parsing:** Automatically extracts not just `ShowText`, but also other key commands for a more complete translation workflow:
-    -   `Display Name` (Имена локаций)
-    -   `ShowChoices` (Варианты выбора)
-    -   `When` (Текст, который отображается при выборе)
-    -   `Script` & `ScriptMore` (редактируемые скриптовые команды)
--   **Advanced Bilingual Synchronization:** The core feature for comparing translation with the original.
-    -   **Intelligent Initial Mapping:** The script performs a sophisticated initial sync by matching dialogue segments between named speakers and by command types.
-    -   **Structural Integrity Check:** A **"Status Lamp"** in the control panel shows the percentage of structural similarity between the translated file and the Japanese original based on `CommonEvent` blocks. Mismatches are detailed in the developer console.
-    -   **Structure Restore Mode:** A dedicated **"Восстановить структуру"** button allows forcefully re-syncing specified `CommonEvent` blocks in the translation file to match the structure of the Japanese original, automatically merging name/dialogue pairs into the correct format.
-    -   **Missing Translation Alerts:** If the Japanese file contains text that is missing in the translation file, the editor will automatically insert a **"ТРЕБУЕТСЯ ПЕРЕВОД"** (TRANSLATION REQUIRED) placeholder block.
--   **Duplicate Detection & Autofill:**
-    -   The script automatically finds identical Japanese text blocks.
-    -   A **"Дубликат"** button appears on these lines, allowing you to instantly copy the translation from the original line.
-    -   The button color indicates status: **green** if texts match, **red** if they differ.
--   **Smart Character Counter & Error Highlighting:**
-    -   A highly accurate counter shows the final in-game character count, ignoring all invisible tags (`<...`), codes (`∾n`), and special symbols (`∾`, `∿`).
-    -   Text areas turn **red** if the character count exceeds 50 or if a name tag is syntactically broken.
-    -   **Error Navigation:** Use the **"←"** and **"→"** buttons in the control panel to quickly jump between all text fields highlighted in red.
--   **Game-Aware Line Splitting (`+` button):**
-    -   Features two modes: **Remainder** (fills the line to the limit) and **Equal** (splits in half).
-    -   **Understands the 4-line window limit:** When splitting the 4th line of a dialogue window, it automatically creates a new window for the remaining text, preventing overflow in-game.
-    -   **Improved `[продолжение]:` handling:** Split lines are now always correctly exported, regardless of their position in the file (fixed bug from v1.3.50).
--   **UI & Usability Features:**
-    -   **Hide/Show Scripts Button:** Focus on dialogue by hiding `Script` blocks.
-    -   **Quote Wrap Button:** Select any text and press the `"\...\"` button to wrap it in special quote characters (new in v1.3.60).
-    -   **Full Undo/Redo Support:** `Ctrl+Z` / `Ctrl+Y` and on-screen buttons (added in v1.3.60).
--   **Structure-Aware Saving:** The save function correctly handles all edited block types and correctly marks generated lines that have no Japanese counterpart with a `#+` comment for easy tracking.
--   **Enhanced Preview:** The preview tab now highlights all errors and mismatches in structure in a user-friendly way.
+## How to Use
 
-## 🚀 How to Use
+### 1. Launch
 
-1.  Download the `.html` file and the `restore-mode.js` file into the same folder.
-2.  Open the `.html` file in any modern web browser.
-3.  Click the **"1. Загрузить файл для перевода"** button to load your working file.
-4.  (Optional but recommended) Click the **"2. Загрузить японский файл"** button to load the original Japanese map file for comparison and advanced features.
-5.  Use the control panel in the top-right to streamline your workflow.
-6.  When you are finished, click the **"Скачать изменённый файл"** button to save your work.
+Open `MGQP Map Editor ver 1.3.80.html` in your browser (Chrome/Edge recommended).
 
-## UI Guide
+### 2. UI & Tabs
 
--   **Red Background:** Indicates an error in a dialogue box (over 50 characters or a broken name tag). Use the `←` and `→` buttons in the control panel to navigate between them.
--   **Japanese Original Text:** A non-editable gray box above a translation field for reference.
--   **"Дубликат" Button:** Appears on lines that are duplicates of earlier lines. Click to copy the translation from the original.
--   **"Восстановить структуру" Button:** Activates a special mode for advanced file correction based on the Japanese original (use with care).
--   **Control Panel (Top-Right):** Quick access to toggle **Wrap Mode**, hide/show **Scripts**, navigate errors, add **Quotes**, and **Undo/Redo**.
+#### **Editor** Tab
+- **File Loading:**  
+  - Load your Russian/translated file (`.txt`).
+  - Optionally load the Japanese original.
+- **Editing:**  
+  - Every text block is directly editable.
+  - Errors are highlighted instantly:
+    - Exceeding character limits (50 game characters)
+    - Corrupted name tag
+  - Under each field: character counter and quick "+" / "–" buttons.
+  - Arrow buttons (← →) on top to jump between errors.
+- **Undo/Redo:**  
+  - Clickable icons or keyboard shortcuts (Ctrl+Z, Ctrl+Y).
+- **Wrap Mode:**  
+  - Choose how long lines are split (residual or strict).
 
-## 🆕 What's New in v1.3.60
+#### **Preview** Tab
+- Shows what the final exported file will look like.
+- Compares your version with the editor state:
+  - Shows a detailed list of differences and errors below the preview.
+  - Separate error list (over-limit, corrupted syntax, etc.).
+- Download the final file or copy all content in one click.
 
-- Fixed: `[продолжение]:` (split lines) are now always exported correctly after splitting any text block.
-- Added: **Undo/Redo** for all editing actions (Ctrl+Z/Y or buttons).
-- Added: **Quote Wrap Button** — quickly wrap selection in `∿"..."∿`.
-- Improved: Error navigation — quickly jump to any problematic (red) line using new navigation buttons.
-- Preview and restore logic: Smarter structural comparison, more robust restore of `CommonEvent` events and named blocks.
+#### **Batch Processing** Tab (NEW!)
+- **Batch check** entire folders of maps for structure differences vs the Japanese originals.
+- Load Russian and Japanese map folders (via drag'n'drop or folder selection).
+- For each map, see the structural match percentage, detected problems, and which events differ.
+- Results are shown as a per-file summary with a table of problematic events.
+
+### 3. Restoring Data Structure
+
+- "Restore Data Structure" button reconstructs the Russian map structure using the Japanese original (see the Preview tab).
+- Only mismatched events are replaced; correct events are kept untouched.
+- If name tags differ only by language, but ShowTextAttributes are identical, the matching is now more flexible.
+
+### 4. Quick Actions
+
+- **Jump to error:**  
+  - Arrow buttons let you quickly jump between errors.
+- **Wrap selection in ∿"..."∿:**  
+  - One-click markup for script-specific inline tags.
+
+### 5. Validation & Error Highlighting
+
+- **Automatic error highlighting:**  
+  - Lines exceeding 50 "game" characters or with tag/syntax errors turn red.
+  - The preview always shows a complete error list for rapid debugging.
+- **Batch Check:**  
+  - The Batch tab lets you check all maps in a folder for CommonEvent structure mismatches.
+
+## Editor Features
+
+- Full **Undo/Redo** (Ctrl+Z/Ctrl+Y) for all text fields.
+- Character counter (excluding tags/control codes) in every text block.
+- Jump to next/previous error with dedicated buttons.
+- Mass checking of CommonEvent structure across map folders.
+
+## Structure Comparison & Matching
+
+- Compares event structures (ShowText, ShowTextWithName, ShowTextAttributes, ShowChoices, When, DisplayName) between translation and original.
+- If character names are different but ShowTextAttributes match, the line is considered matched and safe.
+- The Preview tab shows not only the final export, but also lists all diffs and errors for fast diagnostics.
+
+## Requirements
+
+- Any modern browser.
+- Batch processing requires directory picker support (modern browsers only).
+
+## Changelog
+
+### v1.3.80
+- Added the "Batch Processing" tab for mass map structure checking.
+- Improved restore algorithm: smarter matching by ShowTextAttributes (works even if names differ by language).
+- Expanded error highlighting and error listing in Preview.
+- Optimized Undo/Redo, character counter, and file copy/export features.
+
+### v1.3.60 - v3.50
+- Preview tab, structure restore tools, error navigation, auto-line split, advanced highlighting.
+- Mass event comparison and highlighting for all diffs vs original.
+- Major codebase improvements and UI polish.
+
+### Earlier
+- Initial release, basic structure editor, line markup and export, Japanese file loading.
 
 ## License
 
-This project is licensed under the MIT License.
+Free for non-commercial use, forks and contributions are welcome.
+
+---
+
+**MGQP Map Editor** — for those who want to translate fast, clean, and with minimum headache.
+
