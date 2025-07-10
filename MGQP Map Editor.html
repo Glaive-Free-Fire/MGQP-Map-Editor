@@ -2,10 +2,11 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <title>MGQP Map Editor v1.3.60</title>
+  <title>MGQP Map Editor v1.3.80</title>
   <script src="Java scripts/restore-mode.js"></script>
   <script src="Java scripts/test_mode.js"></script>
   <script src="Java scripts/main_script.js"></script>
+  <script src="Java scripts/batch_file_processing.js"></script>
   <style>
     body { font-family: sans-serif; margin: 20px; }
     textarea { width: 100%; height: 60px; box-sizing: border-box; }
@@ -127,11 +128,22 @@
   <div class="floating-tab-panel">
     <button id="tabEditor" class="control-btn" style="font-weight:bold;">Редактор</button>
     <button id="tabPreview" class="control-btn">Предпросмотр файла</button>
+    <button id="tabBatch" class="control-btn">Пакетная обработка</button>
   </div>
   <div id="tabContentEditor"></div>
   <div id="tabContentPreview" style="display:none;">
     <textarea id="previewArea" readonly style="width:100%;height:400px;font-family:monospace;font-size:15px;background:#f9f9f9;"></textarea>
     <div id="previewDiffs" style="margin-top:10px;"></div>
+  </div>
+  <div id="tabContentBatch" style="display:none;">
+    <div style="margin-bottom:14px;">
+      <input type="file" id="batchRuFolder" webkitdirectory multiple style="margin-bottom:8px;">
+      <label for="batchRuFolder">Загрузить папку карт (русский)</label><br>
+      <input type="file" id="batchJpFolder" webkitdirectory multiple style="margin-bottom:8px;">
+      <label for="batchJpFolder">Загрузить папку карт (японский)</label><br>
+      <button id="batchCheckBtn" class="control-btn">Проверить карты на ошибки</button>
+    </div>
+    <div id="batchFileList" style="margin-top:16px;"></div>
   </div>
   <div id="editor"></div>
 
@@ -139,6 +151,9 @@
     // Глобальные массивы инициализируем сразу
     window.textBlocks = window.textBlocks || [];
     window.japBlocks = window.japBlocks || [];
+    // === 1. Глобальные переменные для полного файла ===
+    window.fullRusLines = [];
+    window.fullJapLines = [];
     // ————————————————————————————————————————————
     // Кнопка "\...\": обёртывает любой выделенный текст в ∿"…∿"
     const wrapBtn = document.getElementById('wrapSlashesBtn');
@@ -215,23 +230,26 @@
       loadedFileName = file.name;
       const reader = new FileReader();
       reader.onload = function(evt) {
-        window.originalLines = evt.target.result.split('\n');
-        originalLines = window.originalLines;
+        const lines = evt.target.result.split('\n');
+        window.fullRusLines = lines.slice();
+        window.originalLines = lines.slice();
+        originalLines = lines.slice();
         extractTexts();
+        updateMatchLamp();
       };
       reader.readAsText(file, 'utf-8');
     });
-
     document.getElementById('japaneseFileInput').addEventListener('change', function(e) {
-        const file = e.target.files[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = function(evt) {
-            window.japaneseLines = evt.target.result.split('\n');
-            japaneseLines = window.japaneseLines;
-            extractJapaneseTexts(window.japaneseLines);
-        };
-        reader.readAsText(file, 'utf-8');
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(evt) {
+        window.fullJapLines = evt.target.result.split('\n');
+        window.japaneseLines = window.fullJapLines; // для совместимости
+        extractJapaneseTexts(window.japaneseLines);
+        updateMatchLamp(); // обновить процент для batch
+      };
+      reader.readAsText(file, 'utf-8');
     });
 
     function resetJapaneseBlockMapping() {
@@ -424,29 +442,21 @@
 
     function updateMatchLamp() {
       const lampDiv = document.getElementById('matchLampContainer');
-      if (!window.originalLines || !window.japaneseLines || window.originalLines.length === 0 || window.japaneseLines.length === 0) {
+      // Используем только полный файл!
+      if (!window.fullRusLines || !window.fullJapLines || window.fullRusLines.length === 0 || window.fullJapLines.length === 0) {
         lampDiv.style.display = 'none';
         clearStructMismatchHighlight && clearStructMismatchHighlight();
         return;
       }
-      // --- Новая логика сравнения CommonEvent с учётом склейки именных строк ---
-      const result = checkCommonEventStructureSmart(window.originalLines, window.japaneseLines);
+      const result = checkCommonEventStructureSmart(window.fullRusLines, window.fullJapLines);
       lampDiv.style.display = '';
+      // Показываем процент несовпадения, как в title и batch
       document.getElementById('matchPercent').textContent = result.percent + '%';
       const lamp = document.getElementById('matchLamp');
       lamp.style.background = (result.percent === 100) ? '#8f8' : '#f66';
       lamp.title = (result.percent === 100)
         ? 'Структура CommonEvent полностью совпадает'
-        : 'Структура CommonEvent НЕ совпадает';
-      // Подробный отчёт в консоль
-      if (result.mismatches.length > 0) {
-        // console.warn('Несовпадающие события:');
-        result.mismatches.forEach(m => {
-          // console.warn(`CommonEvent[${m.num}] (${m.name}):`, '\nRU:', m.ru, '\nJP:', m.jp, '\nDIFF:', m.diff);
-        });
-      } else {
-        // console.info('Все CommonEvent с ShowText совпадают по структуре!');
-      }
+        : `Обнаружено ${result.mismatches.length} ошибок, ${result.percent}% совпадения структуры данных`;
     }
 
     // Вспомогательные функции для визуального выделения несовпадающих блоков
@@ -872,6 +882,7 @@
     function pushUndo() {
       undoStack.push({
         textBlocks: JSON.parse(JSON.stringify(textBlocks)),
+        mapDisplayName: mapDisplayName,
         selections: getSelections()
       });
       if (undoStack.length > MAX_HISTORY) undoStack.shift();
@@ -1179,6 +1190,7 @@
         plusBtn.textContent = '+';
         plusBtn.style.marginTop = '4px';
         plusBtn.onclick = function() {
+          saveEditorBlockPosition(); // Сохраняем позицию до изменений
           pushUndo();
           const info = getGameTextInfo(textarea.value);
           let namePart = info.fullPrefix;
@@ -1251,6 +1263,7 @@
             textBlocks.splice(i + 1, 0, { text: rest.trimStart(), type: 'ShowText', idx: undefined, generated: true });
           }
           renderTextBlocks();
+          restoreEditorBlockPosition(); // Восстанавливаем позицию после перерисовки
         };
         
         minusBtn.textContent = '-';
@@ -1284,24 +1297,38 @@
 
       document.getElementById('undoBtn').onclick = function() {
         if (undoStack.length > 0) {
-          redoStack.push({ textBlocks: JSON.parse(JSON.stringify(textBlocks)), selections: getSelections() });
+          redoStack.push({
+            textBlocks: JSON.parse(JSON.stringify(textBlocks)),
+            mapDisplayName: mapDisplayName,
+            selections: getSelections()
+          });
           const state = undoStack.pop();
           textBlocks = state.textBlocks;
+          mapDisplayName = state.mapDisplayName;
+          window.textBlocks = textBlocks;
+          if (textBlocks) textBlocks.forEach(b => { if (b.dom) delete b.dom; });
           renderTextBlocks();
           setTimeout(() => setSelections(state.selections), 0);
         }
       };
       document.getElementById('redoBtn').onclick = function() {
         if (redoStack.length > 0) {
-          undoStack.push({ textBlocks: JSON.parse(JSON.stringify(textBlocks)), selections: getSelections() });
+          undoStack.push({
+            textBlocks: JSON.parse(JSON.stringify(textBlocks)),
+            mapDisplayName: mapDisplayName,
+            selections: getSelections()
+          });
           const state = redoStack.pop();
           textBlocks = state.textBlocks;
+          mapDisplayName = state.mapDisplayName;
+          window.textBlocks = textBlocks;
+          if (textBlocks) textBlocks.forEach(b => { if (b.dom) delete b.dom; });
           renderTextBlocks();
           setTimeout(() => setSelections(state.selections), 0);
         }
       };
       // Восстанавливаем scrollTop после любого рендера редактора
-      restoreEditorScroll();
+      restoreEditorBlockPosition();
     }
 
     // === Функция экранирования первых трёх управляющих последовательностей ===
@@ -1353,14 +1380,16 @@
               case 'ShowText':
                 let txt = block.text.replace(/∿/g, '<<ONE>>');
                 txt = txt.replace(/\n/g, '\\n');
-                txt = txt.replace(/∾+/g, '\\\\');
+                txt = txt.replace(/∾+/g, '\\');
                 txt = txt.replace(/<<ONE>>/g, '\\');
-                txt = txt.replace(/\\{2,}n/g, '\\\\n');
+                txt = txt.replace(/\\{2,}n/g, '\\n');
                 txt = txt.replace(/\\(?=[\?\.!\,—])/g, '');
                 let newText = txt.replace(/(?<!\\)"/g, '\\"');
-                // --- Экранируем только первые три управляющих последовательности ---
-                let escaped = escapeFirstThree(newText);
-                newLine = originalLine.replace(/\[(.*)\]/, `["${escaped}"]`);
+                // --- Применяем escapeFirstThree только к строкам с именем ---
+                if (/^\\n<\\C\[6\].*?\\C\[0\]>/.test(newText)) {
+                  newText = escapeFirstThree(newText);
+                }
+                newLine = originalLine.replace(/\[(.*)\]/, `["${newText}"]`);
                 break;
               case 'ShowTextAttributes':
                 newLine = originalLine.replace(/\[(.*)\]/, `[${block.text}]`);
@@ -1688,23 +1717,23 @@
     window.updatePreviewErrors = updatePreviewErrors;
 
     // === Управление прокруткой редактора ===
-    let editorScrollTop = 0;
-    function saveEditorScroll() {
-      const editorDiv = document.getElementById('editor');
-      if (editorDiv) {
-        editorScrollTop = editorDiv.scrollTop;
-      }
-    }
-    function restoreEditorScroll() {
-      const editorDiv = document.getElementById('editor');
-      if (editorDiv) {
-        setTimeout(() => {
-          editorDiv.scrollTop = editorScrollTop || 0;
-        }, 0);
-      }
-    }
+    // let editorScrollTop = 0;
+    // function saveEditorScroll() {
+    //   const editorDiv = document.getElementById('editor');
+    //   if (editorDiv) {
+    //     editorScrollTop = editorDiv.scrollTop;
+    //   }
+    // }
+    // function restoreEditorScroll() {
+    //   const editorDiv = document.getElementById('editor');
+    //   if (editorDiv) {
+    //     setTimeout(() => {
+    //       editorDiv.scrollTop = editorScrollTop || 0;
+    //     }, 0);
+    //   }
+    // }
     
-    // === Сохранение и восстановление позиции по scrollTop ===
+    // === Сохранение и восстановление позиции по scroll страницы ===
     window.editorScrollPosition = 0;
     function saveEditorBlockPosition() {
       const editorDiv = document.getElementById('editor');
@@ -1725,21 +1754,30 @@
 
     // Универсальный обработчик вкладок
     function showTab(tab) {
-      if (tab === 'editor') {
-        document.getElementById('tabContentEditor').style.display = '';
-        document.getElementById('tabContentPreview').style.display = 'none';
-        document.getElementById('tabEditor').style.fontWeight = 'bold';
-        document.getElementById('tabPreview').style.fontWeight = 'normal';
-        // После рендера восстанавливаем позицию по блоку
-        setTimeout(restoreEditorBlockPosition, 0);
-      } else if (tab === 'preview') {
+      // Если уходим с редактора — сохраняем позицию страницы
+      if (document.getElementById('tabContentEditor').style.display !== 'none' && tab !== 'editor') {
         saveEditorBlockPosition();
-        document.getElementById('tabContentEditor').style.display = 'none';
-        document.getElementById('tabContentPreview').style.display = '';
-        document.getElementById('tabEditor').style.fontWeight = 'normal';
-        document.getElementById('tabPreview').style.fontWeight = 'bold';
-        if (typeof window.updatePreviewArea === 'function') window.updatePreviewArea();
-        if (typeof window.updatePreviewErrors === 'function') window.updatePreviewErrors();
+      }
+      document.getElementById('tabContentEditor').style.display = (tab === 'editor') ? '' : 'none';
+      document.getElementById('tabContentPreview').style.display = (tab === 'preview') ? '' : 'none';
+      document.getElementById('tabContentBatch').style.display = (tab === 'batch') ? '' : 'none';
+      document.getElementById('tabEditor').style.fontWeight = (tab === 'editor') ? 'bold' : 'normal';
+      document.getElementById('tabPreview').style.fontWeight = (tab === 'preview') ? 'bold' : 'normal';
+      document.getElementById('tabBatch').style.fontWeight = (tab === 'batch') ? 'bold' : 'normal';
+      var fileInputsDiv = document.querySelector('.file-inputs');
+      if (fileInputsDiv) {
+        fileInputsDiv.style.display = (tab === 'batch') ? 'none' : '';
+      }
+      if (tab !== 'batch') {
+        document.getElementById('batchFileList').innerHTML = '';
+      }
+      // Если пришли на редактор — восстанавливаем позицию страницы
+      if (tab === 'editor') {
+        setTimeout(restoreEditorBlockPosition, 0);
+      }
+      // Если пришли на предпросмотр — обновляем предпросмотр
+      if (tab === 'preview' && typeof window.updatePreviewArea === 'function') {
+        window.updatePreviewArea();
       }
     }
     
@@ -1754,6 +1792,7 @@
       // Привязываем только один обработчик для каждой вкладки
       document.getElementById('tabEditor').onclick = () => showTab('editor');
       document.getElementById('tabPreview').onclick = () => showTab('preview');
+      document.getElementById('tabBatch').onclick = () => showTab('batch');
     });
   </script>
 </body>
