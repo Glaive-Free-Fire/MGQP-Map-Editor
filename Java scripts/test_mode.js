@@ -118,19 +118,13 @@ document.addEventListener('DOMContentLoaded', function() {
       });
       previewLines = (window.getExportLines ? window.getExportLines(newLines, textBlocks) : newLines);
     }
-    // Двойное экранирование только для строк с именами (шаблон: \n<\C[6]Имя\C[0]>)
+    // Применяем escapeFirstThree только к строкам ShowText с именем
     previewLines = previewLines.map(line => {
       let cleanLine = line.replace(' // RESTORED_FROM_JP', '');
-      let before = cleanLine;
-      // === Новая логика: только первые три управляющих последовательности делаем двойными ===
-      let count = 0;
-      cleanLine = cleanLine.replace(/\\n|<\\?C\[6\]|\\?C\[0\]>/g, function(match) {
-        count++;
-        if (count === 1 && match === '\\n') return '\\\\n';
-        if (count === 2 && (match === '<\\C[6]' || match === '<C[6]')) return '<\\\\C[6]';
-        if (count === 3 && (match === '\\C[0]>' || match === 'C[0]>')) return '\\\\C[0]>';
-        return match;
-      });
+      // Если строка соответствует паттерну имени, применяем escapeFirstThree
+      if (/^\s*ShowText\(\["\\n<\\C\[6\].*?\\C\[0\]>/.test(cleanLine)) {
+        return cleanLine.replace(/\["(.*)"\]/, (m, p1) => '["' + escapeFirstThree(p1) + '"]');
+      }
       return cleanLine;
     });
     document.getElementById('previewArea').value = previewLines.join('\n');
@@ -149,6 +143,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
       }
     }
+    window.updatePreviewErrors();
   }
 });
 
@@ -290,3 +285,16 @@ window.updateAllForBlock = function(block, textarea, plusBtn, minusBtn, counter,
   if (window._origUpdateAllForBlock) window._origUpdateAllForBlock(block, textarea, plusBtn, minusBtn, counter, textBlocks);
   if (typeof window.updatePreviewErrors === 'function') window.updatePreviewErrors();
 };
+
+// === Добавляю функцию escapeFirstThree в начало файла ===
+function escapeFirstThree(str) {
+  let count = 0;
+  let result = str.replace(/\\n|<\\?C\[6\]|\\?C\[0\]>/g, function(match) {
+    count++;
+    if (count === 1 && match === '\\n') return '\\\\n';
+    if (count === 2 && (match === '<\\C[6]' || match === '<C[6]')) return '<\\\\C[6]';
+    if (count === 3 && (match === '\\C[0]>' || match === 'C[0]>')) return '\\\\C[0]>';
+    return match;
+  });
+  return result;
+}
