@@ -29,113 +29,6 @@ function showBatchTab() {
   document.getElementById('tabPreview').style.fontWeight = 'normal';
   document.getElementById('tabBatch').style.fontWeight = 'bold';
 }
-function extractRusBlocks(lines) {
-  return lines
-    .filter(line => !line.includes('#+'))
-    .map(line => {
-      if (line.includes('ShowTextAttributes')) return 'ShowTextAttributes';
-      if (line.includes('ShowChoices')) return 'ShowChoices';
-      if (line.includes('When')) return 'When';
-      if (line.includes('Display Name')) return 'DisplayName';
-      if (line.includes('ShowText')) {
-        if (/ShowText\(\["<∾∾C\[6\].*?∾∾C\[0\]>"\]\)/.test(line)) {
-          return 'ShowTextWithName';
-        } else {
-          return 'ShowText';
-        }
-      }
-    })
-    .filter(Boolean);
-}
-function extractJapBlocks(lines) {
-  const blocks = [];
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].includes('ShowText([')) {
-      const nameMatch = lines[i].match(/ShowText\(\["【.*】"\]\)/);
-      if (nameMatch && i + 1 < lines.length && lines[i+1].includes('ShowText([')) {
-        blocks.push('ShowTextWithName');
-        i++;
-        continue;
-      }
-      blocks.push('ShowText');
-    }
-    if (lines[i].includes('ShowTextAttributes')) blocks.push('ShowTextAttributes');
-    if (lines[i].includes('ShowChoices')) blocks.push('ShowChoices');
-    if (lines[i].includes('When')) blocks.push('When');
-    if (lines[i].includes('Display Name')) blocks.push('DisplayName');
-  }
-  return blocks;
-}
-function compareEventStructures(rusLines, japLines) {
-  const rusBlocks = extractRusBlocks(rusLines);
-  const japBlocks = extractJapBlocks(japLines);
-  return {
-    rusStruct: rusBlocks,
-    japStruct: japBlocks,
-    equal: JSON.stringify(rusBlocks) === JSON.stringify(japBlocks),
-    diff: rusBlocks.map((t, i) => [t, japBlocks[i]])
-  };
-}
-function parseCommonEventsForCompare(lines) {
-  const events = [];
-  let currentEvent = null;
-  let inEvent = false;
-  let inPage = false;
-  let eventLines = [];
-  lines.forEach(line => {
-    let ce = line.match(/^CommonEvent (\d+)/);
-    if (ce) {
-      if (currentEvent) {
-        currentEvent.lines = eventLines.slice();
-        events.push(currentEvent);
-      }
-      currentEvent = { num: parseInt(ce[1]), name: '', lines: [] };
-      inEvent = true;
-      inPage = false;
-      eventLines = [];
-      return;
-    }
-    if (inEvent && line.match(/^Name\s*=\s*"(.*)"/)) {
-      currentEvent.name = RegExp.$1;
-      return;
-    }
-    if (line.match(/^\s*Page \d+/)) {
-      inPage = true;
-      return;
-    }
-    if (inPage) {
-      eventLines.push(line);
-    }
-  });
-  if (currentEvent) {
-    currentEvent.lines = eventLines.slice();
-    events.push(currentEvent);
-  }
-  return events;
-}
-function checkCommonEventStructureSmart(rusLines, japLines) {
-  const ruEvents = parseCommonEventsForCompare(rusLines);
-  const jpEvents = parseCommonEventsForCompare(japLines);
-  let matches = 0;
-  let mismatches = [];
-  let total = 0;
-  ruEvents.forEach(ruEv => {
-    const jpEv = jpEvents.find(e => e.num === ruEv.num);
-    if (!jpEv) return;
-    const ruHasText = ruEv.lines.some(l => l.includes('ShowText'));
-    const jpHasText = jpEv.lines.some(l => l.includes('ShowText'));
-    if (!ruHasText && !jpHasText) return;
-    total++;
-    const cmp = compareEventStructures(ruEv.lines, jpEv.lines);
-    if (cmp.equal) {
-      matches++;
-    } else {
-      mismatches.push({num: ruEv.num, name: ruEv.name, diff: cmp.diff, ru: cmp.rusStruct, jp: cmp.japStruct});
-    }
-  });
-  const percent = total > 0 ? Math.round(matches / total * 100) : 100;
-  return { percent, total, matched: matches, mismatches };
-}
 function readFileAsLines(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -144,10 +37,24 @@ function readFileAsLines(file) {
     reader.readAsText(file, 'utf-8');
   });
 }
+
+function getFileText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => resolve(e.target.result);
+    reader.onerror = reject;
+    reader.readAsText(file, 'utf-8');
+  });
+}
+
 async function batchCheckAllFiles() {
   const batchListDiv = document.getElementById('batchFileList');
   batchListDiv.innerHTML = '';
   const ruNames = Object.keys(ruFiles).sort();
+  const showOnlyErrorLines = document.getElementById('batchShowOnlyErrorLines')?.checked;
+  const showOkFiles = document.getElementById('batchShowOkFiles')?.checked;
+  // Сохраняем результаты для фильтрации
+  const results = [];
   for (const fileName of ruNames) {
     const hasJP = !!jpFiles[fileName];
     const fileDiv = document.createElement('div');
@@ -160,75 +67,106 @@ async function batchCheckAllFiles() {
     fileDiv.style.border = hasJP ? '1.5px solid #bbb' : '1.5px solid #e66';
     fileDiv.style.color = hasJP ? '#222' : '#b00';
     fileDiv.textContent = fileName;
+    let isError = false;
+    let isOkFile = false;
     if (!hasJP) {
       fileDiv.textContent += ' — нет файла для сопоставления';
-      batchListDiv.appendChild(fileDiv);
+      isError = true;
+      results.push({fileDiv, isError, isOkFile});
       continue;
     }
-    let ruLines, jpLines;
+    let ruText, jpText;
     try {
-      ruLines = await readFileAsLines(ruFiles[fileName]);
-      jpLines = await readFileAsLines(jpFiles[fileName]);
+      ruText = await getFileText(ruFiles[fileName]);
+      jpText = await getFileText(jpFiles[fileName]);
     } catch (e) {
       fileDiv.textContent += ' — ошибка чтения файлов';
       fileDiv.style.background = '#fff0f0';
       fileDiv.style.border = '1.5px solid #e66';
       fileDiv.style.color = '#b00';
-      batchListDiv.appendChild(fileDiv);
+      isError = true;
+      results.push({fileDiv, isError, isOkFile});
       continue;
     }
-    const ruEvents = parseCommonEventsForCompare(ruLines);
-    const jpEvents = parseCommonEventsForCompare(jpLines);
-    let total = 0, matched = 0, hasMismatch = false;
-    const rows = [];
-    ruEvents.forEach(ruEv => {
-      const jpEv = jpEvents.find(e => e.num === ruEv.num);
-      if (!jpEv) return;
-      const ruHasText = ruEv.lines.some(l => l.includes('ShowText'));
-      const jpHasText = jpEv.lines.some(l => l.includes('ShowText'));
-      if (!ruHasText && !jpHasText) return;
-      total++;
-      const cmp = compareEventStructures(ruEv.lines, jpEv.lines);
-      const percent = cmp.equal ? 100 : Math.round(100 * (cmp.rusStruct.length === 0 ? 1 : cmp.rusStruct.filter((b, i) => b === cmp.japStruct[i]).length / cmp.rusStruct.length));
-      if (cmp.equal) matched++;
-      else hasMismatch = true;
-      rows.push({num: ruEv.num, percent, equal: cmp.equal});
-    });
-    const percent = total > 0 ? Math.round(matched / total * 100) : 100;
+    // --- Используем window.checkMapStructureMatch ---
+    let result;
+    if (window.checkMapStructureMatch) {
+      result = window.checkMapStructureMatch(jpText, ruText);
+    } else {
+      fileDiv.textContent += ' — функция проверки структуры не найдена';
+      fileDiv.style.background = '#fff0f0';
+      fileDiv.style.border = '1.5px solid #e66';
+      fileDiv.style.color = '#b00';
+      isError = true;
+      results.push({fileDiv, isError, isOkFile});
+      continue;
+    }
+    // --- Выводим процент совпадения и ошибки ---
+    const percent = result.percent;
+    const errorCount = result.grouped ? result.grouped.reduce((acc, ev) => acc + ev.pages.reduce((a, p) => a + (p.errors ? p.errors.length : 0), 0), 0) : (result.errors ? result.errors.length : 0);
     const summary = document.createElement('div');
     summary.style.marginTop = '6px';
     summary.style.fontWeight = 'bold';
     summary.style.color = percent === 100 ? '#226922' : '#b00';
-    summary.textContent = percent === 100 ? 'Ошибок нет, 100% совпадение структуры данных' : `Обнаружено ${total - matched} ошибок, ${percent}% совпадения структуры данных`;
+    summary.textContent = percent === 100 ? 'Ошибок нет, 100% совпадение структуры данных' : `Обнаружено ${errorCount} ошибок, ${percent}% совпадения структуры данных`;
     fileDiv.appendChild(summary);
-    if (percent !== 100 && rows.length > 0) {
-      const table = document.createElement('table');
-      table.style.marginTop = '8px';
-      table.style.borderCollapse = 'collapse';
-      table.style.width = '100%';
-      const thead = document.createElement('thead');
-      thead.innerHTML = '<tr><th style="text-align:left;padding:2px 8px;">CommonEvent</th><th style="text-align:left;padding:2px 8px;">%</th><th style="text-align:left;padding:2px 8px;">Статус</th></tr>';
-      table.appendChild(thead);
-      const tbody = document.createElement('tbody');
-      rows.forEach(row => {
-        if (row.equal) return;
-        const tr = document.createElement('tr');
-        tr.style.background = '#fff0f0';
-        tr.style.color = '#b00';
-        tr.style.borderBottom = '1px solid #eee';
-        tr.innerHTML = `<td style="padding:2px 8px;">EV${String(row.num).padStart(3, '0')}</td><td style="padding:2px 8px;">${row.percent}%</td><td style="padding:2px 8px;">Есть отличия</td>`;
-        tbody.appendChild(tr);
+    // --- Подробная статистика ---
+    if (result.grouped && result.grouped.length > 0) {
+      let statHtml = '';
+      result.grouped.forEach(ev => {
+        ev.pages.forEach(page => {
+          if (page.ok) {
+            if (!showOnlyErrorLines) {
+              statHtml += `<div style='color:#228B22; font-weight:bold; margin:6px 0 2px 0;'>CommonEvent ${ev.eid} (${ev.name}), Page ${page.page}: OK</div>`;
+            }
+          } else {
+            statHtml += `<div style='color:#b00; font-weight:bold; margin:10px 0 2px 0;'>CommonEvent ${ev.eid} (${ev.name}), Page ${page.page}</div>`;
+            page.errors.forEach(err => {
+              statHtml += `<div style='color:#b00; margin-left:12px; margin-bottom:8px;'><b>Строка ${err.line}:</b> ${err.msg}<br>`;
+              if (err.jp || err.ru) {
+                statHtml += `<div style='font-size:13px; margin-top:2px;'><span style='color:#444;'>JP:</span> <pre style='display:inline; background:#f7f7f7; border-radius:4px; padding:2px 6px;'>${(err.jp||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre><br><span style='color:#444;'>RU:</span> <pre style='display:inline; background:#f7f7f7; border-radius:4px; padding:2px 6px;'>${(err.ru||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre></div>`;
+              }
+              statHtml += `</div>`;
+            });
+          }
+        });
       });
-      table.appendChild(tbody);
-      fileDiv.appendChild(table);
+      if (percent === 100 || statHtml === '') {
+        if (!showOnlyErrorLines) {
+          statHtml += '<span style="color:#393">Структура CommonEvent полностью совпадает.</span>';
+        }
+      }
+      const statDiv = document.createElement('div');
+      statDiv.innerHTML = statHtml;
+      fileDiv.appendChild(statDiv);
+    }
+    isError = errorCount > 0 || percent < 100;
+    isOkFile = percent === 100 && errorCount === 0;
+    results.push({fileDiv, isError, isOkFile});
+  }
+  // --- Фильтрация вывода ---
+  results.forEach(({fileDiv, isError, isOkFile}) => {
+    if ((!showOkFiles && isOkFile) || (showOkFiles && false)) {
+      // скрываем исправные файлы если чекбокс выключен
+      return;
     }
     batchListDiv.appendChild(fileDiv);
-  }
+  });
 }
+
 document.addEventListener('DOMContentLoaded', function() {
   document.getElementById('batchRuFolder').addEventListener('change', e => handleFolderInput(e, 'ru'));
   document.getElementById('batchJpFolder').addEventListener('change', e => handleFolderInput(e, 'jp'));
   const checkBtn = document.getElementById('batchCheckBtn');
   if (checkBtn) checkBtn.onclick = batchCheckAllFiles;
   document.getElementById('tabBatch').onclick = showBatchTab;
+  // --- Обработчики чекбоксов ---
+  const showOnlyErrorLinesBox = document.getElementById('batchShowOnlyErrorLines');
+  if (showOnlyErrorLinesBox) {
+    showOnlyErrorLinesBox.addEventListener('change', batchCheckAllFiles);
+  }
+  const showOkFilesBox = document.getElementById('batchShowOkFiles');
+  if (showOkFilesBox) {
+    showOkFilesBox.addEventListener('change', batchCheckAllFiles);
+  }
 });

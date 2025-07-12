@@ -298,3 +298,120 @@ function escapeFirstThree(str) {
   });
   return result;
 }
+
+// --- Проверка структуры для красной лампочки ---
+window.checkMapStructureMatch = function(jpContent, ruContent) {
+  function parseMapFile(content) {
+    const events = {};
+    let currentEvent = null, currentPage = null;
+    const lines = content.split(/\r?\n/);
+    let pageIdx = null;
+    for (let i = 0; i < lines.length; i++) {
+      let line = lines[i].trim();
+      if (!line) continue;
+      if (line.startsWith('CommonEvent')) {
+        const match = line.match(/^CommonEvent (\d+)/);
+        if (match) {
+          currentEvent = match[1];
+          events[currentEvent] = { name: '', pages: [] };
+          pageIdx = null;
+        } else {
+          currentEvent = null;
+        }
+        continue;
+      }
+      if (line.startsWith('Name = ')) {
+        if (currentEvent) events[currentEvent].name = line.replace('Name = ', '').replace(/^"|"$/g, '');
+        continue;
+      }
+      if (line.startsWith('Page ')) {
+        const match = line.match(/^Page (\d+)/);
+        if (match) {
+          pageIdx = Number(match[1]);
+          if (currentEvent) events[currentEvent].pages[pageIdx] = [];
+        } else {
+          pageIdx = null;
+        }
+        continue;
+      }
+      if (currentEvent !== null && pageIdx !== null) {
+        let command = line.match(/^(\w+)/);
+        if (!command) continue;
+        command = command[1];
+        let raw = line;
+        events[currentEvent].pages[pageIdx].push({ command, raw, lineNum: i });
+      }
+    }
+    return events;
+  }
+  function compareEvents(jpEvents, ruEvents) {
+    let total = 0, ok = 0, errors = [], grouped = [];
+    let totalLines = 0, okLines = 0;
+    for (const [eid, jpEv] of Object.entries(jpEvents)) {
+      const ruEv = ruEvents[eid];
+      if (!ruEv) {
+        errors.push(`Нет CommonEvent ${eid} (${jpEv.name}) в русском файле`);
+        grouped.push({ eid, name: jpEv.name, pages: [{ page: 0, ok: false, errors: [`Нет CommonEvent ${eid} (${jpEv.name}) в русском файле`] }] });
+        continue;
+      }
+      let eventGroup = { eid, name: jpEv.name, pages: [] };
+      for (let p = 0; p < jpEv.pages.length; p++) {
+        const jpPage = jpEv.pages[p] || [];
+        const ruPage = (ruEv.pages[p] || []);
+        let jpLen = jpPage.length;
+        let ruLen = ruPage.length;
+        let issues = [];
+        for (let i = 0, j = 0; i < jpLen || j < ruLen;) {
+          const jpCmd = jpPage[i]?.command;
+          const ruCmd = ruPage[j]?.command;
+          const jpRaw = jpPage[i]?.raw;
+          const ruRaw = ruPage[j]?.raw;
+          if (ruRaw && (ruRaw.trim().startsWith('#+') || /#\+\s*$/.test(ruRaw))) { j++; continue; }
+          totalLines++;
+          if (
+            jpCmd === 'ShowText' && jpRaw && jpRaw.match(/^\s*ShowText\(\["【.*】"\]\)/) &&
+            jpPage[i+1] && jpPage[i+1].command === 'ShowText'
+          ) {
+            if (ruCmd === 'ShowText') {
+              okLines++;
+              i += 2; j += 1; continue;
+            } else {
+              issues.push({
+                line: i+1,
+                msg: `тип команды не совпадает (JP: <b>ShowText</b>, RU: <b>${ruCmd || '—'}</b>)`,
+                jp: jpRaw + '\n' + (jpPage[i+1]?.raw || ''),
+                ru: ruRaw || ''
+              });
+              i += 2; j += 1; continue;
+            }
+          }
+          if (jpCmd !== ruCmd) {
+            issues.push({
+              line: i+1,
+              msg: `тип команды не совпадает (JP: <b>${jpCmd || '—'}</b>, RU: <b>${ruCmd || '—'}</b>)`,
+              jp: jpRaw || '',
+              ru: ruRaw || ''
+            });
+          } else {
+            okLines++;
+          }
+          i += 1; j += 1;
+        }
+        total++;
+        if (issues.length === 0) {
+          ok++;
+          eventGroup.pages.push({ page: p, ok: true, errors: [] });
+        } else {
+          errors.push(...issues.map(e => `CommonEvent ${eid} (${jpEv.name}), Page ${p}: Строка ${e.line}: ${e.msg}\nJP: ${e.jp}\nRU: ${e.ru}`));
+          eventGroup.pages.push({ page: p, ok: false, errors: issues });
+        }
+      }
+      grouped.push(eventGroup);
+    }
+    const percent = totalLines ? Math.round(okLines/totalLines*100) : 100;
+    return { percent, total, ok, errors, grouped, totalLines, okLines };
+  }
+  const jpEvents = parseMapFile(jpContent);
+  const ruEvents = parseMapFile(ruContent);
+  return compareEvents(jpEvents, ruEvents);
+};
