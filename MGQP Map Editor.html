@@ -143,6 +143,14 @@
       <label for="batchJpFolder">Загрузить папку карт (японский)</label><br>
       <button id="batchCheckBtn" class="control-btn">Проверить карты на ошибки</button>
     </div>
+    <div style="margin-bottom:10px; display:flex; gap:24px; align-items:center;">
+      <label style="font-size:15px; font-weight:normal; cursor:pointer;">
+        <input type="checkbox" id="batchShowOnlyErrorLines" checked style="vertical-align:middle; margin-right:6px;">Показывать только строки с ошибками
+      </label>
+      <label style="font-size:15px; font-weight:normal; cursor:pointer;">
+        <input type="checkbox" id="batchShowOkFiles" style="vertical-align:middle; margin-right:6px;">Показывать исправные файлы
+      </label>
+    </div>
     <div id="batchFileList" style="margin-top:16px;"></div>
   </div>
   <div id="editor"></div>
@@ -224,6 +232,60 @@
       });
     }
 
+    function updateMatchLamp() {
+      const lampDiv = document.getElementById('matchLampContainer');
+      if (!window.fullRusLines || !window.fullJapLines || window.fullRusLines.length === 0 || window.fullJapLines.length === 0) {
+        lampDiv.style.display = 'none';
+        document.getElementById('previewDiffs').innerHTML = '';
+        return;
+      }
+      const jpContent = window.fullJapLines.join('\n');
+      const ruContent = window.fullRusLines.join('\n');
+      const result = window.checkMapStructureMatch(jpContent, ruContent);
+      lampDiv.style.display = '';
+      document.getElementById('matchPercent').textContent = result.percent + '%';
+      // === Считаем точное количество ошибок (строк) ===
+      let errorCount = 0;
+      if (result.grouped) {
+        result.grouped.forEach(ev => {
+          ev.pages.forEach(page => {
+            if (page.errors && page.errors.length > 0) errorCount += page.errors.length;
+          });
+        });
+      } else {
+        errorCount = result.errors ? result.errors.length : 0;
+      }
+      const lamp = document.getElementById('matchLamp');
+      lamp.style.background = (errorCount === 0) ? '#8f8' : '#f66';
+      lamp.title = (errorCount === 0)
+        ? 'Структура CommonEvent полностью совпадает'
+        : `Обнаружено ${errorCount} ошибок, ${result.percent}% совпадения структуры данных`;
+      // --- Вывод подробной статистики во вкладке предпросмотра ---
+      let statHtml = '';
+      if (result.grouped) {
+        result.grouped.forEach(ev => {
+          ev.pages.forEach(page => {
+            if (page.ok) {
+              statHtml += `<div style='color:#228B22; font-weight:bold; margin:6px 0 2px 0;'>CommonEvent ${ev.eid} (${ev.name}), Page ${page.page}: OK</div>`;
+            } else {
+              statHtml += `<div style='color:#b00; font-weight:bold; margin:10px 0 2px 0;'>CommonEvent ${ev.eid} (${ev.name}), Page ${page.page}</div>`;
+              page.errors.forEach(err => {
+                statHtml += `<div style='color:#b00; margin-left:12px; margin-bottom:8px;'><b>Строка ${err.line}:</b> ${err.msg}<br>`;
+                if (err.jp || err.ru) {
+                  statHtml += `<div style='font-size:13px; margin-top:2px;'><span style='color:#444;'>JP:</span> <pre style='display:inline; background:#f7f7f7; border-radius:4px; padding:2px 6px;'>${(err.jp||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre><br><span style='color:#444;'>RU:</span> <pre style='display:inline; background:#f7f7f7; border-radius:4px; padding:2px 6px;'>${(err.ru||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre></div>`;
+                }
+                statHtml += `</div>`;
+              });
+            }
+          });
+        });
+        if (result.grouped.length === 0) {
+          statHtml += '<span style="color:#393">Структура CommonEvent полностью совпадает.</span>';
+        }
+      }
+      document.getElementById('previewDiffs').innerHTML = statHtml;
+    }
+
     document.getElementById('fileInput').addEventListener('change', function(e) {
       const file = e.target.files[0];
       if (!file) return;
@@ -247,7 +309,7 @@
         window.fullJapLines = evt.target.result.split('\n');
         window.japaneseLines = window.fullJapLines; // для совместимости
         extractJapaneseTexts(window.japaneseLines);
-        updateMatchLamp(); // обновить процент для batch
+        updateMatchLamp();
       };
       reader.readAsText(file, 'utf-8');
     });
@@ -327,138 +389,6 @@
         });
     }
 
-    // --- Новая функция сравнения CommonEvent по последней инструкции ---
-    function extractRusBlocks(lines) {
-        // Возвращает массив типов по очереди для события (без #+)
-        return lines
-            .filter(line => !line.includes('#+'))
-            .map(line => {
-                if (line.includes('ShowTextAttributes')) return 'ShowTextAttributes';
-                if (line.includes('ShowChoices')) return 'ShowChoices';
-                if (line.includes('When')) return 'When';
-                if (line.includes('Display Name')) return 'DisplayName';
-                if (line.includes('ShowText')) {
-                    // Имя уже встроено в текст
-                    return 'ShowTextWithName';
-                }
-            })
-            .filter(Boolean);
-    }
-    function extractJapBlocks(lines) {
-        // Возвращает массив типов по очереди для события, склеивая пары "имя + текст"
-        const blocks = [];
-        for (let i = 0; i < lines.length; i++) {
-            if (lines[i].includes('ShowText([')) {
-                const nameMatch = lines[i].match(/ShowText\(\["【.*】"\]\)/);
-                if (nameMatch && i + 1 < lines.length && lines[i+1].includes('ShowText([')) {
-                    // Это пара: имя + текст. Склеиваем в один блок.
-                    blocks.push('ShowTextWithName');
-                    i++; // пропускаем следующую, т.к. уже склеили
-                    continue;
-                }
-                blocks.push('ShowTextWithName'); // одиночный ShowText тоже считаем с именем для честного сравнения
-            }
-            if (lines[i].includes('ShowTextAttributes')) blocks.push('ShowTextAttributes');
-            if (lines[i].includes('ShowChoices')) blocks.push('ShowChoices');
-            if (lines[i].includes('When')) blocks.push('When');
-            if (lines[i].includes('Display Name')) blocks.push('DisplayName');
-        }
-        return blocks;
-    }
-    function compareEventStructures(rusLines, japLines) {
-        const rusBlocks = extractRusBlocks(rusLines);
-        const japBlocks = extractJapBlocks(japLines);
-        return {
-            rusStruct: rusBlocks,
-            japStruct: japBlocks,
-            equal: JSON.stringify(rusBlocks) === JSON.stringify(japBlocks),
-            diff: rusBlocks.map((t, i) => [t, japBlocks[i]])
-        };
-    }
-    function parseCommonEventsForCompare(lines) {
-        // Возвращает массив событий: {num, name, lines: [...]} для всего файла
-        const events = [];
-        let currentEvent = null;
-        let inEvent = false;
-        let inPage = false;
-        let eventLines = [];
-        lines.forEach(line => {
-            let ce = line.match(/^CommonEvent (\d+)/);
-            if (ce) {
-                if (currentEvent) {
-                    currentEvent.lines = eventLines.slice();
-                    events.push(currentEvent);
-                }
-                currentEvent = { num: parseInt(ce[1]), name: '', lines: [] };
-                inEvent = true;
-                inPage = false;
-                eventLines = [];
-                return;
-            }
-            if (inEvent && line.match(/^Name\s*=\s*"(.*)"/)) {
-                currentEvent.name = RegExp.$1;
-                return;
-            }
-            if (line.match(/^\s*Page \d+/)) {
-                inPage = true;
-                return;
-            }
-            if (inPage) {
-                eventLines.push(line);
-            }
-        });
-        if (currentEvent) {
-            currentEvent.lines = eventLines.slice();
-            events.push(currentEvent);
-        }
-        return events;
-    }
-    function checkCommonEventStructureSmart(rusLines, japLines) {
-        const ruEvents = parseCommonEventsForCompare(rusLines);
-        const jpEvents = parseCommonEventsForCompare(japLines);
-        // Сопоставляем по номеру события
-        let matches = 0;
-        let mismatches = [];
-        let total = 0;
-        ruEvents.forEach(ruEv => {
-            // Ищем событие с тем же номером
-            const jpEv = jpEvents.find(e => e.num === ruEv.num);
-            if (!jpEv) return; // нет такого события в японском
-            // Сравниваем только если есть ShowText/ShowTextAttributes
-            const ruHasText = ruEv.lines.some(l => l.includes('ShowText'));
-            const jpHasText = jpEv.lines.some(l => l.includes('ShowText'));
-            if (!ruHasText && !jpHasText) return;
-            total++;
-            const cmp = compareEventStructures(ruEv.lines, jpEv.lines);
-            if (cmp.equal) {
-                matches++;
-            } else {
-                mismatches.push({num: ruEv.num, name: ruEv.name, diff: cmp.diff, ru: cmp.rusStruct, jp: cmp.japStruct});
-            }
-        });
-        const percent = total > 0 ? Math.round(matches / total * 100) : 100;
-        return { percent, total, matched: matches, mismatches };
-    }
-
-    function updateMatchLamp() {
-      const lampDiv = document.getElementById('matchLampContainer');
-      // Используем только полный файл!
-      if (!window.fullRusLines || !window.fullJapLines || window.fullRusLines.length === 0 || window.fullJapLines.length === 0) {
-        lampDiv.style.display = 'none';
-        clearStructMismatchHighlight && clearStructMismatchHighlight();
-        return;
-      }
-      const result = checkCommonEventStructureSmart(window.fullRusLines, window.fullJapLines);
-      lampDiv.style.display = '';
-      // Показываем процент несовпадения, как в title и batch
-      document.getElementById('matchPercent').textContent = result.percent + '%';
-      const lamp = document.getElementById('matchLamp');
-      lamp.style.background = (result.percent === 100) ? '#8f8' : '#f66';
-      lamp.title = (result.percent === 100)
-        ? 'Структура CommonEvent полностью совпадает'
-        : `Обнаружено ${result.mismatches.length} ошибок, ${result.percent}% совпадения структуры данных`;
-    }
-
     // Вспомогательные функции для визуального выделения несовпадающих блоков
     function highlightStructMismatch(indices) {
       // Сначала убираем все старые выделения
@@ -471,14 +401,6 @@
       indices.forEach(idx => {
         if (mainBlocks[idx] && mainBlocks[idx].b.dom && mainBlocks[idx].b.dom.rusInput) {
           mainBlocks[idx].b.dom.rusInput.style.outline = '2px solid #f00';
-        }
-      });
-    }
-    function clearStructMismatchHighlight() {
-      const allowedTypes = ['ShowText', 'DisplayName', 'ShowChoices', 'When'];
-      window.textBlocks.forEach(b => {
-        if (b.dom && b.dom.rusInput && allowedTypes.includes(b.type)) {
-          b.dom.rusInput.style.outline = '';
         }
       });
     }
@@ -576,7 +498,6 @@
       // (больше не ищем DisplayName в textBlocks)
       resetJapaneseBlockMapping();
       renderTextBlocks();
-      updateMatchLamp();
     }
 
     function extractJapaneseTexts(lines) {
@@ -687,54 +608,10 @@
       // --- Исключаем Display Name из japBlocks (на всякий случай) ---
       window.japBlocks = japBlocks = japBlocks.filter(b => b.type !== 'DisplayName');
       linkAndRender();
-      updateMatchLamp();
     }
 
     function reorderTextBlocksByJapBlocks() {
-      if (!window.japBlocks || window.japBlocks.length === 0) return;
-      if (!window.japaneseLines || !window.originalLines) return;
-      const jpEvents = (typeof parseCommonEventsForCompare === 'function' ? parseCommonEventsForCompare : window.parseCommonEventsForCompare)(window.japaneseLines);
-      const ruEvents = (typeof parseCommonEventsForCompare === 'function' ? parseCommonEventsForCompare : window.parseCommonEventsForCompare)(window.originalLines);
-      let newOrder = [];
-      jpEvents.forEach((jpEv, evIdx) => {
-        const ruEv = ruEvents.find(e => e.num === jpEv.num);
-        let jpStart = jpEv.lines.length > 0 ? jpEv.lines[0] : 0;
-        let jpEnd = jpStart + jpEv.lines.length;
-        for (let j = 0; j < jpEv.lines.length; j++) {
-          const japBlockIdx = jpStart + j;
-          const jpBlock = window.japBlocks[japBlockIdx];
-          let ruBlock = undefined;
-          if (ruEv && window.japaneseBlockMapping && typeof window.japaneseBlockMapping[japBlockIdx] === 'number' &&
-              isFinite(window.japaneseBlockMapping[japBlockIdx]) &&
-              window.japaneseBlockMapping[japBlockIdx] >= 0 &&
-              window.japaneseBlockMapping[japBlockIdx] < window.textBlocks.length) {
-            ruBlock = window.textBlocks[window.japaneseBlockMapping[japBlockIdx]];
-          }
-          if (ruBlock) {
-            // Копируем блок из русского файла (с текстом)
-            newOrder.push({...ruBlock});
-          } else {
-            // Если нет соответствия — добавляем заглушку
-            newOrder.push({
-              text: '',
-              type: jpBlock ? (jpBlock.blockType || 'ShowText') : 'ShowText',
-              idx: undefined,
-              generated: true,
-              japaneseLink: jpBlock ? { type: jpBlock.type, text: jpBlock.text } : undefined
-            });
-          }
-        }
-      });
-      // ДОназначить japaneseLink для всех блоков, если ещё не назначен
-      for (let i = 0; i < newOrder.length; i++) {
-        if (!newOrder[i].japaneseLink && window.japBlocks && window.japBlocks[i]) {
-          newOrder[i].japaneseLink = { type: window.japBlocks[i].type, text: window.japBlocks[i].text };
-        }
-      }
-      // ВАЖНО: не пересоздаём window.textBlocks полностью, если newOrder короче!
-      if (newOrder.length > 0 && newOrder.filter(b => b.text && b.text.trim()).length > 0) {
-        window.textBlocks = newOrder;
-      }
+      // Заглушка: логика будет реализована позже
     }
 
     function linkAndRender() {
@@ -1664,8 +1541,10 @@
     });
 
     // === Обновление списка ошибок под предпросмотром ===
-    function updatePreviewErrors() {
+    window.updatePreviewErrors = function() {
       const diffsDiv = document.getElementById('previewDiffs');
+      let html = '';
+      // 1. Ошибки по лимиту символов и синтаксису
       if (!window.textBlocks || window.textBlocks.length === 0) {
         diffsDiv.innerHTML = '';
         return;
@@ -1700,21 +1579,40 @@
           }
         }
       });
-      if (errors.length === 0) {
-        diffsDiv.innerHTML = '<span style="color:#393">Ошибок не обнаружено.</span>';
-        return;
+      if (errors.length > 0) {
+        html += '<b>Ошибки в строках:</b><ul style="color:#b00; margin-top:4px;">';
+        errors.forEach(err => {
+          html += `<li><b>${err.label}</b> (${err.type}): ${err.reason}</li>`;
+        });
+        html += '</ul><hr style="margin:10px 0;">';
       }
-      let html = '<b>Ошибки в строках:</b><ul style="color:#b00; margin-top:4px;">';
-      errors.forEach(err => {
-        html += `<li><b>${err.label}</b> (${err.type}): ${err.reason}</li>`;
-      });
-      html += '</ul>';
+      // 2. Статистика сопоставления структуры (группированный вывод)
+      if (window.fullRusLines && window.fullJapLines && window.fullRusLines.length > 0 && window.fullJapLines.length > 0 && window.checkMapStructureMatch) {
+        const jpContent = window.fullJapLines.join('\n');
+        const ruContent = window.fullRusLines.join('\n');
+        const result = window.checkMapStructureMatch(jpContent, ruContent);
+        result.grouped.forEach(ev => {
+          ev.pages.forEach(page => {
+            if (page.ok) {
+              html += `<div style='color:#228B22; font-weight:bold; margin:6px 0 2px 0;'>CommonEvent ${ev.eid} (${ev.name}), Page ${page.page}: OK</div>`;
+            } else {
+              html += `<div style='color:#b00; font-weight:bold; margin:10px 0 2px 0;'>CommonEvent ${ev.eid} (${ev.name}), Page ${page.page}</div>`;
+              page.errors.forEach(err => {
+                html += `<div style='color:#b00; margin-left:12px; margin-bottom:8px;'><b>Строка ${err.line}:</b> ${err.msg}<br>`;
+                if (err.jp || err.ru) {
+                  html += `<div style='font-size:13px; margin-top:2px;'><span style='color:#444;'>JP:</span> <pre style='display:inline; background:#f7f7f7; border-radius:4px; padding:2px 6px;'>${(err.jp||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre><br><span style='color:#444;'>RU:</span> <pre style='display:inline; background:#f7f7f7; border-radius:4px; padding:2px 6px;'>${(err.ru||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre></div>`;
+                }
+                html += `</div>`;
+              });
+            }
+          });
+        });
+        if (result.grouped.length === 0) {
+          html += '<span style="color:#393">Структура CommonEvent полностью совпадает.</span>';
+        }
+      }
       diffsDiv.innerHTML = html;
-    }
-
-
-    // --- Также обновляем ошибки при каждом изменении textBlocks ---
-    window.updatePreviewErrors = updatePreviewErrors;
+    };
 
     // === Управление прокруткой редактора ===
     // let editorScrollTop = 0;
