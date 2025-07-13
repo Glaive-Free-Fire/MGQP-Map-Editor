@@ -102,7 +102,7 @@
     <button id="copyBtn" class="control-btn" style="display:none;">Скопировать всё извлечённое</button>
 
     <!-- Кнопка восстановления структуры -->
-    <button id="restoreStructBtn" class="control-btn" style="background:#cdf;">Восстановить структуру данных</button>
+    <button id="restoreStructBtn" class="control-btn" style="background:#cdf;">Восстановить структуру CommonEvent</button>
 
     <!-- Лампочка и процент совпадения -->
     <div id="matchLampContainer" style="display:none; text-align:center;">
@@ -232,7 +232,7 @@
       });
     }
 
-    function updateMatchLamp() {
+    window.updateMatchLamp = function() {
       const lampDiv = document.getElementById('matchLampContainer');
       if (!window.fullRusLines || !window.fullJapLines || window.fullRusLines.length === 0 || window.fullJapLines.length === 0) {
         lampDiv.style.display = 'none';
@@ -270,7 +270,9 @@
             } else {
               statHtml += `<div style='color:#b00; font-weight:bold; margin:10px 0 2px 0;'>CommonEvent ${ev.eid} (${ev.name}), Page ${page.page}</div>`;
               page.errors.forEach(err => {
-                statHtml += `<div style='color:#b00; margin-left:12px; margin-bottom:8px;'><b>Строка ${err.line}:</b> ${err.msg}<br>`;
+                // --- Добавляем номер BranchEnd если он есть ---
+                const branchEndInfo = err.branchEndNumber !== undefined ? `<div style='color:#666; font-size:12px; margin-bottom:2px;'>BranchEnd ${err.branchEndNumber}</div>` : '';
+                statHtml += `<div style='color:#b00; margin-left:12px; margin-bottom:8px;'>${branchEndInfo}<b>Строка ${err.line}:</b> ${err.msg}<br>`;
                 if (err.jp || err.ru) {
                   statHtml += `<div style='font-size:13px; margin-top:2px;'><span style='color:#444;'>JP:</span> <pre style='display:inline; background:#f7f7f7; border-radius:4px; padding:2px 6px;'>${(err.jp||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre><br><span style='color:#444;'>RU:</span> <pre style='display:inline; background:#f7f7f7; border-radius:4px; padding:2px 6px;'>${(err.ru||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre></div>`;
                 }
@@ -407,7 +409,7 @@
 
     let mapDisplayName = '';
 
-    function extractTexts() {
+    window.extractTexts = function() {
       window.textBlocks = textBlocks = [];
       // --- Парсим Display Name отдельно ---
       mapDisplayName = '';
@@ -1228,9 +1230,8 @@
       });
       let exportLines;
       if (window.restoreModeEnabled && window.japaneseLines && window.originalLines) {
-        const result = checkCommonEventStructureSmart(window.originalLines, window.japaneseLines);
-        const mismatchedNums = result.mismatches.map(m => m.num);
-        exportLines = restoreRussianStructure(window.originalLines, window.japaneseLines, mismatchedNums);
+        // Если восстановление уже было выполнено, используем обновленные строки
+        exportLines = window.fullRusLines.slice();
       } else {
         let newLines = [...originalLines];
         let lineInsertOffset = 0;
@@ -1527,8 +1528,12 @@
 
     // === Обработчик кнопки восстановления структуры ===
     document.getElementById('restoreStructBtn').onclick = function() {
-      window.restoreModeEnabled = true;
-      alert("Жёсткий режим восстановления структуры активирован.\nИзменения CommonEvent будут применены только при сохранении!");
+      if (typeof window.immediateRestoreStructure === 'function') {
+        window.immediateRestoreStructure();
+      } else {
+        window.restoreModeEnabled = true;
+        alert("Жёсткий режим восстановления структуры активирован.\nИзменения CommonEvent будут применены только при сохранении!");
+      }
     };
 
     document.addEventListener('DOMContentLoaded', function() {
@@ -1581,9 +1586,9 @@
       });
       if (errors.length > 0) {
         html += '<b>Ошибки в строках:</b><ul style="color:#b00; margin-top:4px;">';
-        errors.forEach(err => {
-          html += `<li><b>${err.label}</b> (${err.type}): ${err.reason}</li>`;
-        });
+      errors.forEach(err => {
+        html += `<li><b>${err.label}</b> (${err.type}): ${err.reason}</li>`;
+      });
         html += '</ul><hr style="margin:10px 0;">';
       }
       // 2. Статистика сопоставления структуры (группированный вывод)
@@ -1598,7 +1603,9 @@
             } else {
               html += `<div style='color:#b00; font-weight:bold; margin:10px 0 2px 0;'>CommonEvent ${ev.eid} (${ev.name}), Page ${page.page}</div>`;
               page.errors.forEach(err => {
-                html += `<div style='color:#b00; margin-left:12px; margin-bottom:8px;'><b>Строка ${err.line}:</b> ${err.msg}<br>`;
+                // --- Добавляем номер BranchEnd если он есть ---
+                const branchEndInfo = err.branchEndNumber !== undefined ? `<div style='color:#666; font-size:12px; margin-bottom:2px;'>BranchEnd ${err.branchEndNumber}</div>` : '';
+                html += `<div style='color:#b00; margin-left:12px; margin-bottom:8px;'>${branchEndInfo}<b>Строка ${err.line}:</b> ${err.msg}<br>`;
                 if (err.jp || err.ru) {
                   html += `<div style='font-size:13px; margin-top:2px;'><span style='color:#444;'>JP:</span> <pre style='display:inline; background:#f7f7f7; border-radius:4px; padding:2px 6px;'>${(err.jp||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre><br><span style='color:#444;'>RU:</span> <pre style='display:inline; background:#f7f7f7; border-radius:4px; padding:2px 6px;'>${(err.ru||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre></div>`;
                 }
