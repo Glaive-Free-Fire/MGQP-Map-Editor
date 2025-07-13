@@ -5,9 +5,8 @@ document.addEventListener('DOMContentLoaded', function() {
     // Генерируем экспортируемое содержимое (до сохранения)
     let previewLines;
     if (window.restoreModeEnabled && window.japaneseLines && window.originalLines) {
-      const result = checkCommonEventStructureSmart(window.originalLines, window.japaneseLines);
-      const mismatchedNums = result.mismatches.map(m => m.num);
-      previewLines = restoreRussianStructure(window.originalLines, window.japaneseLines, mismatchedNums);
+      // Если восстановление уже было выполнено, используем обновленные строки
+      previewLines = window.fullRusLines.slice();
     } else {
       let newLines = [...originalLines];
       let lineInsertOffset = 0;
@@ -116,7 +115,7 @@ document.addEventListener('DOMContentLoaded', function() {
           }
         }
       });
-      previewLines = (window.getExportLines ? window.getExportLines(newLines, textBlocks) : newLines);
+      previewLines = (window.restoreStructureByErrors ? window.restoreStructureByErrors(newLines, textBlocks) : newLines);
     }
     // Применяем escapeFirstThree только к строкам ShowText с именем
     previewLines = previewLines.map(line => {
@@ -306,6 +305,7 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
     let currentEvent = null, currentPage = null;
     const lines = content.split(/\r?\n/);
     let pageIdx = null;
+    let currentBranchEnd = 0;
     for (let i = 0; i < lines.length; i++) {
       let line = lines[i].trim();
       if (!line) continue;
@@ -315,6 +315,7 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
           currentEvent = match[1];
           events[currentEvent] = { name: '', pages: [] };
           pageIdx = null;
+          currentBranchEnd = 0;
         } else {
           currentEvent = null;
         }
@@ -329,6 +330,7 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
         if (match) {
           pageIdx = Number(match[1]);
           if (currentEvent) events[currentEvent].pages[pageIdx] = [];
+          currentBranchEnd = 0;
         } else {
           pageIdx = null;
         }
@@ -339,7 +341,29 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
         if (!command) continue;
         command = command[1];
         let raw = line;
-        events[currentEvent].pages[pageIdx].push({ command, raw, lineNum: i });
+        
+        // --- Обработка BranchEnd и Empty ---
+        if (command === 'Empty') {
+          // Empty([]) завершает текущий BranchEnd, следующий BranchEnd будет с номером +1
+          currentBranchEnd++;
+        } else if (command === 'BranchEnd') {
+          // BranchEnd([]) получает текущий номер
+          events[currentEvent].pages[pageIdx].push({ 
+            command, 
+            raw, 
+            lineNum: i, 
+            branchEndNumber: currentBranchEnd 
+          });
+          continue;
+        } else {
+          // Обычные команды получают текущий номер BranchEnd
+          events[currentEvent].pages[pageIdx].push({ 
+            command, 
+            raw, 
+            lineNum: i, 
+            branchEndNumber: currentBranchEnd 
+          });
+        }
       }
     }
     return events;
@@ -366,8 +390,28 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
           const ruCmd = ruPage[j]?.command;
           const jpRaw = jpPage[i]?.raw;
           const ruRaw = ruPage[j]?.raw;
+          const jpBranchEnd = jpPage[i]?.branchEndNumber;
+          const ruBranchEnd = ruPage[j]?.branchEndNumber;
+          
+          // --- SKIP: строки с #+ (любые) ---
           if (ruRaw && (ruRaw.trim().startsWith('#+') || /#\+\s*$/.test(ruRaw))) { j++; continue; }
+          // --- SKIP: ShowTextAttributes([..]) #+ ---
+          if (ruRaw && ruRaw.trim().startsWith('ShowTextAttributes([') && /#\+\s*$/.test(ruRaw)) { j++; continue; }
+          
           totalLines++;
+          
+          // --- Проверка совпадения номеров BranchEnd ---
+          if (jpBranchEnd !== undefined && ruBranchEnd !== undefined && jpBranchEnd !== ruBranchEnd) {
+            issues.push({
+              line: i+1,
+              msg: `несовпадение номеров BranchEnd (JP: ${jpBranchEnd}, RU: ${ruBranchEnd})`,
+              jp: jpRaw || '',
+              ru: ruRaw || '',
+              branchEndNumber: jpBranchEnd
+            });
+            i += 1; j += 1; continue;
+          }
+          
           if (
             jpCmd === 'ShowText' && jpRaw && jpRaw.match(/^\s*ShowText\(\["【.*】"\]\)/) &&
             jpPage[i+1] && jpPage[i+1].command === 'ShowText'
@@ -380,7 +424,8 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
                 line: i+1,
                 msg: `тип команды не совпадает (JP: <b>ShowText</b>, RU: <b>${ruCmd || '—'}</b>)`,
                 jp: jpRaw + '\n' + (jpPage[i+1]?.raw || ''),
-                ru: ruRaw || ''
+                ru: ruRaw || '',
+                branchEndNumber: jpBranchEnd
               });
               i += 2; j += 1; continue;
             }
@@ -390,7 +435,8 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
               line: i+1,
               msg: `тип команды не совпадает (JP: <b>${jpCmd || '—'}</b>, RU: <b>${ruCmd || '—'}</b>)`,
               jp: jpRaw || '',
-              ru: ruRaw || ''
+              ru: ruRaw || '',
+              branchEndNumber: jpBranchEnd
             });
           } else {
             okLines++;

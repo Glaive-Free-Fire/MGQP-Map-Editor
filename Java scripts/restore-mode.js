@@ -13,33 +13,7 @@
     return result;
   }
 
-  // Склеиваем ShowText с #+ с предыдущей ShowText
-  function glueRuShowText(lines) {
-    const out = [];
-    let buffer = null;
-    let showTextRegex = /^\s*ShowText\(\["(.*)"\]\)/;
-    for (let i = 0; i < lines.length; i++) {
-      let line = lines[i];
-      if (line.trim().startsWith('ShowText([')) {
-        let isPlus = line.includes('#+');
-        let textMatch = line.match(showTextRegex);
-        if (isPlus && buffer !== null && textMatch) {
-          // Продолжение предыдущей строки
-          buffer = buffer.replace(/"\]$/, '\\n' + textMatch[1].replace(/"/g, '\\"') + '"]');
-    } else {
-          if (buffer !== null) out.push(buffer);
-          buffer = line.replace(/\s*#\+\s*$/, '');
-        }
-      } else {
-        if (buffer !== null) out.push(buffer);
-        buffer = null;
-        out.push(line);
-      }
-    }
-    if (buffer !== null) out.push(buffer);
-    return out;
-    }
-
+  // === Старая функция восстановления структуры CommonEvent ===
   // Разбить lines на CommonEvent-блоки (с заголовком, страницами и содержимым)
   function parseCommonEvents(lines) {
     const events = [];
@@ -76,120 +50,7 @@
     return events;
   }
 
-  // Вспомогательная функция: парсинг команд внутри блока событий
-  function parseCommands(lines) {
-    const blocks = [];
-    let i = 0;
-    while (i < lines.length) {
-      let line = lines[i];
-      // ShowText с именем
-      let nameMatch = line.match(/^\s*ShowText\(\["【(.+?)】"\]\)/);
-      if (nameMatch && i + 1 < lines.length) {
-        let nextLine = lines[i+1];
-        let textMatch = nextLine.match(/^\s*ShowText\(\["([\s\S]*?)"\]\)/);
-        if (textMatch) {
-          blocks.push({ type: 'ShowTextWithName', name: nameMatch[1], text: textMatch[1], raw: [line, nextLine], idx: i });
-          i += 2;
-          continue;
-        }
-      }
-      // Одиночный ShowText
-      let textMatch = line.match(/^\s*ShowText\(\["([\s\S]*?)"\]\)/);
-      if (textMatch) {
-        blocks.push({ type: 'ShowText', text: textMatch[1], raw: [line], idx: i });
-        i++;
-        continue;
-      }
-      // ShowTextAttributes
-      let attrMatch = line.match(/^\s*ShowTextAttributes\(\[(.*)\]\)/);
-      if (attrMatch) {
-        blocks.push({ type: 'ShowTextAttributes', text: attrMatch[1], raw: [line], idx: i });
-        i++;
-        continue;
-      }
-      // ShowChoices
-      let choicesMatch = line.match(/^\s*ShowChoices\(\[\[(.*)\],\s*(\d+)\]\)/);
-      if (choicesMatch) {
-        blocks.push({ type: 'ShowChoices', text: choicesMatch[1], defaultChoice: parseInt(choicesMatch[2]), raw: [line], idx: i });
-        i++;
-        continue;
-      }
-      // When
-      let whenMatch = line.match(/^\s*When\(\[(\d+),\s*"(.*)"\]\)/);
-      if (whenMatch) {
-        blocks.push({ type: 'When', choiceIndex: parseInt(whenMatch[1]), text: whenMatch[2], raw: [line], idx: i });
-        i++;
-        continue;
-      }
-      // Script
-      let scriptMatch = line.match(/^\s*Script\(\[(.*)\]\)/);
-      if (scriptMatch) {
-        blocks.push({ type: 'Script', text: scriptMatch[1], raw: [line], idx: i });
-        i++;
-        continue;
-      }
-      // ScriptMore
-      let scriptMoreMatch = line.match(/^\s*ScriptMore\(\[(.*)\]\)/);
-      if (scriptMoreMatch) {
-        blocks.push({ type: 'ScriptMore', text: scriptMoreMatch[1], raw: [line], idx: i });
-        i++;
-        continue;
-      }
-      // Прочее (оставляем как есть)
-      blocks.push({ type: 'Other', text: line, raw: [line], idx: i });
-      i++;
-    }
-    return blocks;
-  }
-
-  // Вспомогательная функция: найти ShowText с именем в русском
-  function findRuShowTextWithName(ruBlocks, name, used, lastIdx) {
-    for (let i = lastIdx; i < ruBlocks.length; i++) {
-      let b = ruBlocks[i];
-      if (b.type === 'ShowText' && !b.generated && /<∾∾C\[6\](.*?)∾∾C\[0\]>/u.test(b.text) && !used.has(i)) {
-        let ruName = b.text.match(/<∾∾C\[6\](.*?)∾∾C\[0\]>/u);
-        if (ruName && ruName[1].trim() === name.trim()) {
-          return i;
-        }
-      }
-    }
-    return -1;
-  }
-  // Найти одиночный ShowText без имени
-  function findRuShowTextNoName(ruBlocks, used, lastIdx) {
-    for (let i = lastIdx; i < ruBlocks.length; i++) {
-      let b = ruBlocks[i];
-      if (b.type === 'ShowText' && !b.generated && !/<∾∾C\[6\](.*?)∾∾C\[0\]>/u.test(b.text) && !used.has(i)) {
-        return i;
-      }
-    }
-    return -1;
-  }
-  // Найти ShowChoices/When/ShowTextAttributes по типу и позиции
-  function findRuByType(ruBlocks, type, used) {
-    for (let i = 0; i < ruBlocks.length; i++) {
-      let b = ruBlocks[i];
-      if (b.type === type && !b.generated && !used.has(i)) {
-        return i;
-            }
-          }
-    return -1;
-  }
-
-  // Сравниваем структуру по всем строкам внутри блока (без учёта пустых)
-  function isEventStructEqual(ruEv, jpEv) {
-    if (!jpEv) return true; // Если нет японского блока, не меняем
-    // Сравниваем массив строк (можно добавить .trim() для надёжности)
-    let ruLines = ruEv.lines.map(l => l.trim()).filter(l => l.length);
-    let jpLines = jpEv.lines.map(l => l.trim()).filter(l => l.length);
-    if (ruLines.length !== jpLines.length) return false;
-    for (let i = 0; i < ruLines.length; i++) {
-      if (ruLines[i] !== jpLines[i]) return false;
-    }
-    return true;
-  }
-
-  // Главная функция
+  // Главная функция старого восстановления
   global.restoreRussianStructure = function(ruLines, jpLines, replaceNums) {
     const ruEvents = parseCommonEvents(ruLines);
     const jpEvents = parseCommonEvents(jpLines);
@@ -268,7 +129,7 @@
       let nextStart = (evIdx + 1 < ceIndices.length) ? ceIndices[evIdx + 1] : ruLines.length;
       for (let i = thisEnd; i < nextStart; i++) {
         resultLines.push(ruLines[i]);
-  }
+      }
     }
     // 4. Добавляем все строки после последнего CommonEvent
     let lastEv = ruEvents[ruEvents.length - 1];
@@ -279,5 +140,159 @@
       }
     }
     return resultLines;
+  };
+
+  // === Новый алгоритм восстановления структуры по ошибкам ===
+  global.restoreStructureByErrors = function(rusLines, japLines, compareResult) {
+    let ru = rusLines.slice();
+    let jp = japLines.slice();
+    if (!compareResult || !compareResult.grouped) return ru;
+    function buildEventPageMap(lines) {
+      const map = {};
+      let currentEvent = null, currentPage = null;
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const ce = line.match(/^CommonEvent (\d+)/);
+      if (ce) {
+          currentEvent = ce[1];
+          if (!map[currentEvent]) map[currentEvent] = {};
+          currentPage = null;
+        }
+        const pg = line.match(/^\s*Page (\d+)/);
+        if (pg && currentEvent) {
+          currentPage = pg[1];
+          if (!map[currentEvent][currentPage]) map[currentEvent][currentPage] = [];
+        }
+        if (currentEvent && currentPage !== null) {
+          map[currentEvent][currentPage].push(i);
+        }
+      }
+      return map;
+    }
+    const ruMap = buildEventPageMap(ru);
+    const jpMap = buildEventPageMap(jp);
+    // Собираем все диапазоны для замены
+    let ranges = [];
+    compareResult.grouped.forEach(ev => {
+      ev.pages.forEach(page => {
+        if (!page.ok && page.errors && page.errors.length > 0) {
+          page.errors.forEach(err => {
+            const eid = ev.eid;
+            const pg = page.page;
+            const line = err.line;
+            const ruLines = ruMap[eid] && ruMap[eid][pg];
+            const jpLines = jpMap[eid] && jpMap[eid][pg];
+            if (!ruLines || !jpLines) return;
+            let ruStartIdx = ruLines[line-1];
+            let ruEndIdx = ruStartIdx;
+            while (ruEndIdx < ruLines[ruLines.length-1]) {
+              if (/^\s*Empty\(\[\]\)/.test(ru[ruEndIdx])) break;
+              ruEndIdx++;
+            }
+            let jpStartIdx = jpLines[line-1];
+            let jpEndIdx = jpStartIdx;
+            while (jpEndIdx < jpLines[jpLines.length-1]) {
+              if (/^\s*Empty\(\[\]\)/.test(jp[jpEndIdx])) break;
+              jpEndIdx++;
+            }
+            ranges.push({
+              eid, pg,
+              ruStart: ruStartIdx,
+              ruEnd: ruEndIdx,
+              jpStart: jpStartIdx,
+              jpEnd: jpEndIdx
+            });
+          });
+        }
+      });
+    });
+    // Сортируем и объединяем перекрывающиеся диапазоны
+    ranges.sort((a, b) => a.ruStart - b.ruStart);
+    let merged = [];
+    for (let i = 0; i < ranges.length; i++) {
+      const cur = ranges[i];
+      if (merged.length === 0) {
+        merged.push(cur);
+      } else {
+        let last = merged[merged.length-1];
+        // Если перекрываются или смежные
+        if (cur.ruStart <= last.ruEnd) {
+          // Объединяем диапазон
+          last.ruEnd = Math.max(last.ruEnd, cur.ruEnd);
+          last.jpEnd = Math.max(last.jpEnd, cur.jpEnd);
+        } else {
+          merged.push(cur);
+        }
+      }
+    }
+    // Заменяем с конца, чтобы не сбивать индексы
+    for (let i = merged.length - 1; i >= 0; i--) {
+      const r = merged[i];
+      const jpBlock = jp.slice(r.jpStart, r.jpEnd+1);
+      ru.splice(r.ruStart, r.ruEnd - r.ruStart + 1, ...jpBlock);
+    }
+    
+    // Временное решение: удаляем все строки выше Display Name
+    const displayNameIndex = ru.findIndex(line => /^\s*Display Name\s*=/.test(line));
+    if (displayNameIndex > 0) {
+      ru.splice(0, displayNameIndex);
+    }
+    
+    return ru;
+  };
+
+  // === Функция для немедленного восстановления структуры ===
+  global.immediateRestoreStructure = function() {
+    if (!window.fullRusLines || !window.fullJapLines || window.fullRusLines.length === 0 || window.fullJapLines.length === 0) {
+      alert('Сначала загрузите русский и японский файлы!');
+      return;
+    }
+
+    // Проверяем структуру и находим CommonEvent с ошибками
+    const jpContent = window.fullJapLines.join('\n');
+    const ruContent = window.fullRusLines.join('\n');
+    const result = window.checkMapStructureMatch(jpContent, ruContent);
+    
+    // Собираем номера CommonEvent с ошибками
+    let mismatchedNums = [];
+    if (result.grouped) {
+      result.grouped.forEach(ev => {
+        ev.pages.forEach(page => {
+          if (!page.ok && page.errors && page.errors.length > 0) {
+            mismatchedNums.push(parseInt(ev.eid));
+          }
+        });
+      });
+    }
+    
+    if (mismatchedNums.length === 0) {
+      alert('Структура CommonEvent полностью совпадает. Восстановление не требуется.');
+      return;
+    }
+
+    // Убираем дубликаты номеров
+    mismatchedNums = [...new Set(mismatchedNums)];
+    
+    // Выполняем восстановление
+    const restoredLines = window.restoreRussianStructure(window.originalLines, window.fullJapLines, mismatchedNums);
+    
+    // Обновляем глобальные переменные
+    window.fullRusLines = restoredLines.slice();
+    window.originalLines = restoredLines.slice();
+    window.japaneseLines = window.fullJapLines; // для совместимости
+    
+    // Устанавливаем флаг для правильного сохранения
+    window.restoreModeEnabled = true;
+    
+    // Перезагружаем редактор
+    window.extractTexts();
+    window.updateMatchLamp();
+    
+    // Обновляем предпросмотр если он открыт
+    if (typeof window.updatePreviewArea === 'function') {
+      window.updatePreviewArea();
+    }
+    
+    alert(`Восстановлена структура для CommonEvent: ${mismatchedNums.join(', ')}\nОбновлено ${mismatchedNums.length} событий.`);
   };
 })(window);
