@@ -49,6 +49,9 @@
     }
     return events;
   }
+  
+  // Экспортируем функцию для отладки
+  global.parseCommonEvents = parseCommonEvents;
 
   // Главная функция старого восстановления
   global.restoreRussianStructure = function(ruLines, jpLines, replaceNums) {
@@ -241,6 +244,117 @@
     return ru;
   };
 
+  // === Новая функция для восстановления структуры с добавлением пропущенных CommonEvent ===
+  global.restoreRussianStructureWithMissing = function(ruLines, jpLines, replaceNums) {
+    const ruEvents = parseCommonEvents(ruLines);
+    const jpEvents = parseCommonEvents(jpLines);
+    
+    let resultLines = [];
+    
+    // Создаем карты событий
+    let ruMap = {};
+    ruEvents.forEach(ev => { ruMap[ev.num] = ev; });
+    let jpMap = {};
+    jpEvents.forEach(ev => { jpMap[ev.num] = ev; });
+    
+    // Собираем все номера CommonEvent из обоих файлов
+    let allEventNums = new Set();
+    ruEvents.forEach(ev => allEventNums.add(ev.num));
+    jpEvents.forEach(ev => allEventNums.add(ev.num));
+    allEventNums = Array.from(allEventNums).sort((a, b) => a - b);
+    
+    // --- Новый алгоритм: сохраняем все строки вне CommonEvent ---
+    // 1. Собираем индексы начала всех CommonEvent в ruLines
+    let ceIndices = [];
+    for (let i = 0; i < ruLines.length; i++) {
+      if (/^CommonEvent \d+/.test(ruLines[i])) ceIndices.push(i);
+    }
+    
+    // 2. Добавляем все строки до первого CommonEvent
+    let firstCE = ceIndices.length > 0 ? ceIndices[0] : ruLines.length;
+    for (let i = 0; i < firstCE; i++) {
+      resultLines.push(ruLines[i]);
+    }
+    
+    // 3. Обрабатываем все CommonEvent по порядку номеров
+    for (let eventNum of allEventNums) {
+      const ruEv = ruMap[eventNum];
+      const jpEv = jpMap[eventNum];
+      
+      if (ruEv && jpEv) {
+        // Оба события существуют - применяем обычную логику
+        if (Array.isArray(replaceNums) && replaceNums.includes(eventNum)) {
+          // Заменяем на японскую версию с обработкой ShowText
+          resultLines.push(...jpEv.header);
+          const jpLines = jpEv.lines;
+          let j = 0;
+          while (j < jpLines.length) {
+            // Проверяем: ShowText(["【...】"]) + ShowText(["..."])
+            const nameMatch = jpLines[j].match(/^\s*ShowText\(\["【(.+?)】"\]\)/);
+            const textMatch = (j + 1 < jpLines.length) ? jpLines[j + 1].match(/^\s*ShowText\(\["([\s\S]*?)"\]\)/) : null;
+            if (nameMatch && textMatch) {
+              const name = nameMatch[1]
+                .replace(/\\/g, '\\\\')
+                .replace(/"/g, '\\"');
+              const text = textMatch[1]
+                .replace(/\\/g, '\\\\')
+                .replace(/"/g, '\\"');
+              const indent = jpLines[j].match(/^(\s*)/) ? jpLines[j].match(/^(\s*)/)[1] : '';
+              const merged = `${indent}ShowText(["\\n<\\C[6]${name}\\C[0]>${text}"] )`;
+              // --- Новый патч: гарантированное исправление формата строки с именем ---
+              let finalMerged = merged;
+              // Проверяем, что строка имеет правильный формат с двойными слэшами
+              const formatCheck = merged.match(/^([ \t]*)ShowText\(\["(.*)"\]\s*\)/);
+              if (formatCheck) {
+                const indent = formatCheck[1] || '';
+                const content = formatCheck[2] || '';
+                // Ищем паттерн \n<\C[6]Имя\C[0]>Текст
+                const contentMatch = content.match(/^\\n<\\C\[6\](.+?)\\C\[0\]>(.*)$/);
+                if (contentMatch) {
+                  let name = contentMatch[1] || '';
+                  let text = contentMatch[2] || '';
+                  name = name.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+                  text = text.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+                  // --- Применяем escapeFirstThree для правильного экранирования ---
+                  const escapedContent = escapeFirstThree(`\\n<\\C[6]${name}\\C[0]>${text}`);
+                  finalMerged = `${indent}ShowText(["${escapedContent}"])`;
+                }
+              }
+              resultLines.push(finalMerged);
+              j += 2;
+              continue;
+            }
+            resultLines.push(jpLines[j]);
+            j++;
+          }
+        } else {
+          // Оставляем русскую версию
+          resultLines.push(...ruEv.header);
+          resultLines.push(...ruEv.lines);
+        }
+      } else if (jpEv && !ruEv) {
+        // Японское событие существует, но русского нет - добавляем японское
+        resultLines.push(...jpEv.header);
+        resultLines.push(...jpEv.lines);
+      } else if (ruEv && !jpEv) {
+        // Русское событие существует, но японского нет - оставляем русское
+        resultLines.push(...ruEv.header);
+        resultLines.push(...ruEv.lines);
+      }
+    }
+    
+    // 4. Добавляем все строки после последнего CommonEvent в русском файле
+    let lastEv = ruEvents[ruEvents.length - 1];
+    if (lastEv) {
+      let lastEnd = lastEv.start + lastEv.header.length + lastEv.lines.length;
+      for (let i = lastEnd; i < ruLines.length; i++) {
+        resultLines.push(ruLines[i]);
+      }
+    }
+    
+    return resultLines;
+  };
+
   // === Функция для немедленного восстановления структуры ===
   global.immediateRestoreStructure = function() {
     if (!window.fullRusLines || !window.fullJapLines || window.fullRusLines.length === 0 || window.fullJapLines.length === 0) {
@@ -273,8 +387,8 @@
     // Убираем дубликаты номеров
     mismatchedNums = [...new Set(mismatchedNums)];
     
-    // Выполняем восстановление
-    const restoredLines = window.restoreRussianStructure(window.originalLines, window.fullJapLines, mismatchedNums);
+    // Выполняем восстановление с новой функцией - используем fullRusLines вместо originalLines
+    const restoredLines = window.restoreRussianStructureWithMissing(window.fullRusLines, window.fullJapLines, mismatchedNums);
     
     // Обновляем глобальные переменные
     window.fullRusLines = restoredLines.slice();

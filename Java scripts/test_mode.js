@@ -84,34 +84,36 @@ document.addEventListener('DOMContentLoaded', function() {
             indent = indentMatch ? indentMatch[0] : '';
           }
           if (block.type === 'ShowTextAttributes') {
-            newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, indent + `ShowText([${block.text}])`);
+            let lineToInsert = indent + `ShowTextAttributes([${block.text}])`;
+            if (block.generated) {
+              lineToInsert += ' #+';
+            }
+            newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, lineToInsert);
+            lineInsertOffset++;
+            blockIndexMap.set(blockIndex, lastMainBlockIdx + 1 + lineInsertOffset - 1);
+          } else if (/^\\n<\\C\[6\]/.test(block.text)) {
+            let lineToInsert = indent + `ShowText(["${block.text}"])`;
+            if (block.type === 'ShowText' && block.generated) {
+              lineToInsert += ' #+';
+            }
+            newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, lineToInsert);
             lineInsertOffset++;
             blockIndexMap.set(blockIndex, lastMainBlockIdx + 1 + lineInsertOffset - 1);
           } else {
-            if (/^\\n<\\C\[6\]/.test(block.text)) {
-              let lineToInsert = indent + `ShowText(["${block.text}"])`;
-              if (block.type === 'ShowText' && block.generated) {
-                lineToInsert += ' #+';
-              }
-              newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, lineToInsert);
-              lineInsertOffset++;
-              blockIndexMap.set(blockIndex, lastMainBlockIdx + 1 + lineInsertOffset - 1);
-            } else {
-              let cont = block.text.replace(/∿/g, '<<ONE>>');
-              cont = cont.replace(/\n/g, '\\n');
-              cont = cont.replace(/∾+/g, '\\');
-              cont = cont.replace(/<<ONE>>/g, '\\');
-              cont = cont.replace(/\\{2,}n/g, '\\\\n');
-              cont = cont.replace(/\\(?=[\?\.!\,—])/g, '');
-              let newText = cont.replace(/(?<!\\)"/g, '\\"');
-              let lineToInsert = indent + `ShowText(["${newText}"])`;
-              if (block.type === 'ShowText' && block.generated) {
-                lineToInsert += ' #+';
-              }
-              newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, lineToInsert);
-              lineInsertOffset++;
-              blockIndexMap.set(blockIndex, lastMainBlockIdx + 1 + lineInsertOffset - 1);
+            let cont = block.text.replace(/∿/g, '<<ONE>>');
+            cont = cont.replace(/\n/g, '\\n');
+            cont = cont.replace(/∾+/g, '\\');
+            cont = cont.replace(/<<ONE>>/g, '\\');
+            cont = cont.replace(/\\{2,}n/g, '\\\\n');
+            cont = cont.replace(/\\(?=[\?\.!\,—])/g, '');
+            let newText = cont.replace(/(?<!\\)"/g, '\\"');
+            let lineToInsert = indent + `ShowText(["${newText}"])`;
+            if (block.type === 'ShowText' && block.generated) {
+              lineToInsert += ' #+';
             }
+            newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, lineToInsert);
+            lineInsertOffset++;
+            blockIndexMap.set(blockIndex, lastMainBlockIdx + 1 + lineInsertOffset - 1);
           }
         }
       });
