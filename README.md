@@ -1,113 +1,102 @@
-# MGQP Map Editor
+# MGQP Map Editor v1.4.0
 
-A visual editor for translating and fixing MGQP / MGQ Paradox map script files.  
-Current version: **1.3.80**
-
-## Main Features
-
-- Fast markup, validation, and export of map files in CommonEvent format.
-- Japanese original file support: structure comparison, error highlighting, and restoration.
-- Navigation between "red" (error-prone or too long) lines with instant correction tools.
-- Undo/Redo support for editing safety.
-- **Batch Processing:** Mass check of entire folders for structure errors and event mismatches (third tab).
-
-## How to Use
-
-### 1. Launch
-
-Open `MGQP Map Editor ver 1.3.80.html` in your browser (Chrome/Edge recommended).
-
-### 2. UI & Tabs
-
-#### **Editor** Tab
-- **File Loading:**  
-  - Load your Russian/translated file (`.txt`).
-  - Optionally load the Japanese original.
-- **Editing:**  
-  - Every text block is directly editable.
-  - Errors are highlighted instantly:
-    - Exceeding character limits (50 game characters)
-    - Corrupted name tag
-  - Under each field: character counter and quick "+" / "–" buttons.
-  - Arrow buttons (← →) on top to jump between errors.
-- **Undo/Redo:**  
-  - Clickable icons or keyboard shortcuts (Ctrl+Z, Ctrl+Y).
-- **Wrap Mode:**  
-  - Choose how long lines are split (residual or strict).
-
-#### **Preview** Tab
-- Shows what the final exported file will look like.
-- Compares your version with the editor state:
-  - Shows a detailed list of differences and errors below the preview.
-  - Separate error list (over-limit, corrupted syntax, etc.).
-- Download the final file or copy all content in one click.
-
-#### **Batch Processing** Tab (NEW!)
-- **Batch check** entire folders of maps for structure differences vs the Japanese originals.
-- Load Russian and Japanese map folders (via drag'n'drop or folder selection).
-- For each map, see the structural match percentage, detected problems, and which events differ.
-- Results are shown as a per-file summary with a table of problematic events.
-
-### 3. Restoring Data Structure
-
-- "Restore Data Structure" button reconstructs the Russian map structure using the Japanese original (see the Preview tab).
-- Only mismatched events are replaced; correct events are kept untouched.
-- If name tags differ only by language, but ShowTextAttributes are identical, the matching is now more flexible.
-
-### 4. Quick Actions
-
-- **Jump to error:**  
-  - Arrow buttons let you quickly jump between errors.
-- **Wrap selection in ∿"..."∿:**  
-  - One-click markup for script-specific inline tags.
-
-### 5. Validation & Error Highlighting
-
-- **Automatic error highlighting:**  
-  - Lines exceeding 50 "game" characters or with tag/syntax errors turn red.
-  - The preview always shows a complete error list for rapid debugging.
-- **Batch Check:**  
-  - The Batch tab lets you check all maps in a folder for CommonEvent structure mismatches.
-
-## Editor Features
-
-- Full **Undo/Redo** (Ctrl+Z/Ctrl+Y) for all text fields.
-- Character counter (excluding tags/control codes) in every text block.
-- Jump to next/previous error with dedicated buttons.
-- Mass checking of CommonEvent structure across map folders.
-
-## Structure Comparison & Matching
-
-- Compares event structures (ShowText, ShowTextWithName, ShowTextAttributes, ShowChoices, When, DisplayName) between translation and original.
-- If character names are different but ShowTextAttributes match, the line is considered matched and safe.
-- The Preview tab shows not only the final export, but also lists all diffs and errors for fast diagnostics.
-
-## Requirements
-
-- Any modern browser.
-- Batch processing requires directory picker support (modern browsers only).
-
-## Changelog
-
-### v1.3.80
-- Added the "Batch Processing" tab for mass map structure checking.
-- Improved restore algorithm: smarter matching by ShowTextAttributes (works even if names differ by language).
-- Expanded error highlighting and error listing in Preview.
-- Optimized Undo/Redo, character counter, and file copy/export features.
-
-### v1.3.60 - v3.50
-- Preview tab, structure restore tools, error navigation, auto-line split, advanced highlighting.
-- Mass event comparison and highlighting for all diffs vs original.
-- Major codebase improvements and UI polish.
-
-### Earlier
-- Initial release, basic structure editor, line markup and export, Japanese file loading.
-
-## License
-
-Free for non-commercial use, forks and contributions are welcome.
+**A modern web-based tool for editing and batch-fixing RPG Maker XP map/event files, with advanced support for translation workflows (RU/JP), structure validation, and mass error correction.**
 
 ---
 
-**MGQP Map Editor** — for those who want to translate fast, clean, and with minimum headache.
+## Features
 
+- **Visual Editor:** Edit map/event files with a user-friendly interface, including block-based editing for ShowText, ShowTextAttributes, ShowChoices, When, and more.
+- **Japanese/Translation Support:** Load both Russian and Japanese versions of files for side-by-side comparison and translation assistance.
+- **Structure Validation:** Automatic detection of CommonEvent structure errors, with detailed error reporting and highlighting.
+- **Batch Processing:** Check and fix entire folders of map files at once, with ZIP export of all corrected files.
+- **Undo/Redo:** Full undo/redo support for editing operations.
+- **Smart Text Wrapping:** Split long text blocks with a single click, with customizable wrapping modes.
+- **Generated Block Marking:** All auto-generated blocks (e.g., ShowTextAttributes after every 4 ShowText) are marked with `#+` for easy tracking and filtering.
+- **Preserves Scroll Position:** The editor remembers your scroll position when switching tabs or editing.
+- **Preview Tab:** See exactly how your file will be saved, including all generated blocks and structure corrections.
+- **Error Highlighting:** Instantly see which lines exceed character limits or have syntax issues.
+- **Export & Copy:** Download the edited file or copy all extracted text for external use.
+- **Batch "All OK" Message:** If all files are correct in batch mode, a green congratulatory message is shown.
+
+---
+
+## How to Use
+
+### 1. Editing a Single File
+
+1. **Load Files:**
+   - Click "Load file for translation" to upload your Russian map/event file.
+   - (Optional) Click "Load Japanese file" to upload the original Japanese file for comparison.
+
+2. **Edit Blocks:**
+   - Each block (ShowText, ShowTextAttributes, etc.) is shown as a separate editable area.
+   - Japanese text (if loaded) is shown above the corresponding Russian block for reference.
+   - Use the "+" button to split long text blocks. The editor will automatically insert a generated ShowTextAttributes block (with `#+`) after every 4 ShowText blocks.
+   - Use the "-" button to remove blocks.
+
+3. **Undo/Redo:**
+   - Use the ↺ and ↻ buttons or Ctrl+Z / Ctrl+Y to undo/redo changes.
+
+4. **Structure Validation:**
+   - The "Restore CommonEvent Structure" button will attempt to fix structural errors using the Japanese file as a reference, including restoring missing CommonEvent blocks.
+
+5. **Preview & Export:**
+   - Switch to the "Preview" tab to see the exact file that will be saved, including all generated blocks and structure corrections.
+   - Click "Download edited file" to save your changes, or "Copy all extracted" to copy the text.
+
+### 2. Batch Processing
+
+1. **Go to the "Batch Processing" Tab:**
+   - Upload entire folders of Russian and Japanese map files using the folder upload controls.
+
+2. **Check Files:**
+   - Click "Check maps for errors" to validate all files.
+   - Errors and structure mismatches are shown per file, with detailed breakdowns.
+
+3. **Fix All Errors:**
+   - If errors are found, click "Fix all files with errors" to automatically correct them.
+   - All fixed files are packaged into a ZIP archive for download.
+
+4. **All OK Message:**
+   - If all files are correct and the "Show OK files" checkbox is off, a green message "Congratulations! All files are correct" will be displayed.
+
+---
+
+## Key Details
+
+- **Generated Blocks:** All auto-generated blocks (ShowTextAttributes, etc.) are marked with `#+` at the end of the line, both in the editor and in the saved file.
+- **Scroll Position:** The editor remembers your scroll position when switching tabs or after editing, so you never lose your place.
+- **Preview = Save:** The "Preview" tab always shows exactly what will be saved to disk, including all generated and fixed blocks.
+- **Batch ZIP Export:** Batch fixes are exported as a ZIP archive containing all corrected files.
+- **Error Highlighting:** Lines exceeding the character limit or with syntax errors are highlighted in red.
+
+---
+
+## Changelog (v1.4.0)
+
+- **Batch Fix ZIP Export:** Batch fixes now export as a ZIP archive.
+- **Missing CommonEvent Restoration:** The structure fixer now restores missing CommonEvent blocks from the Japanese file.
+- **Generated Block Marking:** All auto-generated ShowTextAttributes blocks are marked with `#+`.
+- **Scroll Position Memory:** The editor now preserves scroll position after edits and tab switches.
+- **Green "All OK" Message:** Batch mode displays a congratulatory message if all files are correct.
+- **Preview Tab Fixes:** The preview tab now correctly displays generated ShowTextAttributes blocks with `#+`.
+- **Numerous bugfixes and UI improvements.**
+
+---
+
+## Tips
+
+- **Always load both Russian and Japanese files for best structure validation and fixing.**
+- **Use batch mode for large-scale translation projects to quickly check and fix entire folders.**
+- **If you see a green message in batch mode, you can be confident all your files are structurally correct!**
+
+---
+
+## License
+
+MIT License
+
+---
+
+If you have any questions or encounter issues, please open an issue on GitHub or contact the maintainer.
