@@ -2,7 +2,8 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <title>MGQP Map Editor v1.3.80</title>
+  <title>MGQP Map Editor v1.4.0</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="Java scripts/restore-mode.js"></script>
   <script src="Java scripts/test_mode.js"></script>
   <script src="Java scripts/main_script.js"></script>
@@ -1150,21 +1151,25 @@
         // --- Всегда показываем кнопку для manualPlus ---
         minusBtn.style.display = (block.manualPlus || (block.text.trim() === '' && textBlocks.length > 1)) ? '' : 'none';
         minusBtn.onclick = function() {
+          saveEditorBlockPosition(); // Сохраняем позицию до изменений
           pushUndo();
           // Если manualPlus — просто удаляем
           if (block.manualPlus) {
             textBlocks.splice(i, 1);
             renderTextBlocks();
+            restoreEditorBlockPosition(); // Восстанавливаем позицию после перерисовки
             return;
           }
           // Если предыдущий блок — ShowTextAttributes и это первая ShowText после него, удаляем оба
           if (i > 0 && textBlocks[i].type === 'ShowText' && textBlocks[i - 1].type === 'ShowTextAttributes') {
             textBlocks.splice(i - 1, 2);
             renderTextBlocks();
+            restoreEditorBlockPosition(); // Восстанавливаем позицию после перерисовки
             return;
           }
           textBlocks.splice(i, 1);
           renderTextBlocks();
+          restoreEditorBlockPosition(); // Восстанавливаем позицию после перерисовки
         };
         
         updateAll();
@@ -1315,37 +1320,36 @@
               indent = indentMatch ? indentMatch[0] : '';
             }
             if (block.type === 'ShowTextAttributes') {
-              newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, indent + `ShowText([${block.text}])`);
+              let lineToInsert = indent + `ShowTextAttributes([${block.text}])`;
+              if (block.generated) {
+                lineToInsert += ' #+';
+              }
+              newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, lineToInsert);
               lineInsertOffset++;
               blockIndexMap.set(blockIndex, lastMainBlockIdx + 1 + lineInsertOffset - 1);
-              // console.log(`[LOG] Вставлен ShowTextAttributes [продолжение]:`, block);
-            } else {
-              if (/^\\n<\\C\[6\]/.test(block.text)) {
-                let lineToInsert = indent + `ShowText(["${block.text}"])`;
-                if (block.type === 'ShowText' && block.generated) {
-                  lineToInsert += ' #+';
-                }
-                newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, lineToInsert);
-                lineInsertOffset++;
-                blockIndexMap.set(blockIndex, lastMainBlockIdx + 1 + lineInsertOffset - 1);
-                // console.log(`[LOG] Вставлен ShowText с именем [продолжение]:`, block);
-              } else {
-                let cont = block.text.replace(/∿/g, '<<ONE>>');
-                cont = cont.replace(/\n/g, '\\n');
-                cont = cont.replace(/∾+/g, '\\');
-                cont = cont.replace(/<<ONE>>/g, '\\');
-                cont = cont.replace(/\\{2,}n/g, '\\\\n');
-                cont = cont.replace(/\\(?=[\?\.!\,—])/g, '');
-                let newText = cont.replace(/(?<!\\)"/g, '\\"');
-                let lineToInsert = indent + `ShowText(["${newText}"])`;
-                if (block.type === 'ShowText' && block.generated) {
-                  lineToInsert += ' #+';
-                }
-                newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, lineToInsert);
-                lineInsertOffset++;
-                blockIndexMap.set(blockIndex, lastMainBlockIdx + 1 + lineInsertOffset - 1);
-                // console.log(`[LOG] Вставлен ShowText [продолжение]:`, block);
+            } else if (/^\\n<\\C\[6\]/.test(block.text)) {
+              let lineToInsert = indent + `ShowText(["${block.text}"])`;
+              if (block.type === 'ShowText' && block.generated) {
+                lineToInsert += ' #+';
               }
+              newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, lineToInsert);
+              lineInsertOffset++;
+              blockIndexMap.set(blockIndex, lastMainBlockIdx + 1 + lineInsertOffset - 1);
+            } else {
+              let cont = block.text.replace(/∿/g, '<<ONE>>');
+              cont = cont.replace(/\n/g, '\\n');
+              cont = cont.replace(/∾+/g, '\\');
+              cont = cont.replace(/<<ONE>>/g, '\\');
+              cont = cont.replace(/\\{2,}n/g, '\\\\n');
+              cont = cont.replace(/\\(?=[\?\.!\,—])/g, '');
+              let newText = cont.replace(/(?<!\\)"/g, '\\"');
+              let lineToInsert = indent + `ShowText(["${newText}"])`;
+              if (block.type === 'ShowText' && block.generated) {
+                lineToInsert += ' #+';
+              }
+              newLines.splice(lastMainBlockIdx + 1 + lineInsertOffset, 0, lineToInsert);
+              lineInsertOffset++;
+              blockIndexMap.set(blockIndex, lastMainBlockIdx + 1 + lineInsertOffset - 1);
             }
           }
         });
