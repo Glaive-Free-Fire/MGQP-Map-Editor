@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <title>MGQP Map Editor v1.4.0</title>
+  <title>MGQP Map Editor v1.4.10</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="Java scripts/restore-mode.js"></script>
   <script src="Java scripts/test_mode.js"></script>
@@ -85,7 +85,7 @@
 <body>
   <div class="control-panel">
     <button id="wrapModeBtn" class="control-btn">Режим переноса: Остаточный</button>
-    <button id="toggleScriptsBtn" class="control-btn">Скрыть Скрипты</button>
+    <button id="splitAllBtn" class="control-btn">Разделить Строки</button>
 
     <!-- Новые кнопки для Undo/Redo -->
     <button id="undoBtn" class="control-btn" title="Отменить (Ctrl+Z)" style="font-size:20px;">↺</button>
@@ -104,6 +104,7 @@
 
     <!-- Кнопка восстановления структуры -->
     <button id="restoreStructBtn" class="control-btn" style="background:#cdf;">Восстановить структуру CommonEvent</button>
+    <button id="syncEditorBtn" class="control-btn" style="background:#ffc; display:none;">Обновить редактор</button>
 
     <!-- Лампочка и процент совпадения -->
     <div id="matchLampContainer" style="display:none; text-align:center;">
@@ -301,6 +302,7 @@
         originalLines = lines.slice();
         extractTexts();
         updateMatchLamp();
+        updateRedIndices();
       };
       reader.readAsText(file, 'utf-8');
     });
@@ -313,6 +315,7 @@
         window.japaneseLines = window.fullJapLines; // для совместимости
         extractJapaneseTexts(window.japaneseLines);
         updateMatchLamp();
+        updateRedIndices();
       };
       reader.readAsText(file, 'utf-8');
     });
@@ -1178,41 +1181,29 @@
 
       // после полной отрисовки — пересчитаем красные строки и включим/выключим стрелки
       updateRedIndices();
-
-      document.getElementById('undoBtn').onclick = function() {
-        if (undoStack.length > 0) {
-          redoStack.push({
-            textBlocks: JSON.parse(JSON.stringify(textBlocks)),
-            mapDisplayName: mapDisplayName,
-            selections: getSelections()
-          });
-          const state = undoStack.pop();
-          textBlocks = state.textBlocks;
-          mapDisplayName = state.mapDisplayName;
-          window.textBlocks = textBlocks;
-          if (textBlocks) textBlocks.forEach(b => { if (b.dom) delete b.dom; });
-          renderTextBlocks();
-          setTimeout(() => setSelections(state.selections), 0);
+      // --- Повторно блокируем saveBtn, если есть красные строки (на случай, если updateRedIndices не вызвался) --- 
+      const saveBtn = document.getElementById('saveBtn');
+      if (saveBtn) {
+        // Если активирован режим восстановления структуры, разблокируем кнопку
+        if (window.restoreModeEnabled) {
+          saveBtn.disabled = false;
+          saveBtn.style.background = '#cdf'; // Голубой фон для обозначения режима восстановления
+          saveBtn.style.color = '#333';
+          saveBtn.title = 'Структура восстановлена. Можно сохранить файл.';
+        } else {
+          // Обычная логика блокировки
+          saveBtn.disabled = false;
+          if (redIndices.length > 0) {
+            saveBtn.style.background = '#ffd6d6';
+            saveBtn.style.color = '#a00';
+            saveBtn.title = 'Есть неисправленные красные строки (ошибка или японский текст)! Исправьте ошибки перед сохранением.';
+          } else {
+            saveBtn.style.background = '';
+            saveBtn.style.color = '';
+            saveBtn.title = '';
+          }
         }
-      };
-      document.getElementById('redoBtn').onclick = function() {
-        if (redoStack.length > 0) {
-          undoStack.push({
-            textBlocks: JSON.parse(JSON.stringify(textBlocks)),
-            mapDisplayName: mapDisplayName,
-            selections: getSelections()
-          });
-          const state = redoStack.pop();
-          textBlocks = state.textBlocks;
-          mapDisplayName = state.mapDisplayName;
-          window.textBlocks = textBlocks;
-          if (textBlocks) textBlocks.forEach(b => { if (b.dom) delete b.dom; });
-          renderTextBlocks();
-          setTimeout(() => setSelections(state.selections), 0);
-        }
-      };
-      // Восстанавливаем scrollTop после любого рендера редактора
-      restoreEditorBlockPosition();
+      }
     }
 
     // === Функция экранирования первых трёх управляющих последовательностей ===
@@ -1228,7 +1219,19 @@
       return result;
     }
 
+    // === Счётчик предупреждений для кнопки сохранения ===
+    if (typeof window.saveWarnCounter === 'undefined') window.saveWarnCounter = 0;
+
     document.getElementById('saveBtn').onclick = function() {
+      // Проверяем наличие красных строк через глобальный массив redIndices
+      const hasRed = window.redIndices && window.redIndices.length > 0;
+      if (hasRed) {
+        window.saveWarnCounter = (window.saveWarnCounter || 0) + 1;
+        if (window.saveWarnCounter % 2 === 1) {
+          alert('Внимание! Не все красные строки исправлены. Продолжайте только если уверены.');
+          return;
+        }
+      }
       document.querySelectorAll('textarea[data-block]').forEach(ta => {
         const i = +ta.dataset.block;
         if(textBlocks[i]) textBlocks[i].text = ta.value;
@@ -1411,11 +1414,17 @@
       
       let outputLines = [];
 
+      // === Добавляем Display Name в начало ===
+      if (typeof mapDisplayName !== 'undefined') {
+        let label = '[Display Name]: ';
+        outputLines.push(label + mapDisplayName);
+      }
+
       for (let i = 0; i < textBlocks.length; i++) {
         const block = textBlocks[i];
 
         // Пропускаем типы, которые не нужно копировать (например, атрибуты и скрипты)
-        if (block.type === 'ShowTextAttributes' || block.type === 'Script' || block.type === 'ScriptMore') {
+        if (block.type === 'ShowTextAttributes' || block.type === 'Script' || block.type === 'ScriptMore' || block.type === 'DisplayName') {
           continue;
         }
 
@@ -1473,22 +1482,113 @@
     };
     document.getElementById('wrapModeBtn').title = 'Переносятся только слова, не вмещающиеся в лимит';
 
-    // Кнопка скрытия/отображения скриптов
-    document.getElementById('toggleScriptsBtn').onclick = function() {
-      hideScripts = !hideScripts;
-      this.textContent = hideScripts ? 'Скрыть Скрипты' : 'Показать Скрипты';
+    // Кнопка "Разделить Строки": корректная массовая обработка без появления пустых строк
+    document.getElementById('splitAllBtn').onclick = function() {
+      let i = 0;
+      while (i < textBlocks.length) {
+        const block = textBlocks[i];
+        if (block.type === 'ShowText' && block.text && block.text.trim().length > 0 && !block.generated) {
+          const info = getGameTextInfo(block.text);
+          let namePart = info.fullPrefix;
+          let textPart = info.rawGameText;
+          let acc = '';
+          let rest = '';
+          if (wrapMode === 'equal') {
+            const totalLen = textPart.length;
+            let midPoint = Math.floor(totalLen / 2);
+            let splitIndex = textPart.lastIndexOf(' ', midPoint);
+            if (splitIndex === -1) { splitIndex = textPart.indexOf(' ', midPoint); }
+            if (splitIndex === -1) {
+                acc = textPart;
+                rest = '';
+            } else {
+                acc = textPart.substring(0, splitIndex);
+                rest = textPart.substring(splitIndex + 1);
+            }
+          } else {
+            const words = textPart.split(' ');
+            let firstLineWords = [];
+            for (const word of words) {
+                firstLineWords.push(word);
+                if (firstLineWords.join(' ').replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/g, '').replace(/∾/g, '').length > 50) {
+                    firstLineWords.pop();
+                    break;
+                }
+            }
+            acc = firstLineWords.join(' ');
+            rest = words.slice(firstLineWords.length).join(' ');
+          }
+          textBlocks[i].text = namePart + acc.trimEnd();
+          // --- механизм разбиения окна ---
+          let windowStartIndex = 0;
+          for (let j = i - 1; j >= 0; j--) {
+            if (textBlocks[j].type === 'ShowTextAttributes') {
+              windowStartIndex = j + 1;
+              break;
+            }
+          }
+          let linesInWindow = 0;
+          for (let j = windowStartIndex; j <= i; j++) {
+            if (textBlocks[j].type === 'ShowText' || textBlocks[j].type === undefined) {
+              linesInWindow++;
+            }
+          }
+          if (linesInWindow >= 4 && rest.trim() !== '') {
+            let attrText = '["",0,0,2]';
+            for (let j = i; j >= 0; j--) {
+              if (textBlocks[j].type === 'ShowTextAttributes') {
+                attrText = textBlocks[j].text;
+                break;
+              }
+            }
+            textBlocks.splice(i + 1, 0, { type: 'ShowTextAttributes', text: attrText, idx: undefined, generated: true });
+            textBlocks.splice(i + 2, 0, { text: rest.trimStart(), type: 'ShowText', idx: undefined, generated: true });
+            i += 2;
+          } else if (rest.trim() !== '') {
+            textBlocks.splice(i + 1, 0, { text: rest.trimStart(), type: 'ShowText', idx: undefined, generated: true });
+            i += 1;
+          }
+        }
+        i++;
+      }
       renderTextBlocks();
     };
-    document.getElementById('toggleScriptsBtn').title = 'Скрыть или показать строки Script и ScriptMore';
 
     // Собирает актуальный список индексов красных textarea
     function updateRedIndices() {
-      redIndices = textBlocks
-        .map((_, i) => i)
-        .filter(i => {
-          const ta = textBlocks[i].dom?.rusInput;
-          return ta && window.getComputedStyle(ta).backgroundColor === 'rgb(255, 214, 214)';
-        });
+      // Собираем индексы всех ошибочных строк (по длине, синтаксису и японскому тексту)
+      window.redIndices = redIndices = [];
+      textBlocks.forEach((block, i) => {
+        const ta = block.dom?.rusInput;
+        if (!ta) return;
+        let isError = false;
+        // Проверка на превышение длины
+        if ((block.type === 'ShowText' || block.type === undefined)) {
+          const info = window.getGameTextInfo(block.text);
+          const visibleText = info.rawGameText
+            .replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/g, '')
+            .replace(/∾∾C\[\d+\]/g, '')
+            .replace(/C\[\d+\]/g, '')
+            .replace(/∾/g, '')
+            .replace(/∿/g, '')
+            .trim();
+          if (visibleText.length > 50) isError = true;
+          if (info.isCorrupted) isError = true;
+        }
+        // Проверка на японский текст
+        if (/[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.text)) isError = true;
+        if (isError) redIndices.push(i);
+      });
+      // Окрашиваем все textarea с ошибками
+      textBlocks.forEach((block, i) => {
+        const ta = block.dom?.rusInput;
+        if (!ta) return;
+        if (redIndices.includes(i)) {
+          ta.style.backgroundColor = '#ffd6d6';
+        } else {
+          ta.style.backgroundColor = '';
+        }
+      });
       // Если после пересчёта указатель ушёл за пределы — сбросим
       if (redPointer >= redIndices.length) redPointer = -1;
 
@@ -1498,6 +1598,30 @@
       const disabled = redIndices.length === 0;
       prev.disabled = disabled;
       next.disabled = disabled;
+
+      // --- Блокировка кнопки сохранения, если есть красные строки ---
+      const saveBtn = document.getElementById('saveBtn');
+      if (saveBtn) {
+        // Если активирован режим восстановления структуры, разблокируем кнопку
+        if (window.restoreModeEnabled) {
+          saveBtn.disabled = false;
+          saveBtn.style.background = '#cdf'; // Голубой фон для обозначения режима восстановления
+          saveBtn.style.color = '#333';
+          saveBtn.title = 'Структура восстановлена. Можно сохранить файл.';
+        } else {
+          // Обычная логика блокировки
+          saveBtn.disabled = false;
+          if (redIndices.length > 0) {
+            saveBtn.style.background = '#ffd6d6';
+            saveBtn.style.color = '#a00';
+            saveBtn.title = 'Есть неисправленные красные строки (ошибка или японский текст)! Исправьте ошибки перед сохранением.';
+          } else {
+            saveBtn.style.background = '';
+            saveBtn.style.color = '';
+            saveBtn.title = '';
+          }
+        }
+      }
     }
 
     function moveToNextRed() {
@@ -1584,6 +1708,15 @@
               label: block.idx !== undefined ? `строка ${block.idx+1}` : '[продолжение]',
               type: 'ShowText',
               reason: 'Повреждён тег имени (<∾∾C[6]...∾∾C[0]>) или синтаксис строки'
+            });
+          }
+          // --- Ошибка: наличие японского текста ---
+          if (/[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.text)) {
+            errors.push({
+              idx: block.idx,
+              label: block.idx !== undefined ? `строка ${block.idx+1}` : '[продолжение]',
+              type: block.type || 'ShowText',
+              reason: 'Обнаружен японский текст в поле ввода'
             });
           }
         }
@@ -1703,6 +1836,66 @@
       document.getElementById('tabPreview').onclick = () => showTab('preview');
       document.getElementById('tabBatch').onclick = () => showTab('batch');
     });
+
+    // === Функция для синхронизации редактора с восстановленными строками ===
+    window.syncEditorWithRestored = function() {
+      if (!window.fullRusLines || window.fullRusLines.length === 0) {
+        console.warn('Нет восстановленных строк для синхронизации');
+        return;
+      }
+      // Сохраняем текущую позицию прокрутки
+      const currentScrollPosition = window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop;
+      // Обновляем originalLines восстановленными строками
+      window.originalLines = window.fullRusLines.slice();
+      originalLines = window.fullRusLines.slice();
+      // Сброс состояния undo/redo
+      undoStack = [];
+      redoStack = [];
+      // ИСПРАВЛЕНИЕ: Сохраняем японские данные перед обновлением
+      const hasJapanese = window.fullJapLines && window.fullJapLines.length > 0;
+      // Перезапускаем парсинг текста с новыми строками
+      window.extractTexts();
+      // ИСПРАВЛЕНИЕ: Если были японские блоки, полностью переинициализируем их
+      if (hasJapanese) {
+        extractJapaneseTexts(window.fullJapLines);
+      } else {
+        renderTextBlocks();
+      }
+      // Обновляем лампочку совпадения
+      window.updateMatchLamp();
+      // Обновляем индексы красных строк
+      if (typeof updateRedIndices === 'function') {
+        updateRedIndices();
+      }
+      // Обновляем предпросмотр если он открыт
+      if (typeof window.updatePreviewArea === 'function') {
+        window.updatePreviewArea();
+      }
+      // Восстанавливаем позицию прокрутки
+      setTimeout(() => {
+        window.scrollTo(0, currentScrollPosition);
+      }, 100);
+      console.log('Редактор синхронизирован с восстановленными строками');
+      // --- СБРОС режима восстановления ---
+      window.restoreModeEnabled = false;
+    };
+    // === Обработчик кнопки синхронизации редактора ===
+    document.getElementById('syncEditorBtn').onclick = function() {
+      if (window.restoreModeEnabled && typeof window.syncEditorWithRestored === 'function') {
+        const confirmed = confirm(
+          'Это заменит текущее содержимое редактора на восстановленные строки из файла.\n\n' +
+          'Все несохранённые изменения в редакторе будут потеряны!\n\n' +
+          'Продолжить?'
+        );
+        if (confirmed) {
+          window.syncEditorWithRestored();
+          alert('Редактор обновлён с восстановленными строками!');
+          this.style.display = 'none';
+        }
+      } else {
+        alert('Сначала выполните восстановление структуры!');
+      }
+    };
   </script>
 </body>
 </html>
