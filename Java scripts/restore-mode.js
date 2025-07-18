@@ -352,6 +352,30 @@
       }
     }
     
+    // --- Финальное выравнивание пустых строк между Page N и Empty([]) ---
+    for (let i = 0; i < jpLines.length - 2; i++) {
+      if (
+        /^\s*Page \d+/.test(jpLines[i]) &&
+        jpLines[i + 1].trim() === "" &&
+        /^\s*Empty\(\[\]\)/.test(jpLines[i + 2])
+      ) {
+        // Найти соответствующий участок в русском файле
+        for (let j = 0; j < resultLines.length - 1; j++) {
+          if (
+            resultLines[j].trim() === jpLines[i].trim() &&
+            /^\s*Empty\(\[\]\)/.test(resultLines[j + 1]) &&
+            (j === 0 || resultLines[j - 1].trim() !== "")
+          ) {
+            // Проверяем, нет ли уже пустой строки между ними
+            if (resultLines[j + 1].trim() === "Empty([])" && resultLines[j + 1] !== "" && resultLines[j] !== "") {
+              resultLines.splice(j + 1, 0, "");
+              break;
+            }
+          }
+        }
+      }
+    }
+    
     return resultLines;
   };
 
@@ -387,7 +411,7 @@
     // Убираем дубликаты номеров
     mismatchedNums = [...new Set(mismatchedNums)];
     
-    // Выполняем восстановление с новой функцией - используем fullRusLines вместо originalLines
+    // Выполняем восстановление с новой функцией
     const restoredLines = window.restoreRussianStructureWithMissing(window.fullRusLines, window.fullJapLines, mismatchedNums);
     
     // Обновляем глобальные переменные
@@ -397,16 +421,60 @@
     
     // Устанавливаем флаг для правильного сохранения
     window.restoreModeEnabled = true;
+
+    // Проверяем, остались ли ошибки после первого восстановления
+    const jpContent2 = window.fullJapLines.join('\n');
+    const ruContent2 = window.fullRusLines.join('\n');
+    const result2 = window.checkMapStructureMatch(jpContent2, ruContent2);
+
+    let stillMismatchedNums = [];
+    if (result2.grouped) {
+      result2.grouped.forEach(ev => {
+        ev.pages.forEach(page => {
+          if (!page.ok && page.errors && page.errors.length > 0) {
+            stillMismatchedNums.push(parseInt(ev.eid));
+          }
+        });
+      });
+    }
+    stillMismatchedNums = [...new Set(stillMismatchedNums)];
+
+    if (stillMismatchedNums.length > 0) {
+      // Повторяем восстановление
+      const restoredLines2 = window.restoreRussianStructureWithMissing(window.fullRusLines, window.fullJapLines, stillMismatchedNums);
+      window.fullRusLines = restoredLines2.slice();
+      window.originalLines = restoredLines2.slice();
+      window.japaneseLines = window.fullJapLines;
+      window.restoreModeEnabled = true;
+    }
     
-    // Перезагружаем редактор
-    window.extractTexts();
-    window.updateMatchLamp();
-    
+    // НЕ синхронизируем редактор автоматически!
+    // Показываем кнопку синхронизации после восстановления
+    const syncBtn = document.getElementById('syncEditorBtn');
+    if (syncBtn) {
+      syncBtn.style.display = '';
+      syncBtn.title = 'Заменить содержимое редактора на восстановленные строки';
+    }
+
     // Обновляем предпросмотр если он открыт
     if (typeof window.updatePreviewArea === 'function') {
       window.updatePreviewArea();
     }
     
-    alert(`Восстановлена структура для CommonEvent: ${mismatchedNums.join(', ')}\nОбновлено ${mismatchedNums.length} событий.`);
+    // Принудительно обновляем состояние кнопки сохранения
+    setTimeout(() => {
+      if (typeof window.updateRedIndices === 'function') {
+        window.updateRedIndices();
+      }
+      const saveBtn = document.getElementById('saveBtn');
+      if (saveBtn && window.restoreModeEnabled) {
+        saveBtn.disabled = false;
+        saveBtn.style.background = '#cdf';
+        saveBtn.style.color = '#333';
+        saveBtn.title = 'Структура восстановлена. Можно сохранить файл.';
+      }
+    }, 100);
+
+    alert(`Восстановлена структура для CommonEvent: ${mismatchedNums.join(', ')}\nОбновлено ${mismatchedNums.length} событий.\n\nИспользуйте кнопку "Обновить редактор" для синхронизации.`);
   };
 })(window);

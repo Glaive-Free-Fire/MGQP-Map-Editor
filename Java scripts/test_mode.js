@@ -377,7 +377,26 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
       const ruEv = ruEvents[eid];
       if (!ruEv) {
         errors.push(`Нет CommonEvent ${eid} (${jpEv.name}) в русском файле`);
-        grouped.push({ eid, name: jpEv.name, pages: [{ page: 0, ok: false, errors: [`Нет CommonEvent ${eid} (${jpEv.name}) в русском файле`] }] });
+        // Для каждой страницы отсутствующего события считаем ошибку
+        grouped.push({
+          eid,
+          name: jpEv.name,
+          pages: jpEv.pages.map((page, pageIdx) => {
+            // Увеличиваем totalLines для каждой страницы
+            totalLines++;
+            return {
+              page: pageIdx,
+              ok: false,
+              errors: [{
+                line: null,
+                msg: `CommonEvent отсутствует в русском файле`,
+                jp: '',
+                ru: '',
+                branchEndNumber: undefined
+              }]
+            };
+          })
+        });
         continue;
       }
       let eventGroup = { eid, name: jpEv.name, pages: [] };
