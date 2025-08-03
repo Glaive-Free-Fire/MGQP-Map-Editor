@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <title>MGQP Map Editor v1.4.20</title>
+  <title>MGQP Map Editor v1.4.30</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="Java scripts/restore-mode.js"></script>
   <script src="Java scripts/test_mode.js"></script>
@@ -103,7 +103,9 @@
     <button id="copyBtn" class="control-btn" style="display:none;">Скопировать всё извлечённое</button>
 
     <!-- Кнопка восстановления структуры -->
-    <button id="restoreStructBtn" class="control-btn" style="background:#cdf;">Восстановить структуру CommonEvent</button>
+    <button id="restoreStructBtn" class="control-btn" style="background:#cdf; display:none;">Восстановить структуру CommonEvent</button>
+    <button id="fixScriptBtn" class="control-btn" style="background:#fcd; display:none;">Исправить ошибки Script</button>
+    <button id="fixIndentBtn" class="control-btn" style="background:#fde; display:none;">Исправить отступы</button>
     <button id="syncEditorBtn" class="control-btn" style="background:#ffc; display:none;">Обновить редактор</button>
 
     <!-- Лампочка и процент совпадения -->
@@ -288,6 +290,11 @@
         }
       }
       document.getElementById('previewDiffs').innerHTML = statHtml;
+      
+      // Обновляем видимость кнопок исправления после проверки структуры
+      if (typeof window.updateFixButtonsVisibility === 'function') {
+        window.updateFixButtonsVisibility();
+      }
     }
 
     document.getElementById('fileInput').addEventListener('change', function(e) {
@@ -303,6 +310,10 @@
         extractTexts();
         updateMatchLamp();
         updateRedIndices();
+        // Обновляем видимость кнопок исправления
+        if (typeof window.updateFixButtonsVisibility === 'function') {
+          window.updateFixButtonsVisibility();
+        }
       };
       reader.readAsText(file, 'utf-8');
     });
@@ -325,6 +336,10 @@
         
         updateMatchLamp();
         updateRedIndices();
+        // Обновляем видимость кнопок исправления
+        if (typeof window.updateFixButtonsVisibility === 'function') {
+          window.updateFixButtonsVisibility();
+        }
       };
       reader.readAsText(file, 'utf-8');
     });
@@ -1608,11 +1623,18 @@
                         // Обычный ShowText без имени
                         let txt = block.text.replace(/∿/g, '<<ONE>>');
                         txt = txt.replace(/\n/g, '\\n');
-                        txt = txt.replace(/∾+/g, '\\');
+                        
+                        // --- НАЧАЛО ИСПРАВЛЕНИЯ ---
+                        // Сначала заменяем двойные ∾∾ на двойные слэши \\
+                        txt = txt.replace(/∾∾/g, '\\\\'); 
+                        // Затем заменяем оставшиеся одиночные ∾ на одиночные слэши \
+                        txt = txt.replace(/∾/g, '\\');
+                        // --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+                        
                         txt = txt.replace(/<<ONE>>/g, '\\');
-                        txt = txt.replace(/\\{2,}n/g, '\\n');
                         txt = txt.replace(/\\(?=[\?\.!\,—])/g, '');
                         let newText = txt.replace(/(?<!\\)"/g, '\\"');
+                        
                         // --- Применяем escapeFirstThree только к строкам с именем ---
                         if (/^\\n<\\C\[6\].*?\\C\[0\]>/.test(newText)) {
                           newText = escapeFirstThree(newText);
@@ -1697,11 +1719,18 @@
               case 'ShowText':
                 let txt = block.text.replace(/∿/g, '<<ONE>>');
                 txt = txt.replace(/\n/g, '\\n');
-                txt = txt.replace(/∾+/g, '\\');
+                
+                // --- НАЧАЛО ИСПРАВЛЕНИЯ ---
+                // Сначала заменяем двойные ∾∾ на двойные слэши \\
+                txt = txt.replace(/∾∾/g, '\\\\'); 
+                // Затем заменяем оставшиеся одиночные ∾ на одиночные слэши \
+                txt = txt.replace(/∾/g, '\\');
+                // --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+                
                 txt = txt.replace(/<<ONE>>/g, '\\');
-                txt = txt.replace(/\\{2,}n/g, '\\n');
                 txt = txt.replace(/\\(?=[\?\.!\,—])/g, '');
                 let newText = txt.replace(/(?<!\\)"/g, '\\"');
+                
                 // --- Применяем escapeFirstThree только к строкам с именем ---
                 if (/^\\n<\\C\[6\].*?\\C\[0\]>/.test(newText)) {
                   newText = escapeFirstThree(newText);
@@ -1810,6 +1839,9 @@
         });
         // --- ЛОГИРОВАНИЕ: после обработки textBlocks ---
         // console.log('[LOG] newLines после обработки textBlocks:', newLines);
+        
+
+        
         // --- Функция форматирования текста для экспорта (exportFormat) ---
         function exportFormat(text) {
           let cont = text.replace(/∿/g, '<<ONE>>');
@@ -1854,6 +1886,9 @@
         // Если загружен только японский файл, используем имя из Display Name
         saveName = `${mapDisplayName || 'Map001'}_translated.txt`;
       }
+      
+
+      
       const blob = new Blob([exportLines.join('\n')], {type: 'text/plain'});
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
@@ -1885,8 +1920,8 @@
           continue;
         }
         
-        // Для Script копируем только те, которые содержат японские символы
-        if (block.type === 'Script' && !/[ぁ-んァ-ン一-龯]/.test(block.text)) {
+        // Для Script и ScriptMore копируем только те, которые содержат японские символы
+        if ((block.type === 'Script' || block.type === 'ScriptMore') && !/[ぁ-んァ-ン一-龯]/.test(block.text)) {
           continue;
         }
 
@@ -2081,6 +2116,11 @@
           }
         }
       }
+      
+      // Обновляем видимость кнопок исправления
+      if (typeof window.updateFixButtonsVisibility === 'function') {
+        window.updateFixButtonsVisibility();
+      }
     }
 
     function moveToNextRed() {
@@ -2120,6 +2160,24 @@
       } else {
         window.restoreModeEnabled = true;
         alert("Жёсткий режим восстановления структуры активирован.\nИзменения CommonEvent будут применены только при сохранении!");
+      }
+    };
+
+    // === Обработчик кнопки исправления ошибок Script ===
+    document.getElementById('fixScriptBtn').onclick = function() {
+      if (typeof window.autoFixScriptErrors === 'function') {
+        window.autoFixScriptErrors();
+      } else {
+        alert("Функция исправления ошибок Script недоступна!");
+      }
+    };
+
+    // === Обработчик кнопки исправления отступов ===
+    document.getElementById('fixIndentBtn').onclick = function() {
+      if (typeof window.autoFixIndentErrors === 'function') {
+        window.autoFixIndentErrors();
+      } else {
+        alert("Функция исправления отступов недоступна!");
       }
     };
 
