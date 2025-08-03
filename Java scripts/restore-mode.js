@@ -13,6 +13,30 @@
     return result;
   }
 
+  // === Новая функция для обработки строк с характеристиками ===
+  function escapeSkillAttributes(str) {
+    // Проверяем, содержит ли строка паттерн получения характеристик
+    if (str.includes('получила') || str.includes('получил')) {
+      // Проверяем, не является ли строка уже правильно экранированной
+      // Если в строке уже есть двойные слеши для I[] и C[], не изменяем её
+      if (str.includes('\\\\I[') && str.includes('\\\\C[')) {
+        return str; // Уже правильно экранировано, не изменяем
+      }
+      
+      // Обрабатываем управляющие последовательности для навыков
+      let result = str;
+      
+      // Заменяем одиночные слеши на двойные для управляющих последовательностей навыков
+      result = result.replace(/\\([IC])\[/g, '\\\\$1[');
+      result = result.replace(/\\C\[(\d+)\]/g, '\\\\C[$1]');
+      result = result.replace(/\\I\[(\d+)\]/g, '\\\\I[$1]');
+      
+      return result;
+    }
+    
+    return str;
+  }
+
   // === Старая функция восстановления структуры CommonEvent ===
   // Разбить lines на CommonEvent-блоки (с заголовком, страницами и содержимым)
   function parseCommonEvents(lines) {
@@ -108,6 +132,10 @@
                 let text = contentMatch[2] || '';
                 name = name.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
                 text = text.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+                
+                // Применяем специальную обработку для строк с характеристиками
+                text = escapeSkillAttributes(text);
+                
                 // --- Применяем escapeFirstThree для правильного экранирования ---
                 const escapedContent = escapeFirstThree(`\\n<\\C[6]${name}\\C[0]>${text}`);
                 finalMerged = `${indent}ShowText(["${escapedContent}"])`;
@@ -315,6 +343,10 @@
                   let text = contentMatch[2] || '';
                   name = name.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
                   text = text.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+                  
+                  // Применяем специальную обработку для строк с характеристиками
+                  text = escapeSkillAttributes(text);
+                  
                   // --- Применяем escapeFirstThree для правильного экранирования ---
                   const escapedContent = escapeFirstThree(`\\n<\\C[6]${name}\\C[0]>${text}`);
                   finalMerged = `${indent}ShowText(["${escapedContent}"])`;
@@ -333,9 +365,53 @@
           resultLines.push(...ruEv.lines);
         }
       } else if (jpEv && !ruEv) {
-        // Японское событие существует, но русского нет - добавляем японское
+        // Японское событие существует, но русского нет - добавляем японское с обработкой ShowText
         resultLines.push(...jpEv.header);
-        resultLines.push(...jpEv.lines);
+        const jpLines = jpEv.lines;
+        let j = 0;
+        while (j < jpLines.length) {
+          // Проверяем: ShowText(["【...】"]) + ShowText(["..."])
+          const nameMatch = jpLines[j].match(/^\s*ShowText\(\["【(.+?)】"\]\)/);
+          const textMatch = (j + 1 < jpLines.length) ? jpLines[j + 1].match(/^\s*ShowText\(\["([\s\S]*?)"\]\)/) : null;
+          if (nameMatch && textMatch) {
+            const name = nameMatch[1]
+              .replace(/\\/g, '\\\\')
+              .replace(/"/g, '\\"');
+            const text = textMatch[1]
+              .replace(/\\/g, '\\\\')
+              .replace(/"/g, '\\"');
+            const indent = jpLines[j].match(/^(\s*)/) ? jpLines[j].match(/^(\s*)/)[1] : '';
+            const merged = `${indent}ShowText(["\\n<\\C[6]${name}\\C[0]>${text}"] )`;
+            // --- Новый патч: гарантированное исправление формата строки с именем ---
+            let finalMerged = merged;
+            // Проверяем, что строка имеет правильный формат с двойными слэшами
+            const formatCheck = merged.match(/^([ \t]*)ShowText\(\["(.*)"\]\s*\)/);
+            if (formatCheck) {
+              const indent = formatCheck[1] || '';
+              const content = formatCheck[2] || '';
+              // Ищем паттерн \n<\C[6]Имя\C[0]>Текст
+              const contentMatch = content.match(/^\\n<\\C\[6\](.+?)\\C\[0\]>(.*)$/);
+              if (contentMatch) {
+                let name = contentMatch[1] || '';
+                let text = contentMatch[2] || '';
+                name = name.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+                text = text.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+                
+                // Применяем специальную обработку для строк с характеристиками
+                text = escapeSkillAttributes(text);
+                
+                // --- Применяем escapeFirstThree для правильного экранирования ---
+                const escapedContent = escapeFirstThree(`\\n<\\C[6]${name}\\C[0]>${text}`);
+                finalMerged = `${indent}ShowText(["${escapedContent}"])`;
+              }
+            }
+            resultLines.push(finalMerged);
+            j += 2;
+            continue;
+          }
+          resultLines.push(jpLines[j]);
+          j++;
+        }
       } else if (ruEv && !jpEv) {
         // Русское событие существует, но японского нет - оставляем русское
         resultLines.push(...ruEv.header);
@@ -414,9 +490,12 @@
     // Выполняем восстановление с новой функцией
     const restoredLines = window.restoreRussianStructureWithMissing(window.fullRusLines, window.fullJapLines, mismatchedNums);
     
+    // Автоматически исправляем ошибки Script после восстановления структуры
+    const fixedLines = window.fixScriptQuotes(restoredLines);
+    
     // Обновляем глобальные переменные
-    window.fullRusLines = restoredLines.slice();
-    window.originalLines = restoredLines.slice();
+    window.fullRusLines = fixedLines.slice();
+    window.originalLines = fixedLines.slice();
     window.japaneseLines = window.fullJapLines; // для совместимости
     
     // Устанавливаем флаг для правильного сохранения
@@ -442,8 +521,10 @@
     if (stillMismatchedNums.length > 0) {
       // Повторяем восстановление
       const restoredLines2 = window.restoreRussianStructureWithMissing(window.fullRusLines, window.fullJapLines, stillMismatchedNums);
-      window.fullRusLines = restoredLines2.slice();
-      window.originalLines = restoredLines2.slice();
+      // Автоматически исправляем ошибки Script после второго восстановления
+      const fixedLines2 = window.fixScriptQuotes(restoredLines2);
+      window.fullRusLines = fixedLines2.slice();
+      window.originalLines = fixedLines2.slice();
       window.japaneseLines = window.fullJapLines;
       window.restoreModeEnabled = true;
     }
@@ -473,8 +554,269 @@
         saveBtn.style.color = '#333';
         saveBtn.title = 'Структура восстановлена. Можно сохранить файл.';
       }
+      
+      // Обновляем видимость кнопок после восстановления
+      if (typeof window.updateFixButtonsVisibility === 'function') {
+        window.updateFixButtonsVisibility();
+      }
     }, 100);
 
-    alert(`Восстановлена структура для CommonEvent: ${mismatchedNums.join(', ')}\nОбновлено ${mismatchedNums.length} событий.\n\nИспользуйте кнопку "Обновить редактор" для синхронизации.`);
+    alert(`Восстановлена структура для CommonEvent: ${mismatchedNums.join(', ')}\nОбновлено ${mismatchedNums.length} событий.\nТакже автоматически исправлены ошибки в командах Script.\n\nИспользуйте кнопку "Обновить редактор" для синхронизации.`);
+  };
+
+  // === Функция для исправления кавычек в командах Script ===
+  global.fixScriptQuotes = function(lines) {
+    let fixedLines = lines.slice();
+    let fixedCount = 0;
+    
+    for (let i = 0; i < fixedLines.length; i++) {
+      const line = fixedLines[i];
+      // Проверяем, является ли это командой Script без кавычек
+      const scriptMatch = line.match(/^\s*Script\(\[([^"]+)\]\)/);
+      if (scriptMatch) {
+        const content = scriptMatch[1].trim();
+        const indent = line.match(/^(\s*)/)[1];
+        // Добавляем кавычки вокруг содержимого
+        fixedLines[i] = `${indent}Script(["${content}"])`;
+        fixedCount++;
+      }
+    }
+    
+    if (fixedCount > 0) {
+      console.log(`Исправлено ${fixedCount} команд Script без кавычек`);
+    }
+    
+    return fixedLines;
+  };
+
+  // === Функция для автоматического исправления всех ошибок Script ===
+  global.autoFixScriptErrors = function() {
+    if (!window.fullRusLines || window.fullRusLines.length === 0) {
+      alert('Сначала загрузите русский файл!');
+      return;
+    }
+
+    // Исправляем кавычки в командах Script
+    const fixedLines = window.fixScriptQuotes(window.fullRusLines);
+    
+    // Обновляем глобальные переменные
+    window.fullRusLines = fixedLines.slice();
+    window.originalLines = fixedLines.slice();
+    
+    // Устанавливаем флаг для правильного сохранения
+    window.restoreModeEnabled = true;
+
+    // Показываем кнопку синхронизации
+    const syncBtn = document.getElementById('syncEditorBtn');
+    if (syncBtn) {
+      syncBtn.style.display = '';
+      syncBtn.title = 'Заменить содержимое редактора на исправленные строки';
+    }
+
+    // Обновляем предпросмотр если он открыт
+    if (typeof window.updatePreviewArea === 'function') {
+      window.updatePreviewArea();
+    }
+    
+    // Принудительно обновляем состояние кнопки сохранения
+    setTimeout(() => {
+      if (typeof window.updateRedIndices === 'function') {
+        window.updateRedIndices();
+      }
+      const saveBtn = document.getElementById('saveBtn');
+      if (saveBtn && window.restoreModeEnabled) {
+        saveBtn.disabled = false;
+        saveBtn.style.background = '#cdf';
+        saveBtn.style.color = '#333';
+        saveBtn.title = 'Ошибки Script исправлены. Можно сохранить файл.';
+      }
+    }, 100);
+
+    // Обновляем видимость кнопок после исправления
+    setTimeout(() => {
+      if (typeof window.updateFixButtonsVisibility === 'function') {
+        window.updateFixButtonsVisibility();
+      }
+    }, 200);
+
+    alert(`Автоматически исправлены ошибки в командах Script.\n\nИспользуйте кнопку "Обновить редактор" для синхронизации.`);
+  };
+
+  // === Функция для проверки наличия ошибок Script ===
+  global.hasScriptErrors = function() {
+    if (!window.fullRusLines || !window.fullJapLines || window.fullRusLines.length === 0 || window.fullJapLines.length === 0) {
+      return false;
+    }
+
+    const jpContent = window.fullJapLines.join('\n');
+    const ruContent = window.fullRusLines.join('\n');
+    const result = window.checkMapStructureMatch(jpContent, ruContent);
+    
+    if (!result.grouped) return false;
+    
+    for (const ev of result.grouped) {
+      for (const page of ev.pages) {
+        if (!page.ok && page.errors && page.errors.length > 0) {
+          for (const error of page.errors) {
+            if (error.msg && error.msg.includes('кавычки в команде Script')) {
+              return true;
+            }
+          }
+        }
+      }
+    }
+    return false;
+  };
+
+  // === Функция для проверки наличия ошибок структуры CommonEvent ===
+  global.hasStructureErrors = function() {
+    if (!window.fullRusLines || !window.fullJapLines || window.fullRusLines.length === 0 || window.fullJapLines.length === 0) {
+      return false;
+    }
+
+    const jpContent = window.fullJapLines.join('\n');
+    const ruContent = window.fullRusLines.join('\n');
+    const result = window.checkMapStructureMatch(jpContent, ruContent);
+    
+    if (!result.grouped) return false;
+    
+    for (const ev of result.grouped) {
+      for (const page of ev.pages) {
+        if (!page.ok && page.errors && page.errors.length > 0) {
+          // Проверяем, есть ли ошибки, не связанные с Script
+          for (const error of page.errors) {
+            if (error.msg && !error.msg.includes('кавычки в команде Script')) {
+              return true;
+            }
+          }
+        }
+      }
+    }
+    return false;
+  };
+
+  // === Функция для проверки наличия любых ошибок ===
+  global.hasAnyErrors = function() {
+    if (!window.fullRusLines || !window.fullJapLines || window.fullRusLines.length === 0 || window.fullJapLines.length === 0) {
+      return false;
+    }
+
+    const jpContent = window.fullJapLines.join('\n');
+    const ruContent = window.fullRusLines.join('\n');
+    const result = window.checkMapStructureMatch(jpContent, ruContent);
+    
+    if (!result.grouped) return false;
+    
+    for (const ev of result.grouped) {
+      for (const page of ev.pages) {
+        if (!page.ok && page.errors && page.errors.length > 0) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  // === Функция для проверки наличия ошибок отступов ===
+  global.hasIndentErrors = function() {
+    if (!window.fullRusLines || !window.fullJapLines || window.fullRusLines.length === 0 || window.fullJapLines.length === 0) {
+      return false;
+    }
+
+    const jpContent = window.fullJapLines.join('\n');
+    const ruContent = window.fullRusLines.join('\n');
+    const result = window.checkMapStructureMatch(jpContent, ruContent);
+    
+    if (!result.grouped) return false;
+    
+    for (const ev of result.grouped) {
+      for (const page of ev.pages) {
+        if (!page.ok && page.errors && page.errors.length > 0) {
+          for (const error of page.errors) {
+            if (error.msg && error.msg.includes('Неправильный отступ')) {
+              return true;
+            }
+          }
+        }
+      }
+    }
+    return false;
+  };
+
+  // === Функция для автоматического исправления ошибок отступов ===
+  global.autoFixIndentErrors = function() {
+    if (!window.fullRusLines || !window.fullJapLines) {
+      alert('Сначала загрузите русский и японский файлы!');
+      return;
+    }
+    
+    const ruContent = window.fullRusLines.join('\n');
+    const jpContent = window.fullJapLines.join('\n');
+    const checkResult = window.checkMapStructureMatch(jpContent, ruContent);
+    
+    let indentErrors = [];
+    if (checkResult.grouped) {
+      checkResult.grouped.forEach(ev => {
+        ev.pages.forEach(page => {
+          if (!page.ok && page.errors) {
+            page.errors.forEach(err => {
+              if (err.msg && err.msg.includes('Неправильный отступ')) {
+                indentErrors.push(err);
+              }
+            });
+          }
+        });
+      });
+    }
+    
+    if (indentErrors.length === 0) {
+      alert('Ошибок отступов не найдено.');
+      return;
+    }
+    
+    let fixedLines = window.fullRusLines.slice();
+    let fixedCount = 0;
+    
+    indentErrors.forEach(err => {
+      const lineNum = err.line - 1; // lineNum - это номер строки в файле (1-based)
+      if (fixedLines[lineNum]) {
+        const correctIndent = (err.jp.match(/^(\s*)/) || ['',''])[1];
+        const lineContent = fixedLines[lineNum].trim();
+        fixedLines[lineNum] = correctIndent + lineContent;
+        fixedCount++;
+      }
+    });
+    
+    window.fullRusLines = fixedLines;
+    window.originalLines = fixedLines;
+    window.restoreModeEnabled = true;
+
+    // Показываем кнопку синхронизации
+    const syncBtn = document.getElementById('syncEditorBtn');
+    if (syncBtn) {
+      syncBtn.style.display = '';
+    }
+    
+    alert(`Исправлено ${fixedCount} ошибок отступов.\n\nИспользуйте кнопку "Обновить редактор" для синхронизации.`);
+    
+    // Обновляем проверку, чтобы кнопка исчезла
+    setTimeout(window.updateMatchLamp, 100);
+  };
+
+  // === Функция для обновления видимости кнопок исправления ===
+  global.updateFixButtonsVisibility = function() {
+    const restoreBtn = document.getElementById('restoreStructBtn');
+    const fixScriptBtn = document.getElementById('fixScriptBtn');
+    const fixIndentBtn = document.getElementById('fixIndentBtn'); // Находим новую кнопку
+    
+    if (!restoreBtn || !fixScriptBtn || !fixIndentBtn) return;
+    
+    const hasStructureErrors = window.hasStructureErrors();
+    const hasScriptErrors = window.hasScriptErrors();
+    const hasIndentErrors = window.hasIndentErrors(); // Проверяем ошибки отступов
+    
+    restoreBtn.style.display = hasStructureErrors ? '' : 'none';
+    fixScriptBtn.style.display = hasScriptErrors ? '' : 'none';
+    fixIndentBtn.style.display = hasIndentErrors ? '' : 'none'; // Показываем или скрываем кнопку
   };
 })(window);

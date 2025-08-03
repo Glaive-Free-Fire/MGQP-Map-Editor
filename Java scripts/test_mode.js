@@ -54,6 +54,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 txt = txt.replace(/\\(?=[\?\.!\,—])/g, '');
                 let newText = txt.replace(/(?<!\\)"/g, '\\"');
                 
+                // Применяем специальную обработку для строк с характеристиками
+                newText = escapeSkillAttributes(newText);
+                
                 // Заменяем оригинальную строку
                 newLines[block.idx] = newLines[block.idx].replace(/\[(.*)\]/, `["${newText}"]`);
                 
@@ -101,6 +104,10 @@ document.addEventListener('DOMContentLoaded', function() {
                                                                // Сначала добавляем строку с именем и первой частью диалога
                                 const firstPart = block.dialogueParts[0];
                                 let txt = firstPart.replace(/∿/g, '<<ONE>>').replace(/∾+/g, '\\\\').replace(/<<ONE>>/g, '\\').replace(/(?<!\\)"/g, '\\"');
+                                
+                                // Применяем специальную обработку для строк с характеристиками
+                                txt = escapeSkillAttributes(txt);
+                                
                                 newLines.push(`${indent}ShowText(["\\\\n<\\\\C[6]${name}\\\\C[0]>${txt}"])`);
                                
                                // Затем добавляем остальные части диалога как отдельные строки
@@ -108,6 +115,10 @@ document.addEventListener('DOMContentLoaded', function() {
                                    const part = block.dialogueParts[j];
                                    if (part.trim()) {
                                        let txt = part.replace(/∿/g, '<<ONE>>').replace(/∾+/g, '\\\\').replace(/<<ONE>>/g, '\\').replace(/(?<!\\)"/g, '\\"');
+                                       
+                                       // Применяем специальную обработку для строк с характеристиками
+                                       txt = escapeSkillAttributes(txt);
+                                       
                                        newLines.push(`${indent}ShowText(["${txt}"])`);
                                    }
                                }
@@ -119,6 +130,10 @@ document.addEventListener('DOMContentLoaded', function() {
                                linesToSave.forEach(line => {
                                    if (line.trim()) {
                                        let txt = line.replace(/∿/g, '<<ONE>>').replace(/∾+/g, '\\\\').replace(/<<ONE>>/g, '\\').replace(/(?<!\\)"/g, '\\"');
+                                       
+                                       // Применяем специальную обработку для строк с характеристиками
+                                       txt = escapeSkillAttributes(txt);
+                                       
                                        newLines.push(`${indent}ShowText(["${txt}"])`);
                                    }
                                });
@@ -138,6 +153,10 @@ document.addEventListener('DOMContentLoaded', function() {
                       txt = txt.replace(/\\{2,}n/g, '\\\\n');
                       txt = txt.replace(/\\(?=[\?\.!\,—])/g, '');
                       let newText = txt.replace(/(?<!\\)"/g, '\\"');
+                      
+                      // Применяем специальную обработку для строк с характеристиками
+                      newText = escapeSkillAttributes(newText);
+                      
                       newLines.push(`${indent}ShowText(["${newText}"])`);
                   } else {
                       // Другие типы блоков (ShowChoices, When, Script и т.д.)
@@ -217,6 +236,10 @@ document.addEventListener('DOMContentLoaded', function() {
               txt = txt.replace(/\\{2,}n/g, '\\\\n');
               txt = txt.replace(/\\(?=[\?\.!\,—])/g, '');
               let newText = txt.replace(/(?<!\\)"/g, '\\"');
+              
+              // Применяем специальную обработку для строк с характеристиками
+              newText = escapeSkillAttributes(newText);
+              
               newLine = originalLine.replace(/\[(.*)\]/, `["${newText}"]`);
               break;
             case 'ShowTextAttributes':
@@ -286,6 +309,10 @@ document.addEventListener('DOMContentLoaded', function() {
             cont = cont.replace(/\\{2,}n/g, '\\\\n');
             cont = cont.replace(/\\(?=[\?\.!\,—])/g, '');
             let newText = cont.replace(/(?<!\\)"/g, '\\"');
+            
+            // Применяем специальную обработку для строк с характеристиками
+            newText = escapeSkillAttributes(newText);
+            
             let lineToInsert = indent + `ShowText(["${newText}"])`;
             if (block.type === 'ShowText' && block.generated) {
               lineToInsert += ' #+';
@@ -480,6 +507,30 @@ function escapeFirstThree(str) {
   return result;
 }
 
+// === Новая функция для обработки строк с характеристиками ===
+function escapeSkillAttributes(str) {
+  // Проверяем, содержит ли строка паттерн получения характеристик
+  if (str.includes('получила') || str.includes('получил')) {
+    // Проверяем, не является ли строка уже правильно экранированной
+    // Если в строке уже есть двойные слеши для I[] и C[], не изменяем её
+    if (str.includes('\\\\I[') && str.includes('\\\\C[')) {
+      return str; // Уже правильно экранировано, не изменяем
+    }
+    
+    // Обрабатываем управляющие последовательности для навыков
+    let result = str;
+    
+    // Заменяем одиночные слеши на двойные для управляющих последовательностей навыков
+    result = result.replace(/\\([IC])\[/g, '\\\\$1[');
+    result = result.replace(/\\C\[(\d+)\]/g, '\\\\C[$1]');
+    result = result.replace(/\\I\[(\d+)\]/g, '\\\\I[$1]');
+    
+    return result;
+  }
+  
+  return str;
+}
+
 // --- Проверка структуры для красной лампочки ---
 window.checkMapStructureMatch = function(jpContent, ruContent) {
   function parseMapFile(content) {
@@ -489,10 +540,12 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
     let pageIdx = null;
     let currentBranchEnd = 0;
     for (let i = 0; i < lines.length; i++) {
-      let line = lines[i].trim();
-      if (!line) continue;
-      if (line.startsWith('CommonEvent')) {
-        const match = line.match(/^CommonEvent (\d+)/);
+      let line = lines[i]; // Используем полную строку для сохранения отступов
+      let trimmedLine = line.trim();
+      if (!trimmedLine) continue;
+
+      if (trimmedLine.startsWith('CommonEvent')) {
+        const match = trimmedLine.match(/^CommonEvent (\d+)/);
         if (match) {
           currentEvent = match[1];
           events[currentEvent] = { name: '', pages: [] };
@@ -503,12 +556,14 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
         }
         continue;
       }
-      if (line.startsWith('Name = ')) {
-        if (currentEvent) events[currentEvent].name = line.replace('Name = ', '').replace(/^"|"$/g, '');
+
+      if (trimmedLine.startsWith('Name = ')) {
+        if (currentEvent) events[currentEvent].name = trimmedLine.replace('Name = ', '').replace(/^"|"$/g, '');
         continue;
       }
-      if (line.startsWith('Page ')) {
-        const match = line.match(/^Page (\d+)/);
+
+      if (trimmedLine.startsWith('Page ')) {
+        const match = trimmedLine.match(/^Page (\d+)/);
         if (match) {
           pageIdx = Number(match[1]);
           if (currentEvent) events[currentEvent].pages[pageIdx] = [];
@@ -518,11 +573,28 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
         }
         continue;
       }
+
       if (currentEvent !== null && pageIdx !== null) {
-        let command = line.match(/^(\w+)/);
-        if (!command) continue;
-        command = command[1];
-        let raw = line;
+        let commandMatch = trimmedLine.match(/^(\w+)/);
+        if (!commandMatch) continue;
+        const command = commandMatch[1];
+        
+        // --- УМНОЕ ОБЪЕДИНЕНИЕ ДИАЛОГОВ ---
+        if (command === 'ShowText' && trimmedLine.includes('【') && i + 1 < lines.length) {
+            const nextLine = lines[i + 1];
+            const nextLineTrimmed = nextLine.trim();
+            if (nextLineTrimmed.startsWith('ShowText')) {
+                // Это блок имя + текст. Объединяем их.
+                events[currentEvent].pages[pageIdx].push({ 
+                  command, 
+                  raw: line, 
+                  lineNum: i, 
+                  branchEndNumber: currentBranchEnd 
+                });
+                i++; // Пропускаем следующую строку, так как мы ее "включили" в эту
+                continue;
+            }
+        }
         
         // --- Обработка BranchEnd и Empty ---
         if (command === 'Empty') {
@@ -532,7 +604,7 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
           // BranchEnd([]) получает текущий номер
           events[currentEvent].pages[pageIdx].push({ 
             command, 
-            raw, 
+            raw: line, 
             lineNum: i, 
             branchEndNumber: currentBranchEnd 
           });
@@ -541,7 +613,7 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
           // Обычные команды получают текущий номер BranchEnd
           events[currentEvent].pages[pageIdx].push({ 
             command, 
-            raw, 
+            raw: line, 
             lineNum: i, 
             branchEndNumber: currentBranchEnd 
           });
@@ -613,24 +685,7 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
             i += 1; j += 1; continue;
           }
           
-          if (
-            jpCmd === 'ShowText' && jpRaw && jpRaw.match(/^\s*ShowText\(\["【.*】"\]\)/) &&
-            jpPage[i+1] && jpPage[i+1].command === 'ShowText'
-          ) {
-            if (ruCmd === 'ShowText') {
-              okLines++;
-              i += 2; j += 1; continue;
-            } else {
-              issues.push({
-                line: i+1,
-                msg: `тип команды не совпадает (JP: <b>ShowText</b>, RU: <b>${ruCmd || '—'}</b>)`,
-                jp: jpRaw + '\n' + (jpPage[i+1]?.raw || ''),
-                ru: ruRaw || '',
-                branchEndNumber: jpBranchEnd
-              });
-              i += 2; j += 1; continue;
-            }
-          }
+
           if (jpCmd !== ruCmd) {
             issues.push({
               line: i+1,
@@ -640,7 +695,41 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
               branchEndNumber: jpBranchEnd
             });
           } else {
+            // --- НАЧАЛО НОВОЙ ПРОВЕРКИ ---
+            const jpIndent = jpRaw ? (jpRaw.match(/^(\s*)/) || ['',''])[1] : '';
+            const ruIndent = ruRaw ? (ruRaw.match(/^(\s*)/) || ['',''])[1] : '';
+            
+            // ПРОВЕРКА №1: Неправильный отступ
+            if (jpRaw && ruRaw && jpIndent !== ruIndent) {
+              issues.push({
+                line: ruPage[j]?.lineNum + 1 || i + 1,
+                msg: `Неправильный отступ команды (ожидается "${jpIndent.replace(/\s/g, '␣')}", по факту "${ruIndent.replace(/\s/g, '␣')}")`,
+                jp: jpRaw || '',
+                ru: ruRaw || '',
+                branchEndNumber: jpBranchEnd
+              });
+            } 
+            // ПРОВЕРКА №2: Отсутствие кавычек в команде Script
+            else if (jpCmd === 'Script' && jpRaw && ruRaw) {
+              const jpHasQuotes = /^\s*Script\(\["/.test(jpRaw);
+              const ruHasQuotes = /^\s*Script\(\["/.test(ruRaw);
+
+              if (jpHasQuotes && !ruHasQuotes) {
+                issues.push({
+                  line: ruPage[j]?.lineNum + 1 || i + 1,
+                  msg: `Отсутствуют кавычки в команде Script. Правильный формат: Script(["..."])`,
+                  jp: jpRaw || '',
+                  ru: ruRaw || '',
+                  branchEndNumber: jpBranchEnd
+                });
+              } else {
+                okLines++; // Все в порядке
+              }
+            } else {
+              // Для всех остальных команд, которые совпали
             okLines++;
+            }
+            // --- КОНЕЦ НОВОЙ ПРОВЕРКИ ---
           }
           i += 1; j += 1;
         }

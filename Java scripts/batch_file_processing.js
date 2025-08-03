@@ -16,13 +16,65 @@ function renderBatchFileList() {
   const listDiv = document.getElementById('batchFileList');
   if (!listDiv) return;
   listDiv.innerHTML = '';
-  Object.keys(ruFiles).sort().forEach(fileName => {
+  
+  // Собираем все уникальные имена файлов из обеих папок
+  const allFileNames = new Set();
+  Object.keys(ruFiles).forEach(name => allFileNames.add(name));
+  Object.keys(jpFiles).forEach(name => allFileNames.add(name));
+  
+  // Сортируем и отображаем все файлы
+  Array.from(allFileNames).sort().forEach(fileName => {
+    const hasRU = !!ruFiles[fileName];
     const hasJP = !!jpFiles[fileName];
+    
     const div = document.createElement('div');
-    div.textContent = fileName + (hasJP ? '' : ' — нет файла для сопоставления');
-    div.style.color = hasJP ? '#222' : '#b00';
+    div.style.padding = '4px 8px';
+    div.style.marginBottom = '2px';
+    div.style.borderRadius = '4px';
+    
+    if (hasRU && hasJP) {
+      // Файл есть в обеих папках
+      div.textContent = fileName;
+      div.style.color = '#222';
+      div.style.background = '#f0f8ff';
+      div.style.border = '1px solid #ccc';
+    } else if (hasRU && !hasJP) {
+      // Файл есть только в русской папке
+      div.textContent = fileName + ' — нет японского файла для сопоставления';
+      div.style.color = '#b00';
+      div.style.background = '#fff0f0';
+      div.style.border = '1px solid #e66';
+    } else if (!hasRU && hasJP) {
+      // Файл есть только в японской папке
+      div.textContent = fileName + ' — нет русского файла для сопоставления';
+      div.style.color = '#b00';
+      div.style.background = '#fff0f0';
+      div.style.border = '1px solid #e66';
+    }
+    
     listDiv.appendChild(div);
   });
+  
+  // Добавляем статистику
+  const ruCount = Object.keys(ruFiles).length;
+  const jpCount = Object.keys(jpFiles).length;
+  const matchedCount = Array.from(allFileNames).filter(name => ruFiles[name] && jpFiles[name]).length;
+  
+  const statsDiv = document.createElement('div');
+  statsDiv.style.marginTop = '15px';
+  statsDiv.style.padding = '10px';
+  statsDiv.style.background = '#f9f9f9';
+  statsDiv.style.border = '1px solid #ddd';
+  statsDiv.style.borderRadius = '6px';
+  statsDiv.style.fontSize = '14px';
+  statsDiv.innerHTML = `
+    <strong>Статистика:</strong><br>
+    • Файлов в русской папке: ${ruCount}<br>
+    • Файлов в японской папке: ${jpCount}<br>
+    • Файлов с сопоставлением: ${matchedCount}<br>
+    • Файлов без сопоставления: ${allFileNames.size - matchedCount}
+  `;
+  listDiv.appendChild(statsDiv);
 }
 
 function showBatchTab() {
@@ -225,7 +277,13 @@ async function batchFixAllFiles() {
 async function batchCheckAllFiles() {
   const batchListDiv = document.getElementById('batchFileList');
   batchListDiv.innerHTML = '';
-  const ruNames = Object.keys(ruFiles).sort();
+  
+  // Собираем все уникальные имена файлов из обеих папок
+  const allFileNames = new Set();
+  Object.keys(ruFiles).forEach(name => allFileNames.add(name));
+  Object.keys(jpFiles).forEach(name => allFileNames.add(name));
+  const sortedFileNames = Array.from(allFileNames).sort();
+  
   const showOnlyErrorLines = document.getElementById('batchShowOnlyErrorLines')?.checked;
   const showOkFiles = document.getElementById('batchShowOkFiles')?.checked;
   
@@ -236,7 +294,8 @@ async function batchCheckAllFiles() {
   const results = [];
   let hasErrors = false;
   
-  for (const fileName of ruNames) {
+  for (const fileName of sortedFileNames) {
+    const hasRU = !!ruFiles[fileName];
     const hasJP = !!jpFiles[fileName];
     const fileDiv = document.createElement('div');
     fileDiv.style.marginBottom = '16px';
@@ -244,21 +303,33 @@ async function batchCheckAllFiles() {
     fileDiv.style.borderRadius = '7px';
     fileDiv.style.fontSize = '15px';
     fileDiv.style.lineHeight = '1.6';
-    fileDiv.style.background = hasJP ? '#f9f9f9' : '#fff0f0';
-    fileDiv.style.border = hasJP ? '1.5px solid #bbb' : '1.5px solid #e66';
-    fileDiv.style.color = hasJP ? '#222' : '#b00';
-    fileDiv.textContent = fileName;
     let isError = false;
     let isOkFile = false;
     
-    if (!hasJP) {
-      fileDiv.textContent += ' — нет файла для сопоставления';
+    if (!hasRU || !hasJP) {
+      // Файл отсутствует в одной из папок
+      fileDiv.style.background = '#fff0f0';
+      fileDiv.style.border = '1.5px solid #e66';
+      fileDiv.style.color = '#b00';
+      
+      if (!hasRU && hasJP) {
+        fileDiv.textContent = fileName + ' — нет русского файла для сопоставления';
+      } else if (hasRU && !hasJP) {
+        fileDiv.textContent = fileName + ' — нет японского файла для сопоставления';
+      }
+      
       isError = true;
       hasErrors = true;
       results.push({fileDiv, isError, isOkFile, fileName});
       batchResults.push({isError, isOkFile, fileName});
       continue;
     }
+    
+    // Файл есть в обеих папках - проверяем структуру
+    fileDiv.style.background = '#f9f9f9';
+    fileDiv.style.border = '1.5px solid #bbb';
+    fileDiv.style.color = '#222';
+    fileDiv.textContent = fileName;
     
     let ruText, jpText;
     try {
@@ -352,6 +423,32 @@ async function batchCheckAllFiles() {
     }
     batchListDiv.appendChild(fileDiv);
   });
+  
+  // Добавляем общую статистику
+  const ruCount = Object.keys(ruFiles).length;
+  const jpCount = Object.keys(jpFiles).length;
+  const matchedCount = Array.from(allFileNames).filter(name => ruFiles[name] && jpFiles[name]).length;
+  const missingCount = allFileNames.size - matchedCount;
+  const structureErrorCount = results.filter(r => r.isError && ruFiles[r.fileName] && jpFiles[r.fileName]).length;
+  const okCount = results.filter(r => r.isOkFile).length;
+  
+  const statsDiv = document.createElement('div');
+  statsDiv.style.marginTop = '20px';
+  statsDiv.style.padding = '15px';
+  statsDiv.style.background = '#f9f9f9';
+  statsDiv.style.border = '1px solid #ddd';
+  statsDiv.style.borderRadius = '8px';
+  statsDiv.style.fontSize = '14px';
+  statsDiv.innerHTML = `
+    <strong>Общая статистика проверки:</strong><br>
+    • Файлов в русской папке: ${ruCount}<br>
+    • Файлов в японской папке: ${jpCount}<br>
+    • Файлов с сопоставлением: ${matchedCount}<br>
+    • Файлов без сопоставления: ${missingCount}<br>
+    • Файлов с ошибками структуры: ${structureErrorCount}<br>
+    • Файлов без ошибок: ${okCount}
+  `;
+  batchListDiv.appendChild(statsDiv);
   
   // Показываем элементы управления исправлением только если есть ошибки
   if (hasErrors) {
