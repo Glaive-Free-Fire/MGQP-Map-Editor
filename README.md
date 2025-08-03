@@ -1,4 +1,4 @@
-# MGQP Map Editor v1.4.20
+# MGQP Map Editor v1.4.30
 
 **A modern web-based tool for editing and batch-fixing RPG Maker XP map/event files, with advanced support for translation workflows (RU/JP), structure validation, and mass error correction.**
 
@@ -28,6 +28,11 @@
 - **Affinity System Support:** Automatic detection and handling of character affinity/好感度 system strings with proper formatting.
 - **Automatic Block Synchronization:** Related blocks (JumpToLabel/Label, Script/ScriptMore) are automatically synchronized when edited.
 - **Smart Block Filtering:** Only relevant blocks are shown in the editor based on content analysis (e.g., Script blocks with Japanese text or Russian translations).
+- **Contextual Fix Buttons:** Fix buttons now appear only when relevant errors are detected, providing a cleaner interface.
+- **Automatic Script Error Fixing:** Automatically detects and fixes missing quotes in Script commands.
+- **Skill Attributes Fixing:** Proper handling of skill attribute strings with correct escaping of control sequences.
+- **Indentation Error Detection:** Automatic detection and fixing of indentation errors in map files.
+- **Enhanced Batch Processing:** Complete file visibility in batch mode with detailed statistics and missing file detection.
 
 ---
 
@@ -51,8 +56,10 @@
 3. **Undo/Redo:**
    - Use the ↺ and ↻ buttons or Ctrl+Z / Ctrl+Y to undo/redo changes.
 
-4. **Structure Validation:**
+4. **Structure Validation & Fixing:**
    - The **Restore CommonEvent Structure** button will attempt to fix structural errors using the Japanese file as a reference, including restoring missing CommonEvent blocks and fixing errors left after the first fix.
+   - **NEW:** The **Fix Script Errors** button automatically fixes missing quotes in Script commands.
+   - **NEW:** The **Fix Indentation** button automatically corrects indentation errors.
    - After restoring, use the **Update Editor** button to reload the fixed file into the editor without manual re-upload.
 
 5. **Preview & Export:**
@@ -80,10 +87,13 @@
 
 2. **Check Files:**
    - Click "Check maps for errors" to validate all files.
+   - **NEW:** All files from both folders are now displayed with clear indication of missing files.
+   - **NEW:** Detailed statistics show file counts and error summaries.
    - Errors and structure mismatches are shown per file, with detailed breakdowns.
 
 3. **Fix All Errors:**
    - If errors are found, click "Fix all files with errors" to automatically correct them.
+   - **NEW:** Files with missing CommonEvent blocks are now properly processed with correct ShowText merging.
    - All fixed files are packaged into a ZIP archive for download.
 
 4. **All OK Message:**
@@ -104,11 +114,37 @@
 - **Affinity System:** Character affinity strings (好感度) are automatically detected and properly formatted for translation.
 - **Block Synchronization:** Related blocks are automatically kept in sync, reducing manual work and preventing inconsistencies.
 - **Smart Filtering:** The editor intelligently shows only relevant blocks, making it easier to focus on translatable content.
+- **Contextual Buttons:** Fix buttons appear only when relevant errors are detected, providing a cleaner interface.
+- **Script Error Fixing:** Automatic detection and correction of missing quotes in Script commands.
+- **Skill Attributes:** Proper handling of skill attribute strings with correct escaping of control sequences like `\I[98]` and `\C[1]`.
+- **Indentation Fixing:** Automatic detection and correction of indentation errors in map files.
+- **Complete Batch Visibility:** All files from both folders are displayed with clear indication of missing files and detailed statistics.
 
 ---
 
-## Changelog (v1.4.20)
+## Changelog (v1.4.30)
 
+### Major Improvements
+- **Enhanced Batch Processing:** Complete file visibility in batch mode with detailed statistics and missing file detection.
+- **Contextual Fix Buttons:** Fix buttons now appear only when relevant errors are detected, providing a cleaner interface.
+- **Automatic Script Error Fixing:** Automatically detects and fixes missing quotes in Script commands.
+- **Skill Attributes Fixing:** Proper handling of skill attribute strings with correct escaping of control sequences.
+- **Indentation Error Detection:** Automatic detection and fixing of indentation errors in map files.
+
+### Bug Fixes
+- **Fixed Batch Processing Issue:** Files with missing CommonEvent blocks now properly merge ShowText lines with names and dialogues.
+- **Improved Error Detection:** Enhanced detection of various error types with better accuracy.
+- **Fixed Script Quote Issues:** Automatic correction of Script commands missing quotes.
+- **Fixed Skill Attribute Escaping:** Proper handling of skill attribute control sequences.
+- **Fixed Indentation Issues:** Automatic correction of indentation errors in map files.
+
+### UI/UX Improvements
+- **Cleaner Interface:** Contextual buttons reduce interface clutter.
+- **Better Error Reporting:** More detailed error messages and statistics.
+- **Enhanced Batch Mode:** Complete file visibility with color-coded status indicators.
+- **Improved Statistics:** Detailed file counts and error summaries in batch mode.
+
+### Previous Features (v1.4.20)
 - **Japanese-Only Mode:** Added ability to create translations from scratch by loading only Japanese files.
 - **New Block Types:** Added support for JumpToLabel, Label, and ScriptMore block types.
 - **Affinity System Support:** Automatic detection and handling of character affinity/好感度 system strings.
@@ -129,6 +165,10 @@
 - **Use batch mode for large-scale translation projects to quickly check and fix entire folders.**
 - **If you see a green message in batch mode, you can be confident all your files are structurally correct!**
 - **Take advantage of automatic block synchronization to maintain consistency across related elements.**
+- **Use the contextual fix buttons that appear only when relevant errors are detected.**
+- **Batch mode now shows all files from both folders, making it easy to identify missing files.**
+- **Script errors are automatically detected and can be fixed with a single click.**
+- **Skill attribute strings are now properly handled with correct escaping.**
 
 ---
 
@@ -138,4 +178,4 @@ MIT License
 
 ---
 
-If you have any questions or encounter issues, please open an issue on GitHub or contact the maintainer.
+If you have any questions or encounter issues, please open an issue on GitHub or contact the maintainer. 
