@@ -453,6 +453,8 @@
       const showChoicesRegex = /^\s*ShowChoices\(\[\[(.*)\],\s*(\d+)\]\)/;
       const whenRegex = /^\s*When\(\[(\d+),\s*"(.*)"\]\)/;
       const otherRegex = /^\s*(\w+)\(\[(.*)\]\)/;
+      // Добавляем поддержку строк в формате "Name = "значение""
+      const nameValueRegex = /^\s*(\w+)\s*=\s*"(.*)"$/;
 
       originalLines.forEach((line, idx) => {
         if (/^\s*Display Name\s*=/.test(line)) return;
@@ -468,6 +470,9 @@
         } else if ((match = line.match(whenRegex))) {
           tempBlocks.push({ text: match[2], type: 'When', originalIdx: idx, choiceIndex: parseInt(match[1]), line: line });
         } else if ((match = line.match(otherRegex))) {
+          tempBlocks.push({ text: match[2], type: match[1], originalIdx: idx, line: line });
+        } else if ((match = line.match(nameValueRegex))) {
+          // Обрабатываем строки в формате "Name = "значение""
           tempBlocks.push({ text: match[2], type: match[1], originalIdx: idx, line: line });
         }
       });
@@ -550,6 +555,8 @@
       const showChoicesRegex = /^\s*ShowChoices\(\[\[(.*)\],\s*(\d+)\]\)/;
       const whenRegex = /^\s*When\(\[(\d+),\s*"(.*)"\]\)/;
       const otherRegex = /^\s*(\w+)\(\[(.*)\]\)/;
+      // Добавляем поддержку строк в формате "Name = "значение""
+      const nameValueRegex = /^\s*(\w+)\s*=\s*"(.*)"$/;
 
       lines.forEach((line, idx) => {
         let match;
@@ -563,6 +570,9 @@
         } else if ((match = line.match(whenRegex))) {
           tempBlocks.push({ text: match[2], type: 'When', originalIdx: idx, choiceIndex: parseInt(match[1]) });
         } else if ((match = line.match(otherRegex))) {
+          tempBlocks.push({ text: match[2], type: match[1], originalIdx: idx });
+        } else if ((match = line.match(nameValueRegex))) {
+          // Обрабатываем строки в формате "Name = "значение""
           tempBlocks.push({ text: match[2], type: match[1], originalIdx: idx });
         }
       });
@@ -642,6 +652,8 @@
       const scriptJpRegex = /^\s*Script\(\[(.*)\]\)/;
       const scriptMoreJpRegex = /^\s*ScriptMore\(\[(.*)\]\)/;
       const showTextAttrRegex = /^\s*ShowTextAttributes\(\[(.*)\]\)/;
+      // Добавляем поддержку строк в формате "Name = "значение""
+      const nameValueRegex = /^\s*(\w+)\s*=\s*"(.*)"$/;
 
       lines.forEach((line, idx) => {
         let match;
@@ -684,6 +696,13 @@
           tempBlocks.push({ 
             text: match[1], 
             type: 'ShowTextAttributes', 
+            originalIdx: idx
+          });
+        } else if ((match = line.match(nameValueRegex))) {
+          // Обрабатываем строки в формате "Name = "значение""
+          tempBlocks.push({ 
+            text: match[2], 
+            type: match[1], 
             originalIdx: idx
           });
         } else {
@@ -791,7 +810,7 @@
       let rusLinked = new Array(textBlocks.length).fill(false);
 
       // 1. ПРИОРИТЕТНАЯ ПРИВЯЗКА ДЛЯ НЕ-ShowText БЛОКОВ, пропуская все сгенерированные
-      const blockTypesToMatch = ['DisplayName', 'ShowChoices', 'When', 'Script', 'ScriptMore', 'JumpToLabel', 'Label'];
+      const blockTypesToMatch = ['DisplayName', 'ShowChoices', 'When', 'Script', 'ScriptMore', 'JumpToLabel', 'Label', 'Name'];
       blockTypesToMatch.forEach(type => {
         const japIndices = japBlocks.map((b, i) => b.blockType === type ? i : -1).filter(i => i !== -1);
         const rusMainTypeIndices = rusMainBlocks
@@ -1034,6 +1053,9 @@
               break;
             case 'ShowTextAttributes':
               label.textContent = `ShowTextAttributes [строка ${block.idx+1}]:`;
+              break;
+            case 'Name':
+              label.textContent = `Name [строка ${block.idx+1}]:`;
               break;
             default:
               label.textContent = `[строка ${block.idx+1}]:`;
@@ -1773,6 +1795,11 @@
                 const scriptMoreText = block.text.replace(/∾/g, '\\');
                 newLine = originalLine.replace(/\[(.*)\]/, `["${scriptMoreText}"]`);
                 break;
+              case 'Name':
+                // Обрабатываем строки в формате "Name = "значение""
+                const nameText = block.text.replace(/"/g, '\\"');
+                newLine = originalLine.replace(/=\s*"(.*)"/, `= "${nameText}"`);
+                break;
               default:
                 newLine = originalLine;
             }
@@ -1910,7 +1937,7 @@
         const block = textBlocks[i];
 
         // Показываем только текстовые типы данных (как в редакторе)
-        if (block.type !== 'ShowText' && block.type !== 'ShowChoices' && block.type !== 'When' && block.type !== 'JumpToLabel' && block.type !== 'ScriptMore' && block.type !== 'Label' && block.type !== 'Script') {
+        if (block.type !== 'ShowText' && block.type !== 'ShowChoices' && block.type !== 'When' && block.type !== 'JumpToLabel' && block.type !== 'ScriptMore' && block.type !== 'Label' && block.type !== 'Script' && block.type !== 'Name') {
           continue;
         }
 
