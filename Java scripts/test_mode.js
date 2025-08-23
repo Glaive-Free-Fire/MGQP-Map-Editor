@@ -633,31 +633,44 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
         grouped.push({
           eid,
           name: jpEv.name,
-          pages: jpEv.pages.map((page, pageIdx) => {
-            // Увеличиваем totalLines для каждой страницы
-            totalLines++;
-            return {
-              page: pageIdx,
-              ok: false,
-              errors: [{
-                line: null,
-                msg: `CommonEvent отсутствует в русском файле`,
-                jp: '',
-                ru: '',
-                branchEndNumber: undefined
-              }]
-            };
-          })
+          pages: jpEv.pages.map((_, p) => ({
+            page: p,
+            ok: false,
+            errors: [{
+              line: 1,
+              msg: `Нет CommonEvent ${eid} (${jpEv.name}) в русском файле`,
+              jp: `CommonEvent ${eid}`,
+              ru: '',
+              branchEndNumber: 0
+            }]
+          }))
         });
         continue;
       }
+      
+      // --- НОВАЯ ПРОВЕРКА: Сравнение заголовков CommonEvent ---
+      let headerErrors = [];
+      
+      // Проверяем только наличие строки Name в заголовке (не сравниваем содержимое)
+      if (jpEv.name && !ruEv.name) {
+        headerErrors.push({
+          line: 1,
+          msg: `Отсутствует строка Name в заголовке CommonEvent ${eid}`,
+          jp: `Name = "${jpEv.name}"`,
+          ru: 'отсутствует',
+          branchEndNumber: 0
+        });
+      }
+      // Убираем проверку несовпадения имен - это нормальный перевод
+      
       let eventGroup = { eid, name: jpEv.name, pages: [] };
       for (let p = 0; p < jpEv.pages.length; p++) {
         const jpPage = jpEv.pages[p] || [];
         const ruPage = (ruEv.pages[p] || []);
         let jpLen = jpPage.length;
         let ruLen = ruPage.length;
-        let issues = [];
+        let issues = [...headerErrors]; // Добавляем ошибки заголовка к ошибкам страницы
+        
         for (let i = 0, j = 0; i < jpLen || j < ruLen;) {
           const jpCmd = jpPage[i]?.command;
           const ruCmd = ruPage[j]?.command;
@@ -666,10 +679,86 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
           const jpBranchEnd = jpPage[i]?.branchEndNumber;
           const ruBranchEnd = ruPage[j]?.branchEndNumber;
           
-          // --- SKIP: строки с #+ (любые) ---
-          if (ruRaw && (ruRaw.trim().startsWith('#+') || /#\+\s*$/.test(ruRaw))) { j++; continue; }
-          // --- SKIP: ShowTextAttributes([..]) #+ ---
-          if (ruRaw && ruRaw.trim().startsWith('ShowTextAttributes([') && /#\+\s*$/.test(ruRaw)) { j++; continue; }
+          // --- ПРОПУСКАЕМ СТРОКИ, КОТОРЫЕ НЕ ДОЛЖНЫ УЧАСТВОВАТЬ В СРАВНЕНИИ ---
+          
+          // 1. Строки с пометкой #+ (добавляются редактором автоматически)
+          if (ruRaw && (ruRaw.trim().startsWith('#+') || /#\+\s*$/.test(ruRaw))) { 
+            j++; 
+            continue; 
+          }
+          
+          // 2. ShowTextAttributes с #+ (добавляются редактором автоматически)
+          if (ruRaw && ruRaw.trim().startsWith('ShowTextAttributes([') && /#\+\s*$/.test(ruRaw)) { 
+            j++; 
+            continue; 
+          }
+          
+          // 3. Пропуск блоков ShowText подряд в обоих файлах одновременно
+          if (ruCmd === 'ShowText' && jpCmd === 'ShowText') {
+            // Оба файла имеют ShowText - пропускаем все ShowText подряд в обоих файлах
+            let ruShowTextCount = 1; // Текущая строка
+            let jpShowTextCount = 1; // Текущая строка
+            
+            // Считаем ShowText в русском файле
+            for (let k = j + 1; k < ruLen; k++) {
+              if (ruPage[k]?.command === 'ShowText') {
+                ruShowTextCount++;
+              } else {
+                break;
+              }
+            }
+            
+            // Считаем ShowText в японском файле
+            for (let k = i + 1; k < jpLen; k++) {
+              if (jpPage[k]?.command === 'ShowText') {
+                jpShowTextCount++;
+              } else {
+                break;
+              }
+            }
+            
+            // Пропускаем все ShowText в обоих файлах
+            i += jpShowTextCount;
+            j += ruShowTextCount;
+            continue;
+          }
+          
+          // 4. Дополнительные строки ShowText в русском файле (когда в японском нет ShowText)
+          // Пропускаем одиночные/серии ShowText, если это часть кластера ShowText (до или после тоже ShowText)
+          if (ruCmd === 'ShowText' && jpCmd !== 'ShowText') {
+            const ruPrevIsShow = (j - 1 >= 0) && (ruPage[j - 1]?.command === 'ShowText');
+            const ruNextIsShow = (j + 1 < ruLen) && (ruPage[j + 1]?.command === 'ShowText');
+            if (ruPrevIsShow || ruNextIsShow) {
+              // Пропустим весь непрерывный кластер ShowText, начиная с текущего j
+              let skipCount = 1; // текущая строка
+              for (let k = j + 1; k < ruLen; k++) {
+                if (ruPage[k]?.command === 'ShowText') skipCount++; else break;
+              }
+              j += skipCount;
+              continue;
+            }
+            // Если одиночная лишняя строка ShowText — пропускаем её тоже
+            j += 1;
+            continue;
+          }
+          
+          // 5. Обратная ситуация: в японском файле больше строк ShowText
+          // Пропускаем одиночные/серии ShowText, если это часть кластера ShowText
+          if (jpCmd === 'ShowText' && ruCmd !== 'ShowText') {
+            const jpPrevIsShow = (i - 1 >= 0) && (jpPage[i - 1]?.command === 'ShowText');
+            const jpNextIsShow = (i + 1 < jpLen) && (jpPage[i + 1]?.command === 'ShowText');
+            if (jpPrevIsShow || jpNextIsShow) {
+              let skipCount = 1; // текущая строка
+              for (let k = i + 1; k < jpLen; k++) {
+                if (jpPage[k]?.command === 'ShowText') skipCount++; else break;
+              }
+              i += skipCount;
+              continue;
+            }
+            // Одиночная лишняя строка ShowText с японской стороны — тоже пропускаем
+            i += 1;
+            continue;
+          }
           
           totalLines++;
           
@@ -687,6 +776,7 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
           
 
           if (jpCmd !== ruCmd) {
+            // Если команды не совпадают, это ошибка структуры
             issues.push({
               line: i+1,
               msg: `тип команды не совпадает (JP: <b>${jpCmd || '—'}</b>, RU: <b>${ruCmd || '—'}</b>)`,
@@ -694,6 +784,8 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
               ru: ruRaw || '',
               branchEndNumber: jpBranchEnd
             });
+            i += 1; j += 1; // Увеличиваем счетчики при несовпадении
+            continue;
           } else {
             // --- НАЧАЛО НОВОЙ ПРОВЕРКИ ---
             const jpIndent = jpRaw ? (jpRaw.match(/^(\s*)/) || ['',''])[1] : '';
