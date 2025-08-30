@@ -807,16 +807,20 @@
   global.updateFixButtonsVisibility = function() {
     const restoreBtn = document.getElementById('restoreStructBtn');
     const fixScriptBtn = document.getElementById('fixScriptBtn');
-    const fixIndentBtn = document.getElementById('fixIndentBtn'); // Находим новую кнопку
+    const fixIndentBtn = document.getElementById('fixIndentBtn');
+    const clearOrphanedBtn = document.getElementById('clearOrphanedBtn');
     
-    if (!restoreBtn || !fixScriptBtn || !fixIndentBtn) return;
+    if (!restoreBtn || !fixScriptBtn || !fixIndentBtn || !clearOrphanedBtn) return;
     
     const hasStructureErrors = window.hasStructureErrors();
     const hasScriptErrors = window.hasScriptErrors();
-    const hasIndentErrors = window.hasIndentErrors(); // Проверяем ошибки отступов
+    const hasIndentErrors = window.hasIndentErrors();
     
     restoreBtn.style.display = hasStructureErrors ? '' : 'none';
     fixScriptBtn.style.display = hasScriptErrors ? '' : 'none';
-    fixIndentBtn.style.display = hasIndentErrors ? '' : 'none'; // Показываем или скрываем кнопку
+    fixIndentBtn.style.display = hasIndentErrors ? '' : 'none';
+    
+    // Управление кнопкой "Очистить строки" вынесено в updateRedIndices
+    // для более точного подсчета строк-огрызков
   };
 })(window);
