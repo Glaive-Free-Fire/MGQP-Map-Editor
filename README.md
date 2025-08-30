@@ -1,4 +1,4 @@
-# MGQP Map Editor v1.4.30
+# MGQP Map Editor v1.4.40
 
 **A modern web-based tool for editing and batch-fixing RPG Maker XP map/event files, with advanced support for translation workflows (RU/JP), structure validation, and mass error correction.**
 
@@ -33,6 +33,12 @@
 - **Skill Attributes Fixing:** Proper handling of skill attribute strings with correct escaping of control sequences.
 - **Indentation Error Detection:** Automatic detection and fixing of indentation errors in map files.
 - **Enhanced Batch Processing:** Complete file visibility in batch mode with detailed statistics and missing file detection.
+- **Orphaned Line Detection:** New error type that identifies and highlights "orphaned" ShowText lines without Japanese counterparts.
+- **Clear Lines Button:** Convenient button to clear content of orphaned lines with a single click.
+- **Improved Japanese Parsing:** Enhanced parsing of Japanese files with better support for complex text structures and mixed content.
+- **Smart Deletion System:** "Soft deletion" mechanism preserves array indices for proper Japanese mapping while allowing visual removal of blocks.
+- **Robust File Generation:** "Build from scratch" algorithm ensures consistent file generation with proper handling of deleted blocks and generated placeholders.
+- **Unified Error Reporting:** Consolidated error display system that shows all types of errors consistently across editor and preview tabs.
 
 ---
 
@@ -49,7 +55,7 @@
    - Each block (ShowText, ShowTextAttributes, ShowChoices, When, JumpToLabel, Label, Script, ScriptMore, etc.) is shown as a separate editable area.
    - Japanese text (if loaded) is shown above the corresponding Russian block for reference.
    - Use the "+" button to split long text blocks. The editor will automatically insert a generated ShowTextAttributes block (with `#+`) after every 4 ShowText blocks.
-   - Use the "-" button to remove blocks.
+   - Use the "-" button to remove blocks (soft deletion preserves structure).
    - Use the **Split Lines** button to automatically split all long text blocks in the file at once.
    - **NEW:** Related blocks (JumpToLabel/Label, Script/ScriptMore) are automatically synchronized when you edit one of them.
 
@@ -60,6 +66,7 @@
    - The **Restore CommonEvent Structure** button will attempt to fix structural errors using the Japanese file as a reference, including restoring missing CommonEvent blocks and fixing errors left after the first fix.
    - **NEW:** The **Fix Script Errors** button automatically fixes missing quotes in Script commands.
    - **NEW:** The **Fix Indentation** button automatically corrects indentation errors.
+   - **NEW:** The **Clear Lines** button appears when orphaned lines are detected, allowing you to clear their content with one click.
    - After restoring, use the **Update Editor** button to reload the fixed file into the editor without manual re-upload.
 
 5. **Preview & Export:**
@@ -119,12 +126,21 @@
 - **Skill Attributes:** Proper handling of skill attribute strings with correct escaping of control sequences like `\I[98]` and `\C[1]`.
 - **Indentation Fixing:** Automatic detection and correction of indentation errors in map files.
 - **Complete Batch Visibility:** All files from both folders are displayed with clear indication of missing files and detailed statistics.
+- **Orphaned Line Management:** New system for detecting and managing ShowText lines without Japanese counterparts.
+- **Soft Deletion:** Blocks can be marked as deleted while preserving array structure for proper Japanese mapping.
+- **Robust File Generation:** Improved algorithm ensures consistent file output with proper handling of all block types.
 
 ---
 
-## Changelog (v1.4.30)
+## Changelog (v1.4.40)
 
 ### Major Improvements
+- **Enhanced Japanese Parsing:** Improved parsing of Japanese files with better support for complex text structures and mixed content.
+- **Orphaned Line Detection:** New error type that identifies ShowText lines without Japanese counterparts, marked in red for easy identification.
+- **Clear Lines Button:** Convenient button to clear content of orphaned lines with a single click.
+- **Soft Deletion System:** New deletion mechanism that preserves array indices for proper Japanese mapping while allowing visual removal of blocks.
+- **Robust File Generation:** "Build from scratch" algorithm ensures consistent file generation with proper handling of deleted blocks and generated placeholders.
+- **Unified Error Reporting:** Consolidated error display system that shows all types of errors consistently across editor and preview tabs.
 - **Enhanced Batch Processing:** Complete file visibility in batch mode with detailed statistics and missing file detection.
 - **Contextual Fix Buttons:** Fix buttons now appear only when relevant errors are detected, providing a cleaner interface.
 - **Automatic Script Error Fixing:** Automatically detects and fixes missing quotes in Script commands.
@@ -132,6 +148,12 @@
 - **Indentation Error Detection:** Automatic detection and fixing of indentation errors in map files.
 
 ### Bug Fixes
+- **Fixed Japanese Parsing Issues:** Resolved problems with ShowTextAttributes parsing and complex text structure recognition.
+- **Fixed Block Matching:** Improved algorithm for matching Russian and Japanese blocks, reducing false "ТРЕБУЕТСЯ ПЕРЕВОД" blocks.
+- **Fixed File Generation:** Resolved issues with deleted blocks not being properly removed from saved files.
+- **Fixed ShowTextAttributes Formatting:** Corrected formatting of generated ShowTextAttributes blocks in both preview and saved files.
+- **Fixed Indentation Inheritance:** Generated blocks now properly inherit indentation from parent blocks.
+- **Fixed Error Display:** Resolved conflicts between multiple error reporting functions, ensuring all errors are displayed consistently.
 - **Fixed Batch Processing Issue:** Files with missing CommonEvent blocks now properly merge ShowText lines with names and dialogues.
 - **Improved Error Detection:** Enhanced detection of various error types with better accuracy.
 - **Fixed Script Quote Issues:** Automatic correction of Script commands missing quotes.
@@ -143,8 +165,10 @@
 - **Better Error Reporting:** More detailed error messages and statistics.
 - **Enhanced Batch Mode:** Complete file visibility with color-coded status indicators.
 - **Improved Statistics:** Detailed file counts and error summaries in batch mode.
+- **New Error Types:** Visual indicators for orphaned lines and other new error categories.
+- **Improved Block Management:** Better handling of block deletion and generation with visual feedback.
 
-### Previous Features (v1.4.20)
+### Previous Features (v1.4.30)
 - **Japanese-Only Mode:** Added ability to create translations from scratch by loading only Japanese files.
 - **New Block Types:** Added support for JumpToLabel, Label, and ScriptMore block types.
 - **Affinity System Support:** Automatic detection and handling of character affinity/好感度 system strings.
@@ -169,6 +193,9 @@
 - **Batch mode now shows all files from both folders, making it easy to identify missing files.**
 - **Script errors are automatically detected and can be fixed with a single click.**
 - **Skill attribute strings are now properly handled with correct escaping.**
+- **Use the "Clear Lines" button to quickly clean up orphaned ShowText lines without Japanese counterparts.**
+- **The soft deletion system preserves file structure while allowing you to remove unwanted content.**
+- **Check the preview tab to see exactly how your file will be saved before downloading.**
 
 ---
 
