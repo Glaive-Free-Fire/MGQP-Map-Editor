@@ -455,6 +455,205 @@
     return resultLines;
   };
 
+  // === Функция для безопасного восстановления только проблемных строк ===
+  global.safeRestoreStructure = function() {
+    if (!window.fullRusLines || !window.fullJapLines || window.fullRusLines.length === 0 || window.fullJapLines.length === 0) {
+      alert('Сначала загрузите русский и японский файлы!');
+      return;
+    }
+
+    // Проверяем структуру и находим конкретные ошибки
+    const jpContent = window.fullJapLines.join('\n');
+    const ruContent = window.fullRusLines.join('\n');
+    const result = window.checkMapStructureMatch(jpContent, ruContent);
+    
+    // Собираем конкретные ошибки для восстановления
+    let errorsToFix = [];
+    if (result.grouped) {
+      result.grouped.forEach(ev => {
+        ev.pages.forEach(page => {
+          if (!page.ok && page.errors && page.errors.length > 0) {
+            page.errors.forEach(error => {
+              // Добавляем только ошибки, которые можно безопасно исправить
+              if (error.msg.includes('Несовпадение содержимого команды') || 
+                  error.msg.includes('Нарушение форматирования команды') ||
+                  error.msg.includes('тип команды не совпадает')) {
+                errorsToFix.push({
+                  eid: parseInt(ev.eid),
+                  page: page.page,
+                  line: error.line,
+                  jp: error.jp,
+                  ru: error.ru,
+                  msg: error.msg
+                });
+              }
+            });
+          }
+        });
+      });
+    }
+    
+    if (errorsToFix.length === 0) {
+      alert('Нет ошибок, которые можно безопасно исправить.');
+      return;
+    }
+
+    // Показываем пользователю, что будет исправлено
+    const errorList = errorsToFix.map(err => 
+      `CommonEvent ${err.eid}, Page ${err.page}, строка ${err.line}: ${err.msg}`
+    ).join('\n');
+    
+    const confirmed = confirm(
+      `Найдено ${errorsToFix.length} ошибок для безопасного исправления:\n\n${errorList}\n\n` +
+      'Это заменит только проблемные строки на их японские аналоги, не затрагивая стабильные части файла.\n\n' +
+      'Продолжить?'
+    );
+    
+    if (!confirmed) return;
+
+    // Создаем копию русского файла для безопасного восстановления
+    let restoredLines = window.fullRusLines.slice();
+    
+          // === БЫСТРАЯ ПРОВЕРКА КОМАНД EMPTY ===
+      // Ищем и исправляем команды Empty([""]) на Empty([]) без замедления парсинга
+      for (let i = 0; i < restoredLines.length; i++) {
+        const line = restoredLines[i];
+        const trimmedLine = line.trim();
+        
+        // Ищем команды Empty([""]) и заменяем их на Empty([])
+        if (trimmedLine === 'Empty([""])') {
+          restoredLines[i] = line.replace('Empty([""])', 'Empty([])');
+        }
+        
+        // Ищем команды BranchEnd([""]) и заменяем их на BranchEnd([])
+        if (trimmedLine === 'BranchEnd([""])') {
+          restoredLines[i] = line.replace('BranchEnd([""])', 'BranchEnd([])');
+        }
+        
+        // Ищем команды ExitEventProcessing([""]) и заменяем их на ExitEventProcessing([])
+        if (trimmedLine === 'ExitEventProcessing([""])') {
+          restoredLines[i] = line.replace('ExitEventProcessing([""])', 'ExitEventProcessing([])');
+        }
+      }
+    
+    // Исправляем каждую ошибку
+    errorsToFix.forEach(error => {
+      // Находим позицию строки в файле по содержимому
+      let lineFound = false;
+      
+      // Ищем строку по содержимому (error.ru содержит проблемную строку)
+      for (let i = 0; i < restoredLines.length; i++) {
+        const line = restoredLines[i];
+        const trimmedLine = line.trim();
+        
+        // Сравниваем содержимое строки с проблемной строкой
+        if (trimmedLine === error.ru.trim()) {
+          // Находим соответствующую строку в японском файле
+          for (let j = 0; j < window.fullJapLines.length; j++) {
+            const jpLine = window.fullJapLines[j];
+            const jpTrimmedLine = jpLine.trim();
+            
+            // Сравниваем содержимое строки с японской строкой
+            if (jpTrimmedLine === error.jp.trim()) {
+              // Заменяем русскую строку на японскую
+              restoredLines[i] = jpLine;
+              lineFound = true;
+              break;
+            }
+          }
+          break;
+        }
+      }
+      
+      // Если не нашли по точному содержимому, пробуем найти по команде и аргументам
+      if (!lineFound && error.msg.includes('Несовпадение содержимого команды')) {
+        const ruMatch = error.ru.trim().match(/^(\w+)\(\[(.*)\]\)/);
+        const jpMatch = error.jp.trim().match(/^(\w+)\(\[(.*)\]\)/);
+        
+        if (ruMatch && jpMatch && ruMatch[1] === jpMatch[1]) {
+          const command = ruMatch[1];
+          const ruArgs = ruMatch[2];
+          const jpArgs = jpMatch[2];
+          
+          // Ищем строку с той же командой и похожими аргументами
+          for (let i = 0; i < restoredLines.length; i++) {
+            const line = restoredLines[i];
+            const trimmedLine = line.trim();
+            
+            const lineMatch = trimmedLine.match(/^(\w+)\(\[(.*)\]\)/);
+            if (lineMatch && lineMatch[1] === command) {
+              // Проверяем, похожи ли аргументы (например, Empty([""]) vs Empty([]))
+              if (lineMatch[2] === ruArgs || 
+                  (ruArgs === '""' && lineMatch[2] === '') ||
+                  (ruArgs === '' && lineMatch[2] === '""')) {
+                
+                // Находим соответствующую строку в японском файле
+                for (let j = 0; j < window.fullJapLines.length; j++) {
+                  const jpLine = window.fullJapLines[j];
+                  const jpTrimmedLine = jpLine.trim();
+                  
+                  const jpLineMatch = jpTrimmedLine.match(/^(\w+)\(\[(.*)\]\)/);
+                  if (jpLineMatch && jpLineMatch[1] === command && jpLineMatch[2] === jpArgs) {
+                    // Заменяем русскую строку на японскую
+                    restoredLines[i] = jpLine;
+                    lineFound = true;
+                    break;
+                  }
+                }
+                break;
+              }
+            }
+          }
+        }
+      }
+      
+      if (!lineFound) {
+        // Строка не найдена для исправления
+      }
+    });
+
+    // Обновляем глобальные переменные
+    window.fullRusLines = restoredLines.slice();
+    window.originalLines = restoredLines.slice();
+    window.japaneseLines = window.fullJapLines;
+    
+    // Устанавливаем флаг для правильного сохранения
+    window.restoreModeEnabled = true;
+
+    // Показываем кнопку синхронизации
+    const syncBtn = document.getElementById('syncEditorBtn');
+    if (syncBtn) {
+      syncBtn.style.display = '';
+      syncBtn.title = 'Заменить содержимое редактора на восстановленные строки';
+    }
+
+    // Обновляем предпросмотр если он открыт
+    if (typeof window.updatePreviewArea === 'function') {
+      window.updatePreviewArea();
+    }
+    
+    // Обновляем состояние кнопки сохранения
+    setTimeout(() => {
+      if (typeof window.updateRedIndices === 'function') {
+        window.updateRedIndices();
+      }
+      const saveBtn = document.getElementById('saveBtn');
+      if (saveBtn && window.restoreModeEnabled) {
+        saveBtn.disabled = false;
+        saveBtn.style.background = '#cdf';
+        saveBtn.style.color = '#333';
+        saveBtn.title = 'Структура восстановлена. Можно сохранить файл.';
+      }
+      
+      // Обновляем лампочку совпадения
+      if (typeof window.updateMatchLamp === 'function') {
+        window.updateMatchLamp();
+      }
+    }, 100);
+
+    alert(`Безопасно исправлено ${errorsToFix.length} ошибок структуры!\n\nТеперь можно сохранить файл или синхронизировать редактор.`);
+  };
+
   // === Функция для немедленного восстановления структуры ===
   global.immediateRestoreStructure = function() {
     if (!window.fullRusLines || !window.fullJapLines || window.fullRusLines.length === 0 || window.fullJapLines.length === 0) {

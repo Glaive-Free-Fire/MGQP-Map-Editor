@@ -57,6 +57,17 @@ document.addEventListener('DOMContentLoaded', function() {
               let newText = txt.replace(/(?<!\\)"/g, '\\"');
               formattedLine = originalLine.replace(/\[(.*)\]/, `["${newText}"]`);
               break;
+            case 'ShowTextAttributes':
+              // ShowTextAttributes не требует экранирования кавычек, но заменяем ∾ на \
+              let attrText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+              // Определяем, были ли кавычки в оригинале
+              const attrHasQuotes = /\["(.*)"\]/.test(originalLine);
+              if (attrHasQuotes) {
+                formattedLine = originalLine.replace(/\["(.*)"\]/, `["${attrText}"]`);
+              } else {
+                formattedLine = originalLine.replace(/\[(.*)\]/, `[${attrText}]`);
+              }
+              break;
             case 'Script':
               let scriptText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
               let escapedScriptText = scriptText.replace(/(?<!\\)"/g, '\\"');
@@ -68,35 +79,69 @@ document.addEventListener('DOMContentLoaded', function() {
               formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedScriptMoreText}"]`);
               break;
             case 'Label':
+              // Label имеет специальный формат: [имя_метки]
+              // Сохраняем оригинальное форматирование с кавычками, заменяем только содержимое
               let labelText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
-              let escapedLabelText = labelText.replace(/(?<!\\)"/g, '\\"');
-              formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedLabelText}"]`);
+              // Определяем, были ли кавычки в оригинале
+              const labelHasQuotes = /\["(.*)"\]/.test(originalLine);
+              if (labelHasQuotes) {
+                formattedLine = originalLine.replace(/\["(.*)"\]/, `["${labelText}"]`);
+              } else {
+                formattedLine = originalLine.replace(/\[(.*)\]/, `[${labelText}]`);
+              }
               break;
-            case 'ShowChoices':
-              let choicesText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
-              let escapedChoicesText = choicesText.replace(/(?<!\\)"/g, '\\"');
-              formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedChoicesText}"]`);
-              break;
-            case 'When':
-              let whenText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
-              let escapedWhenText = whenText.replace(/(?<!\\)"/g, '\\"');
-              formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedWhenText}"]`);
-              break;
+
+
             case 'JumpToLabel':
+              // JumpToLabel имеет специальный формат: [имя_метки]
+              // Сохраняем оригинальное форматирование с кавычками, заменяем только содержимое
               let jumpText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
-              let escapedJumpText = jumpText.replace(/(?<!\\)"/g, '\\"');
-              formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedJumpText}"]`);
+              // Определяем, были ли кавычки в оригинале
+              const jumpHasQuotes = /\["(.*)"\]/.test(originalLine);
+              if (jumpHasQuotes) {
+                formattedLine = originalLine.replace(/\["(.*)"\]/, `["${jumpText}"]`);
+              } else {
+                formattedLine = originalLine.replace(/\[(.*)\]/, `[${jumpText}]`);
+              }
               break;
             case 'Name':
+              // Name имеет специальный формат: [имя_персонажа]
+              // Сохраняем оригинальное форматирование с кавычками, заменяем только содержимое
               let nameText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
-              let escapedNameText = nameText.replace(/(?<!\\)"/g, '\\"');
-              formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedNameText}"]`);
+              // Определяем, были ли кавычки в оригинале
+              const nameHasQuotes = /\["(.*)"\]/.test(originalLine);
+              if (nameHasQuotes) {
+                formattedLine = originalLine.replace(/\["(.*)"\]/, `["${nameText}"]`);
+              } else {
+                formattedLine = originalLine.replace(/\[(.*)\]/, `[${nameText}]`);
+              }
+              break;
+            case 'ShowChoices':
+              // ShowChoices имеет формат: [[текст1, текст2, ...], номер_выбора]
+              // Заменяем содержимое массива выборов, сохраняя структуру
+              let choicesText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+              // Разбиваем варианты выбора и добавляем кавычки к каждому
+              const choices = choicesText.split(/\s*\|\s*/);
+              const quotedChoices = choices.map(choice => `"${choice.trim()}"`).join(' | ');
+              // Заменяем содержимое массива выборов
+              formattedLine = originalLine.replace(/\[\[(.*?)\],\s*(\d+)\]/, `[[${quotedChoices}], $2]`);
+              break;
+            case 'When':
+              // When имеет формат: [номер_выбора, "текст_условия"]
+              // Заменяем текст условия, сохраняя номер выбора
+              let whenText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+              // Определяем, были ли кавычки в оригинале
+              const whenHasQuotes = /\[(\d+),\s*"(.*)"\]/.test(originalLine);
+              if (whenHasQuotes) {
+                formattedLine = originalLine.replace(/\[(\d+),\s*"(.*)"\]/, `[$1, "${whenText}"]`);
+              } else {
+                formattedLine = originalLine.replace(/\[(\d+),\s*(.*)\]/, `[$1, ${whenText}]`);
+              }
               break;
             default:
-              // Для остальных типов блоков применяем базовую обработку
-              let defaultText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
-              let escapedDefaultText = defaultText.replace(/(?<!\\)"/g, '\\"');
-              formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedDefaultText}"]`);
+              // Для ВСЕХ остальных типов (MoveRoute, PlaySE и т.д.)
+              // мы НЕ ДЕЛАЕМ НИЧЕГО. Это сохранит их оригинальную структуру.
+              formattedLine = originalLine;
               break;
           }
           previewLines.push(indent + formattedLine.trimStart());
@@ -595,8 +640,39 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
                 okLines++; // Все в порядке
               }
             } else {
+              // ПРОВЕРКА №3: Полное совпадение строк для команд, которые не редактируются в редакторе
+              const fullyEditableCommands = ['ShowText', 'Script', 'ScriptMore', 'Label', 'JumpToLabel', 'Name', 'ShowTextAttributes'];
+              const formatOnlyCommands = ['When', 'ShowChoices'];
+              
+              if (!fullyEditableCommands.includes(jpCmd) && !formatOnlyCommands.includes(jpCmd) && jpRaw && ruRaw && jpRaw.trim() !== ruRaw.trim()) {
+                // Для команд, которые не редактируются в редакторе - проверяем полное совпадение
+                issues.push({
+                  line: ruPage[j]?.lineNum + 1 || i + 1,
+                  msg: `Несовпадение содержимого команды ${jpCmd}`,
+                  jp: jpRaw || '',
+                  ru: ruRaw || '',
+                  branchEndNumber: jpBranchEnd
+                });
+              } else if (formatOnlyCommands.includes(jpCmd) && jpRaw && ruRaw) {
+                // Для When и ShowChoices проверяем только форматирование
+                const jpFormat = jpRaw.replace(/\[.*?\]/g, '[FORMAT]');
+                const ruFormat = ruRaw.replace(/\[.*?\]/g, '[FORMAT]');
+                
+                if (jpFormat !== ruFormat) {
+                  issues.push({
+                    line: ruPage[j]?.lineNum + 1 || i + 1,
+                    msg: `Нарушение форматирования команды ${jpCmd}`,
+                    jp: jpRaw || '',
+                    ru: ruRaw || '',
+                    branchEndNumber: jpBranchEnd
+                  });
+                } else {
+                  okLines++;
+              }
+            } else {
               // Для всех остальных команд, которые совпали
             okLines++;
+              }
             }
             // --- КОНЕЦ НОВОЙ ПРОВЕРКИ ---
           }
