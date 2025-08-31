@@ -276,8 +276,8 @@
                     }
                 }
 
-                // Проверка на японский текст
-                if (/[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.text)) {
+                // Проверка на японский текст (исключаем блоки типа Name)
+                if (block.type !== 'Name' && /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.text)) {
                     redLineErrors.push({
                         label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[продолжение]',
                         type: 'Ошибка строки',
@@ -538,7 +538,16 @@
         } else if ((match = line.match(whenRegex))) {
           tempBlocks.push({ text: match[2], type: 'When', originalIdx: idx, choiceIndex: parseInt(match[1]), line: line });
         } else if ((match = line.match(otherRegex))) {
-          tempBlocks.push({ text: match[2], type: match[1], originalIdx: idx, line: line });
+          // Для блоков Label проверяем, содержит ли текст японские или русские символы
+          if (match[1] === 'Label') {
+            const labelText = match[2];
+            // Проверяем наличие японских или русских символов
+            if (/[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\u0400-\u04FF]/.test(labelText)) {
+              tempBlocks.push({ text: labelText, type: match[1], originalIdx: idx, line: line });
+            }
+          } else {
+            tempBlocks.push({ text: match[2], type: match[1], originalIdx: idx, line: line });
+          }
         } else if ((match = line.match(nameValueRegex))) {
           // Обрабатываем строки в формате "Name = "значение""
           tempBlocks.push({ text: match[2], type: match[1], originalIdx: idx, line: line });
@@ -637,7 +646,16 @@
         } else if ((match = line.match(whenRegex))) {
           tempBlocks.push({ text: match[2], type: 'When', originalIdx: idx, choiceIndex: parseInt(match[1]) });
         } else if ((match = line.match(otherRegex))) {
-          tempBlocks.push({ text: match[2], type: match[1], originalIdx: idx });
+          // Для блоков Label проверяем, содержит ли текст японские символы
+          if (match[1] === 'Label') {
+            const labelText = match[2];
+            // Проверяем наличие японских символов
+            if (/[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(labelText)) {
+              tempBlocks.push({ text: labelText, type: match[1], originalIdx: idx });
+            }
+          } else {
+            tempBlocks.push({ text: match[2], type: match[1], originalIdx: idx });
+          }
         } else if ((match = line.match(nameValueRegex))) {
           tempBlocks.push({ text: match[2], type: match[1], originalIdx: idx });
         }
@@ -806,8 +824,31 @@
             originalIdx: idx
           });
         } else {
-          // Сохраняем информацию о структурных строках
-          tempBlocks.push({ type: 'Structural', text: line, originalIdx: idx });
+          // Проверяем другие команды (включая Label)
+          const otherMatch = line.match(/^\s*(\w+)\(\[(.*)\]\)/);
+          if (otherMatch) {
+            // Для блоков Label проверяем, содержит ли текст японские символы
+            if (otherMatch[1] === 'Label') {
+              const labelText = otherMatch[2];
+              // Проверяем наличие японских символов
+              if (/[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(labelText)) {
+                tempBlocks.push({ 
+                  text: labelText, 
+                  type: otherMatch[1], 
+                  originalIdx: idx
+                });
+              }
+            } else {
+              tempBlocks.push({ 
+                text: otherMatch[2], 
+                type: otherMatch[1], 
+                originalIdx: idx
+              });
+            }
+          } else {
+            // Сохраняем информацию о структурных строках
+            tempBlocks.push({ type: 'Structural', text: line, originalIdx: idx });
+          }
         }
       });
       
@@ -931,7 +972,7 @@
       let rusLinked = new Array(textBlocks.length).fill(false);
 
       // 1. ПРИОРИТЕТНАЯ ПРИВЯЗКА ДЛЯ НЕ-ShowText БЛОКОВ, пропуская все сгенерированные
-      const blockTypesToMatch = ['DisplayName', 'ShowChoices', 'When', 'Script', 'ScriptMore', 'JumpToLabel', 'Label', 'Name'];
+      const blockTypesToMatch = ['DisplayName', 'ShowChoices', 'Script', 'ScriptMore', 'JumpToLabel', 'Label', 'Name'];
       blockTypesToMatch.forEach(type => {
         const japIndices = japBlocks.map((b, i) => b.blockType === type ? i : -1).filter(i => i !== -1);
         const rusMainTypeIndices = rusMainBlocks
@@ -947,13 +988,38 @@
               && !textBlocks[realRusIdx].generated
               && japaneseBlockMapping[japIdx] === -1
               && !rusLinked[realRusIdx]) {
-            if (type === 'When' && textBlocks[realRusIdx].choiceIndex !== japBlocks[japIdx].choiceIndex) continue;
             textBlocks[realRusIdx].japaneseLink = { type: 'no_name', text: japBlocks[japIdx].text };
             japaneseBlockMapping[japIdx] = realRusIdx;
             rusLinked[realRusIdx] = true;
           }
         }
       });
+
+      // 1.1. ОТДЕЛЬНАЯ ПРИВЯЗКА ДЛЯ When БЛОКОВ ПО choiceIndex
+      const japWhenIndices = japBlocks.map((b, i) => b.blockType === 'When' ? i : -1).filter(i => i !== -1);
+      const rusWhenIndices = rusMainBlocks
+        .map((b, j) => b.type === 'When' ? j : -1)
+        .filter(j => j !== -1);
+      
+
+      
+      // Сопоставляем When блоки по порядку, а не по choiceIndex
+      const len = Math.min(japWhenIndices.length, rusWhenIndices.length);
+      for (let k = 0; k < len; k++) {
+        const japIdx = japWhenIndices[k];
+        const rusMainIdx = rusWhenIndices[k];
+        const realRusIdx = rusMainIndices[rusMainIdx];
+        const japWhen = japBlocks[japIdx];
+        const rusBlock = textBlocks[realRusIdx];
+        
+        if (rusBlock && !rusBlock.generated && !rusLinked[realRusIdx]) {
+          textBlocks[realRusIdx].japaneseLink = { type: 'no_name', text: japWhen.text };
+          japaneseBlockMapping[japIdx] = realRusIdx;
+          rusLinked[realRusIdx] = true;
+        }
+      }
+      
+
 
       // 2. СЕГМЕНТАЦИЯ И ПРИВЯЗКА ShowText БЛОКОВ
       let japNameIndices = [-1];
@@ -1026,6 +1092,7 @@
       // 3. ОБРАБОТКА ОСТАВШИХСЯ ЯПОНСКИХ БЛОКОВ (если для них не нашлось русского)
       for (let j = 0; j < japBlocks.length; j++) {
         if (japaneseBlockMapping[j] === -1) {
+          
           let insertAt = textBlocks.length;
           for (let prev = j - 1; prev >= 0; prev--) {
             if (japaneseBlockMapping[prev] !== -1) {
@@ -1748,7 +1815,47 @@
                 let newText = txt.replace(/(?<!\\)"/g, '\\"');
                 formattedLine = originalLine.replace(/\[(.*)\]/, `["${newText}"]`);
                 break;
-              // Добавьте другие case'ы если необходимо
+              case 'Script':
+                let scriptText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+                let escapedScriptText = scriptText.replace(/(?<!\\)"/g, '\\"');
+                formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedScriptText}"]`);
+                break;
+              case 'ScriptMore':
+                let scriptMoreText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+                let escapedScriptMoreText = scriptMoreText.replace(/(?<!\\)"/g, '\\"');
+                formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedScriptMoreText}"]`);
+                break;
+              case 'Label':
+                let labelText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+                let escapedLabelText = labelText.replace(/(?<!\\)"/g, '\\"');
+                formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedLabelText}"]`);
+                break;
+              case 'ShowChoices':
+                let choicesText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+                let escapedChoicesText = choicesText.replace(/(?<!\\)"/g, '\\"');
+                formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedChoicesText}"]`);
+                break;
+              case 'When':
+                let whenText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+                let escapedWhenText = whenText.replace(/(?<!\\)"/g, '\\"');
+                formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedWhenText}"]`);
+                break;
+              case 'JumpToLabel':
+                let jumpText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+                let escapedJumpText = jumpText.replace(/(?<!\\)"/g, '\\"');
+                formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedJumpText}"]`);
+                break;
+              case 'Name':
+                let nameText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+                let escapedNameText = nameText.replace(/(?<!\\)"/g, '\\"');
+                formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedNameText}"]`);
+                break;
+              default:
+                // Для остальных типов блоков применяем базовую обработку
+                let defaultText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+                let escapedDefaultText = defaultText.replace(/(?<!\\)"/g, '\\"');
+                formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedDefaultText}"]`);
+                break;
             }
             exportLines.push(indent + formattedLine.trimStart());
             
@@ -2001,8 +2108,8 @@
           if (visibleText.length > 50) isError = true;
           if (info.isCorrupted) isError = true;
         }
-        // Проверка на японский текст
-        if (/[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.text)) isError = true;
+        // Проверка на японский текст (исключаем блоки типа Name)
+        if (block.type !== 'Name' && /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.text)) isError = true;
         
         // === НОВАЯ ПРОВЕРКА: ShowText без имени без сопоставления с японским файлом ===
         if (block.type === 'ShowText' && 
@@ -2200,8 +2307,8 @@
               reason: 'Повреждён тег имени (<∾∾C[6]...∾∾C[0]>) или синтаксис строки'
             });
           }
-          // --- Ошибка: наличие японского текста ---
-          if (/[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.text)) {
+          // --- Ошибка: наличие японского текста (исключаем блоки типа Name) ---
+          if (block.type !== 'Name' && /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.text)) {
             errors.push({
               idx: block.idx,
               label: block.idx !== undefined ? `строка ${block.idx+1}` : '[продолжение]',
