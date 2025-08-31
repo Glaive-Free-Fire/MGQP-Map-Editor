@@ -57,7 +57,47 @@ document.addEventListener('DOMContentLoaded', function() {
               let newText = txt.replace(/(?<!\\)"/g, '\\"');
               formattedLine = originalLine.replace(/\[(.*)\]/, `["${newText}"]`);
               break;
-            // Добавьте другие case'ы если необходимо
+            case 'Script':
+              let scriptText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+              let escapedScriptText = scriptText.replace(/(?<!\\)"/g, '\\"');
+              formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedScriptText}"]`);
+              break;
+            case 'ScriptMore':
+              let scriptMoreText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+              let escapedScriptMoreText = scriptMoreText.replace(/(?<!\\)"/g, '\\"');
+              formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedScriptMoreText}"]`);
+              break;
+            case 'Label':
+              let labelText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+              let escapedLabelText = labelText.replace(/(?<!\\)"/g, '\\"');
+              formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedLabelText}"]`);
+              break;
+            case 'ShowChoices':
+              let choicesText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+              let escapedChoicesText = choicesText.replace(/(?<!\\)"/g, '\\"');
+              formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedChoicesText}"]`);
+              break;
+            case 'When':
+              let whenText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+              let escapedWhenText = whenText.replace(/(?<!\\)"/g, '\\"');
+              formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedWhenText}"]`);
+              break;
+            case 'JumpToLabel':
+              let jumpText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+              let escapedJumpText = jumpText.replace(/(?<!\\)"/g, '\\"');
+              formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedJumpText}"]`);
+              break;
+            case 'Name':
+              let nameText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+              let escapedNameText = nameText.replace(/(?<!\\)"/g, '\\"');
+              formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedNameText}"]`);
+              break;
+            default:
+              // Для остальных типов блоков применяем базовую обработку
+              let defaultText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+              let escapedDefaultText = defaultText.replace(/(?<!\\)"/g, '\\"');
+              formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedDefaultText}"]`);
+              break;
           }
           previewLines.push(indent + formattedLine.trimStart());
           
@@ -99,7 +139,7 @@ document.addEventListener('DOMContentLoaded', function() {
           if (lastMainBlockLine !== -1) {
             // >>> НАЧАЛО ИЗМЕНЕНИЯ: Добавляем проверку типа блока <<<
             let lineToInsert = '';
-            if (block.type === 'ShowTextAttributes') {
+          if (block.type === 'ShowTextAttributes') {
                 lineToInsert = `${parentIndent}ShowTextAttributes([${block.text}]) #+`;
             } else { // По умолчанию считаем, что это ShowText
                 lineToInsert = `${parentIndent}ShowText(["${block.text}"]) #+`;
