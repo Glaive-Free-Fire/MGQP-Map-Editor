@@ -77,6 +77,74 @@
   // Экспортируем функцию для отладки
   global.parseCommonEvents = parseCommonEvents;
 
+  /**
+   * Создаёт содержимое исправленного файла, заменяя только те CommonEvent,
+   * в которых были обнаружены структурные ошибки.
+   * @param {string[]} ruLines - Массив строк русского файла.
+   * @param {string[]} jpLines - Массив строк японского файла.
+   * @returns {string[] | null} - Массив строк исправленного файла или null в случае отсутствия ошибок.
+   */
+  global.fixOnlyMismatchedEvents = function(ruLines, jpLines) {
+    const ruContent = ruLines.join('\n');
+    const jpContent = jpLines.join('\n');
+    const checkResult = window.checkMapStructureMatch(jpContent, ruContent);
+
+    const mismatchedEventIds = new Set();
+    if (checkResult.grouped) {
+      checkResult.grouped.forEach(ev => {
+        if (ev.pages && ev.pages.some(p => !p.ok)) {
+          mismatchedEventIds.add(parseInt(ev.eid, 10));
+        }
+      });
+    }
+
+    if (mismatchedEventIds.size === 0) {
+      alert('Структурных ошибок не найдено. Файл не требует исправления.');
+      return null;
+    }
+
+    const ruEvents = parseCommonEvents(ruLines);
+    const jpEvents = parseCommonEvents(jpLines);
+
+    const ruEventsMap = new Map(ruEvents.map(e => [e.num, e]));
+    const jpEventsMap = new Map(jpEvents.map(e => [e.num, e]));
+    const allEventNums = Array.from(new Set([...ruEventsMap.keys(), ...jpEventsMap.keys()])).sort((a, b) => a - b);
+
+    const newFileLines = [];
+
+    // Добавляем всё, что было до первого события
+    const firstEventStart = ruEvents.length > 0 ? ruEvents[0].start : ruLines.length;
+    for (let i = 0; i < firstEventStart; i++) {
+      newFileLines.push(ruLines[i]);
+    }
+
+    // Итерируем по всем событиям и решаем, какое из них использовать
+    for (const eventNum of allEventNums) {
+      const ruEvent = ruEventsMap.get(eventNum);
+      const jpEvent = jpEventsMap.get(eventNum);
+
+      if (mismatchedEventIds.has(eventNum)) {
+        if (jpEvent) {
+          newFileLines.push(...jpEvent.header, ...jpEvent.lines, '');
+          console.log(`Заменён CommonEvent ${eventNum} на эталонную японскую версию.`);
+        }
+      } else {
+        if (ruEvent) {
+          newFileLines.push(...ruEvent.header, ...ruEvent.lines, '');
+        }
+      }
+    }
+
+    // Удаляем последний лишний перенос строки, если он есть
+    if (newFileLines[newFileLines.length - 1] === '') {
+      newFileLines.pop();
+    }
+
+    alert(`Исправление завершено!\nЗаменено ${mismatchedEventIds.size} блоков CommonEvent с ошибками: ${Array.from(mismatchedEventIds).join(', ')}.\n\nВАЖНО: Вам нужно будет заново перевести текст внутри заменённых блоков.`);
+
+    return newFileLines;
+  };
+
   // Главная функция старого восстановления
   global.restoreRussianStructure = function(ruLines, jpLines, replaceNums) {
     const ruEvents = parseCommonEvents(ruLines);

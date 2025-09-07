@@ -591,7 +591,9 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
               msg: `несовпадение номеров BranchEnd (JP: ${jpBranchEnd}, RU: ${ruBranchEnd})`,
               jp: jpRaw || '',
               ru: ruRaw || '',
-              branchEndNumber: jpBranchEnd
+              branchEndNumber: jpBranchEnd,
+              jpLineNum: jpPage[i]?.lineNum, // ✨ ДОБАВЛЕНО
+              ruLineNum: ruPage[j]?.lineNum  // ✨ ДОБАВЛЕНО
             });
             i += 1; j += 1; continue;
           }
@@ -604,7 +606,9 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
               msg: `тип команды не совпадает (JP: <b>${jpCmd || '—'}</b>, RU: <b>${ruCmd || '—'}</b>)`,
               jp: jpRaw || '',
               ru: ruRaw || '',
-              branchEndNumber: jpBranchEnd
+              branchEndNumber: jpBranchEnd,
+              jpLineNum: jpPage[i]?.lineNum, // ✨ ДОБАВЛЕНО
+              ruLineNum: ruPage[j]?.lineNum  // ✨ ДОБАВЛЕНО
             });
             i += 1; j += 1; // Увеличиваем счетчики при несовпадении
             continue;
@@ -620,7 +624,9 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
                 msg: `Неправильный отступ команды (ожидается "${jpIndent.replace(/\s/g, '␣')}", по факту "${ruIndent.replace(/\s/g, '␣')}")`,
                 jp: jpRaw || '',
                 ru: ruRaw || '',
-                branchEndNumber: jpBranchEnd
+                branchEndNumber: jpBranchEnd,
+                jpLineNum: jpPage[i]?.lineNum, // ✨ ДОБАВЛЕНО
+                ruLineNum: ruPage[j]?.lineNum  // ✨ ДОБАВЛЕНО
               });
             } 
             // ПРОВЕРКА №2: Отсутствие кавычек в команде Script
@@ -634,7 +640,9 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
                   msg: `Отсутствуют кавычки в команде Script. Правильный формат: Script(["..."])`,
                   jp: jpRaw || '',
                   ru: ruRaw || '',
-                  branchEndNumber: jpBranchEnd
+                  branchEndNumber: jpBranchEnd,
+                  jpLineNum: jpPage[i]?.lineNum, // ✨ ДОБАВЛЕНО
+                  ruLineNum: ruPage[j]?.lineNum  // ✨ ДОБАВЛЕНО
                 });
               } else {
                 okLines++; // Все в порядке
@@ -651,7 +659,9 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
                   msg: `Несовпадение содержимого команды ${jpCmd}`,
                   jp: jpRaw || '',
                   ru: ruRaw || '',
-                  branchEndNumber: jpBranchEnd
+                  branchEndNumber: jpBranchEnd,
+                  jpLineNum: jpPage[i]?.lineNum, // ✨ ДОБАВЛЕНО
+                  ruLineNum: ruPage[j]?.lineNum  // ✨ ДОБАВЛЕНО
                 });
               } else if (formatOnlyCommands.includes(jpCmd) && jpRaw && ruRaw) {
                 // Для When и ShowChoices проверяем только форматирование
@@ -664,7 +674,9 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
                     msg: `Нарушение форматирования команды ${jpCmd}`,
                     jp: jpRaw || '',
                     ru: ruRaw || '',
-                    branchEndNumber: jpBranchEnd
+                    branchEndNumber: jpBranchEnd,
+                    jpLineNum: jpPage[i]?.lineNum, // ✨ ДОБАВЛЕНО
+                    ruLineNum: ruPage[j]?.lineNum  // ✨ ДОБАВЛЕНО
                   });
                 } else {
                   okLines++;

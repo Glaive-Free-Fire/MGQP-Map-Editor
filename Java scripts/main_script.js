@@ -7,24 +7,31 @@ window.getGameTextInfo = function(txt) {
     continuationPrefix: '',
     isCorrupted: false
   };
+  
+  // Проверка на поврежденный тег
   const hasTagHint = /<∾∾C/.test(txt);
-  const validNameTagRegex = /<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/;
-  const hasValidTag = validNameTagRegex.test(txt);
-  if (hasTagHint && !hasValidTag) {
+  const validNameTagRegex = /<∾∾C\[\d+\](?:.*?)∾∾C\[0\]>/;
+  if (hasTagHint && !validNameTagRegex.test(txt)) {
     result.isCorrupted = true;
     return result;
   }
-  const fullMatch = txt.match(/^(@@n)?(<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>)?(.*)$/);
+
+  // Новое, улучшенное регулярное выражение
+  const fullMatch = txt.match(/^(∾\n)?(<∾∾C\[\d+\].*?∾∾C\[0\]>)?(.*)$/s);
+  
   if (fullMatch) {
     const newlinePrefix = fullMatch[1] || '';
     const nameTag = fullMatch[2] || '';
     const dialogue = fullMatch[3] || '';
-    if (newlinePrefix || nameTag) {
-      result.fullPrefix = newlinePrefix + nameTag;
-      result.continuationPrefix = nameTag;
-      result.rawGameText = dialogue;
-    }
+    
+    result.fullPrefix = newlinePrefix + nameTag;
+    result.continuationPrefix = nameTag; // Для продолжений диалога без ∾\n
+    result.rawGameText = dialogue;
+  } else {
+    // Если регулярное выражение не сработало, считаем, что вся строка - это текст
+    result.rawGameText = txt;
   }
+
   return result;
 };
 
