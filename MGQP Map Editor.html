@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <title>MGQP Map Editor v1.4.40</title>
+  <title>MGQP Map Editor v1.4.50</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="Java scripts/restore-mode.js"></script>
   <script src="Java scripts/test_mode.js"></script>
@@ -108,6 +108,7 @@
     <button id="fixIndentBtn" class="control-btn" style="background:#fde; display:none;">Исправить отступы</button>
     <button id="clearOrphanedBtn" class="control-btn" style="background:#fdd; display:none;">Очистить строки</button>
     <button id="syncEditorBtn" class="control-btn" style="background:#ffc; display:none;">Обновить редактор</button>
+    <button id="fixLongDialoguesBtn" class="control-btn" style="background:#b3ffb3; display:none;">Исправить ShowTextAttributes</button>
 
     <!-- Лампочка и процент совпадения -->
     <div id="matchLampContainer" style="display:none; text-align:center;">
@@ -242,75 +243,141 @@
     // =================================================================================
     window.updateMatchLamp = function() {
       const lampDiv = document.getElementById('matchLampContainer');
-        const diffsDiv = document.getElementById('previewDiffs');
-        let statHtml = '';
-        let hasAnyErrors = false;
+      const diffsDiv = document.getElementById('previewDiffs');
+      let statHtml = '';
+      let hasAnyErrors = false;
+      let hasLongDialogueError = false;
 
-        // --- ЧАСТЬ 1: ПРОВЕРКА ОШИБОК "КРАСНЫХ СТРОК" ---
-        const redLineErrors = [];
-        if (window.textBlocks && window.textBlocks.length > 0) {
-            window.textBlocks.forEach((block) => {
-                if (block.isDeleted) return;
+      const redLineErrors = [];
+      if (window.textBlocks && window.textBlocks.length > 0) {
+          let checkedIndices_long = new Set();
+          window.textBlocks.forEach((block, i) => {
+              if (checkedIndices_long.has(i) || block.isDeleted) return;
+              if (block.type === 'ShowText' && window.isNameBlock(block.text)) {
+                  let lineCount = 0;
+                  let blockIndices = [];
+                  let counterIndex = i;
+                  while (counterIndex < textBlocks.length) {
+                      const currentBlock = textBlocks[counterIndex];
+                      if (counterIndex === i) {
+                          lineCount++;
+                          blockIndices.push(counterIndex);
+                          checkedIndices_long.add(counterIndex);
+                          counterIndex++;
+                          continue;
+                      }
+                      const prevBlock = textBlocks[counterIndex - 1];
+                      if (
+                          currentBlock.type !== 'ShowText' ||
+                          window.isNameBlock(currentBlock.text) ||
+                          (currentBlock.idx !== undefined && prevBlock.idx !== undefined && (currentBlock.idx - prevBlock.idx > 2))
+                      ) {
+                          break;
+                      }
+                      lineCount++;
+                      blockIndices.push(counterIndex);
+                      checkedIndices_long.add(counterIndex);
+                      counterIndex++;
+                  }
+                  if (lineCount >= 5) {
+                      hasLongDialogueError = true;
+                      
+                      blockIndices.forEach(errorIndex => {
+                          const errorBlock = textBlocks[errorIndex];
+                          redLineErrors.push({
+                              label: errorBlock.idx !== undefined ? `строка ${errorBlock.idx + 1}` : '[продолжение]',
+                              type: 'Ошибка компоновки',
+                              reason: `Часть слишком длинного диалога (${lineCount} строк). Требуется вставка ShowTextAttributes.`
+                          });
+                      });
+                  }
+              }
+          });
 
-                // Проверка на лимит символов и синтаксис
-                if (block.type === 'ShowText' || block.type === undefined) {
-                    const info = window.getGameTextInfo(block.text);
-                    const visibleText = info.rawGameText
-                        .replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/g, '').replace(/∾∾C\[\d+\]/g, '')
-                        .replace(/C\[\d+\]/g, '').replace(/∾/g, '').replace(/∿/g, '').trim();
-                    const len = visibleText.length;
+          window.textBlocks.forEach((block, i) => {
+              if (block.isDeleted) return;
+              if (block.type === 'ShowText' || block.type === undefined) {
+                  const info = window.getGameTextInfo(block.text);
+                  const visibleText = info.rawGameText
+                      .replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/g, '').replace(/∾∾C\[\d+\]/g, '')
+                      .replace(/C\[\d+\]/g, '').replace(/∾/g, '').replace(/∿/g, '').trim();
+                  const len = visibleText.length;
+                  if (len > 50) {
+                      redLineErrors.push({
+                          label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[продолжение]',
+                          type: 'Ошибка строки',
+                          reason: `Превышен лимит символов: ${len} > 50`
+                      });
+                  }
+                  if (info.isCorrupted) {
+                      redLineErrors.push({
+                          label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[продолжение]',
+                          type: 'Ошибка строки',
+                          reason: 'Повреждён тег имени или синтаксис'
+                      });
+                  }
+              }
+              if (block.type !== 'Name' && block.type !== 'Comment' && block.type !== 'JumpToLabel' && block.type !== 'Label' && /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.text)) {
+                  redLineErrors.push({
+                      label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[продолжение]',
+                      type: 'Ошибка строки',
+                      reason: 'Обнаружен японский текст'
+                  });
+              }
+              if (block.type === 'ShowText' && window.japBlocks && window.japBlocks.length > 0 &&
+                  !window.isNameBlock(block.text) && !block.japaneseLink && !block.generated) {
+                  redLineErrors.push({
+                      label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[продолжение]',
+                      type: 'Ошибка строки',
+                      reason: 'Строка-огрызок без пары в японском файле'
+                  });
+              }
+              if (window.isNameBlock(block.text)) {
+                  let precedingStructuralBlock = null;
+                  for (let j = i - 1; j >= 0; j--) {
+                      if (textBlocks[j].type !== 'ShowText' && textBlocks[j].type !== undefined) {
+                          precedingStructuralBlock = textBlocks[j];
+                          break;
+                      }
+                      if (textBlocks[j].idx !== undefined && !window.isNameBlock(textBlocks[j].text)) {
+                          precedingStructuralBlock = textBlocks[j];
+                          break;
+                      }
+                  }
+                  if (!precedingStructuralBlock || precedingStructuralBlock.type !== 'ShowTextAttributes') {
+                      redLineErrors.push({
+                          label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[строка-плейсхолдер]',
+                          type: 'Потенциальная ошибка',
+                          reason: 'Строка с именем персонажа без предшествующей команды ShowTextAttributes'
+                      });
+                  }
+              }
+          });
+      }
 
-                    if (len > 50) {
-                        redLineErrors.push({
-                            label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[продолжение]',
-                            type: 'Ошибка строки',
-                            reason: `Превышен лимит символов: ${len} > 50`
-                        });
-                    }
-                    if (info.isCorrupted) {
-                        redLineErrors.push({
-                            label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[продолжение]',
-                            type: 'Ошибка строки',
-                            reason: 'Повреждён тег имени или синтаксис'
-                        });
-                    }
-                }
+      if (redLineErrors.length > 0) {
+          hasAnyErrors = true;
+          statHtml += '<b>Ошибки в строках:</b><ul style="color:#b00; margin-top:4px;">';
+          const uniqueErrors = redLineErrors.filter((error, index, self) =>
+              index === self.findIndex((e) => (
+                  e.label === error.label && e.reason === error.reason
+              ))
+          );
+          uniqueErrors.forEach(err => {
+              statHtml += `<li><b>${err.label}</b> (${err.type}): ${err.reason}</li>`;
+          });
+          statHtml += '</ul><hr style="margin:12px 0;">';
+      }
 
-                // Проверка на японский текст (исключаем блоки типа Name)
-                if (block.type !== 'Name' && /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.text)) {
-                    redLineErrors.push({
-                        label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[продолжение]',
-                        type: 'Ошибка строки',
-                        reason: 'Обнаружен японский текст'
-                    });
-                }
-
-                // Проверка на "огрызки"
-                if (block.type === 'ShowText' && window.japBlocks && window.japBlocks.length > 0 &&
-                    !window.isNameBlock(block.text) && !block.japaneseLink && !block.generated) {
-                    redLineErrors.push({
-                        label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[продолжение]',
-                        type: 'Ошибка строки',
-                        reason: 'Строка-огрызок без пары в японском файле'
-                    });
-                }
-            });
-        }
-
-        if (redLineErrors.length > 0) {
-            hasAnyErrors = true;
-            statHtml += '<b>Ошибки в строках:</b><ul style="color:#b00; margin-top:4px;">';
-            redLineErrors.forEach(err => {
-                statHtml += `<li><b>${err.label}</b> (${err.type}): ${err.reason}</li>`;
-            });
-            statHtml += '</ul><hr style="margin:12px 0;">';
-        }
-
-        // --- ЧАСТЬ 2: ПРОВЕРКА СТРУКТУРНЫХ ОШИБОК ---
+      const fixBtn = document.getElementById('fixLongDialoguesBtn');
+      if (fixBtn) {
+        fixBtn.style.display = hasLongDialogueError ? '' : 'none';
+      }
+      
       if (!window.fullRusLines || !window.fullJapLines || window.fullRusLines.length === 0 || window.fullJapLines.length === 0) {
         lampDiv.style.display = 'none';
-            diffsDiv.innerHTML = hasAnyErrors ? statHtml : 'Загрузите оба файла для проверки структуры.';
-            if (typeof window.updateFixButtonsVisibility === 'function') window.updateFixButtonsVisibility();
+        diffsDiv.innerHTML = hasAnyErrors ? statHtml : 'Загрузите оба файла для проверки структуры.';
+        if (typeof window.updateFixButtonsVisibility === 'function') window.updateFixButtonsVisibility();
         return;
       }
 
@@ -320,43 +387,42 @@
 
       lampDiv.style.display = '';
       document.getElementById('matchPercent').textContent = result.percent + '%';
-
-        let structuralErrorCount = result.grouped ? result.grouped.reduce((acc, ev) => acc + ev.pages.reduce((a, p) => a + (p.errors ? p.errors.length : 0), 0), 0) : 0;
-        if (structuralErrorCount > 0) {
-            hasAnyErrors = true;
-        }
-
+      let structuralErrorCount = result.grouped ? result.grouped.reduce((acc, ev) => acc + ev.pages.reduce((a, p) => a + (p.errors ? p.errors.length : 0), 0), 0) : 0;
+      if (structuralErrorCount > 0) {
+          hasAnyErrors = true;
+      }
       const lamp = document.getElementById('matchLamp');
-        lamp.style.background = !hasAnyErrors ? '#8f8' : '#f66';
-        lamp.title = !hasAnyErrors
-            ? 'Структура и строки в порядке'
-            : `Обнаружены ошибки. Всего ошибок в строках: ${redLineErrors.length}. Всего структурных ошибок: ${structuralErrorCount}.`;
+      lamp.style.background = !hasAnyErrors ? '#8f8' : '#f66';
+      lamp.title = !hasAnyErrors ? 'Структура и строки в порядке' : `Обнаружены ошибки. Всего ошибок в строках: ${redLineErrors.length}. Всего структурных ошибок: ${structuralErrorCount}.`;
 
       if (result.grouped) {
-            let hasStructuralContent = false;
-        result.grouped.forEach(ev => {
-          ev.pages.forEach(page => {
-                    if (!page.ok) {
-                        hasStructuralContent = true;
-              statHtml += `<div style='color:#b00; font-weight:bold; margin:10px 0 2px 0;'>CommonEvent ${ev.eid} (${ev.name}), Page ${page.page}</div>`;
-              page.errors.forEach(err => {
-                const branchEndInfo = err.branchEndNumber !== undefined ? `<div style='color:#666; font-size:12px; margin-bottom:2px;'>BranchEnd ${err.branchEndNumber}</div>` : '';
-                statHtml += `<div style='color:#b00; margin-left:12px; margin-bottom:8px;'>${branchEndInfo}<b>Строка ${err.line}:</b> ${err.msg}<br>`;
-                if (err.jp || err.ru) {
-                  statHtml += `<div style='font-size:13px; margin-top:2px;'><span style='color:#444;'>JP:</span> <pre style='display:inline; background:#f7f7f7; border-radius:4px; padding:2px 6px;'>${(err.jp||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre><br><span style='color:#444;'>RU:</span> <pre style='display:inline; background:#f7f7f7; border-radius:4px; padding:2px 6px;'>${(err.ru||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre></div>`;
-                }
-                statHtml += `</div>`;
+          let hasStructuralContent = false;
+          result.grouped.forEach(ev => {
+              ev.pages.forEach(page => {
+                  if (!page.ok) {
+                      hasStructuralContent = true;
+                      statHtml += `<div style='color:#b00; font-weight:bold; margin:10px 0 2px 0;'>CommonEvent ${ev.eid} (${ev.name}), Page ${page.page}</div>`;
+                      page.errors.forEach(err => {
+                          const branchEndInfo = err.branchEndNumber !== undefined ? `<div style='color:#666; font-size:12px; margin-bottom:2px;'>BranchEnd ${err.branchEndNumber}</div>` : '';
+                          let linePointers = [];
+                          if (err.jpLineNum !== undefined) { linePointers.push(`JP: ${err.jpLineNum + 1}`); }
+                          if (err.ruLineNum !== undefined) { linePointers.push(`RU: ${err.ruLineNum + 1}`); }
+                          const lineInfo = linePointers.length > 0 ? `<span style="color:#555; background:#eee; padding: 2px 5px; border-radius:3px; font-size:12px; margin-right:8px;">${linePointers.join(' | ')}</span>` : '';
+                          statHtml += `<div style='color:#b00; margin-left:12px; margin-bottom:8px;'>${branchEndInfo}${lineInfo}<b>Строка ${err.line}:</b> ${err.msg}<br>`;
+                          if (err.jp || err.ru) {
+                              statHtml += `<div style='font-size:13px; margin-top:2px;'><span style='color:#444;'>JP:</span> <pre style='display:inline; background:#f7f7f7; border-radius:4px; padding:2px 6px;'>${(err.jp||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre><br><span style='color:#444;'>RU:</span> <pre style='display:inline; background:#f7f7f7; border-radius:4px; padding:2px 6px;'>${(err.ru||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre></div>`;
+                          }
+                          statHtml += `</div>`;
+                      });
+                  }
               });
-            }
           });
-        });
-            if (!hasAnyErrors) {
-                statHtml += '<span style="color:#393">Ошибок не обнаружено.</span>';
-        }
+          if (!hasAnyErrors && !hasStructuralContent) {
+              statHtml += '<span style="color:#393">Ошибок не обнаружено.</span>';
+          }
       }
       
-        diffsDiv.innerHTML = statHtml;
-        
+      diffsDiv.innerHTML = statHtml;
       if (typeof window.updateFixButtonsVisibility === 'function') {
         window.updateFixButtonsVisibility();
       }
@@ -517,47 +583,47 @@
       }
 
       const tempBlocks = [];
+      let currentEventId = null;
       const textCmdRegex = /^\s*ShowText\(\["([\s\S]*?)"\]\)/;
       const showChoicesRegex = /^\s*ShowChoices\(\[\[(.*)\],\s*(\d+)\]\)/;
       const whenRegex = /^\s*When\(\[(\d+),\s*"(.*)"\]\)/;
       const otherRegex = /^\s*(\w+)\(\[(.*)\]\)/;
-      // Добавляем поддержку строк в формате "Name = "значение""
       const nameValueRegex = /^\s*(\w+)\s*=\s*"(.*)"$/;
 
       originalLines.forEach((line, idx) => {
+        const ceMatch = line.match(/^CommonEvent (\d+)/);
+        if (ceMatch) {
+          currentEventId = parseInt(ceMatch[1], 10);
+        }
         if (/^\s*Display Name\s*=/.test(line)) return;
         
         let match;
         if ((match = line.match(textCmdRegex))) {
-          tempBlocks.push({ text: match[1], type: 'ShowText', originalIdx: idx, line: line });
+          tempBlocks.push({ text: match[1], type: 'ShowText', originalIdx: idx, line: line, commonEventId: currentEventId });
         } else if ((match = line.match(showChoicesRegex))) {
           let choicesText = match[1];
-          let defaultChoice = match[2];
-          // Правильно разбиваем варианты выбора, учитывая что они разделены | и могут быть в кавычках
           const choices = choicesText.split(/\s*\|\s*/).map(c => c.replace(/^"|"$/g, ''));
-          tempBlocks.push({ text: choices.join(' | '), type: 'ShowChoices', originalIdx: idx, choices: choices, defaultChoice: parseInt(defaultChoice), line: line });
+          tempBlocks.push({ text: choices.join(' | '), type: 'ShowChoices', originalIdx: idx, choices: choices, defaultChoice: parseInt(match[2]), line: line, commonEventId: currentEventId });
         } else if ((match = line.match(whenRegex))) {
-          tempBlocks.push({ text: match[2], type: 'When', originalIdx: idx, choiceIndex: parseInt(match[1]), line: line });
+          tempBlocks.push({ text: match[2], type: 'When', originalIdx: idx, choiceIndex: parseInt(match[1]), line: line, commonEventId: currentEventId });
         } else if ((match = line.match(otherRegex))) {
-          // Для блоков Label проверяем, содержит ли текст японские или русские символы
-          if (match[1] === 'Label') {
-            const labelText = match[2];
-            // Проверяем наличие японских или русских символов
-            if (/[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\u0400-\u04FF]/.test(labelText)) {
-              tempBlocks.push({ text: labelText, type: match[1], originalIdx: idx, line: line });
-            }
-          } else {
-          tempBlocks.push({ text: match[2], type: match[1], originalIdx: idx, line: line });
+          const commandType = match[1];
+          const commandText = match[2];
+          const translatableCommands = ['Script', 'ScriptMore', 'Label', 'JumpToLabel', 'Name', 'ShowTextAttributes'];
+          if (translatableCommands.includes(commandType)) {
+             tempBlocks.push({ text: commandText, type: commandType, originalIdx: idx, line: line, commonEventId: currentEventId });
           }
         } else if ((match = line.match(nameValueRegex))) {
-          // Обрабатываем строки в формате "Name = "значение""
-          tempBlocks.push({ text: match[2], type: match[1], originalIdx: idx, line: line });
+          const commandType = match[1];
+          const commandText = match[2];
+          if (commandType === 'Name'){
+              tempBlocks.push({ text: commandText, type: commandType, originalIdx: idx, line: line, commonEventId: currentEventId });
+          }
         }
       });
 
       window.textBlocks = textBlocks = [];
       
-      // === НОВОЕ: Регулярное выражение для распознавания строк о симпатии ===
       const affinityRegex = /^【(.+?)】（好感度：(.*)）$/;
 
       for (let i = 0; i < tempBlocks.length; i++) {
@@ -565,59 +631,44 @@
         const rawText = currentBlock.text.replace(/^"(.*)"$/, '$1');
         let affinityMatch = rawText.match(affinityRegex);
 
-        // === НОВЫЙ БЛОК ЛОГИКИ ===
+        if (currentBlock.type === 'ShowTextAttributes') {
+          textBlocks.push({ text: currentBlock.text, type: 'ShowTextAttributes', originalIdx: currentBlock.originalIdx, idx: currentBlock.originalIdx, line: currentBlock.line, generated: /#\+/.test(currentBlock.line), manualPlus: /#\+/.test(currentBlock.line) && currentBlock.originalIdx !== undefined, commonEventId: currentBlock.commonEventId });
+          continue;
+        }
+
         if (currentBlock.type === 'ShowText' && affinityMatch) {
           const name = affinityMatch[1];
-          const variable = affinityMatch[2].replace(/\\/g, '∾∾'); // Превращаем \V в ∾∾V
-
-          // Собираем строку в нужном для редактора формате
+          const variable = affinityMatch[2].replace(/\\/g, '∾∾');
           const newText = `∾\n<∾∾C[6]${name}∾∾C[0]>(Уровень симпатии: ${variable})`;
-
-          textBlocks.push({
-            idx: currentBlock.originalIdx,
-            text: newText,
-            type: 'ShowText',
-            generated: /#\+/.test(currentBlock.line),
-            manualPlus: /#\+/.test(currentBlock.line) && currentBlock.originalIdx !== undefined
-          });
-
+          textBlocks.push({ idx: currentBlock.originalIdx, text: newText, type: 'ShowText', generated: /#\+/.test(currentBlock.line), manualPlus: /#\+/.test(currentBlock.line) && currentBlock.originalIdx !== undefined, commonEventId: currentBlock.commonEventId });
         } else if (currentBlock.type === 'ShowText' && window.isNameBlock(rawText)) {
-          // --- Существующая логика для обычных диалогов с именем (остаётся без изменений) ---
-          const dialogueParts = [currentBlock.text];
-          let lookahead = i + 1;
-
-          while (lookahead < tempBlocks.length &&
-                 tempBlocks[lookahead].type === 'ShowText' &&
-                 !window.isNameBlock(tempBlocks[lookahead].text.replace(/^"(.*)"$/, '$1'))) {
-            dialogueParts.push(tempBlocks[lookahead].text);
-            lookahead++;
+          let combinedText = currentBlock.text;
+          if (
+            i + 1 < tempBlocks.length &&
+            tempBlocks[i + 1].type === 'ShowText' &&
+            !window.isNameBlock(tempBlocks[i + 1].text.replace(/^"(.*)"$/, '$1'))
+          ) {
+            combinedText += '\n' + tempBlocks[i + 1].text;
+            i++;
           }
-          
-          const combinedText = dialogueParts.map(part => part.replace(/^"(.*)"$/, '$1').replace(/\\n/g, '\n').replace(/\\/g, '∾')).join('\n');
-          const isGenerated = /#\+/.test(currentBlock.line);
-
-          textBlocks.push({
-            idx: currentBlock.originalIdx,
-            text: combinedText,
-            type: 'ShowText',
-            generated: isGenerated,
-            manualPlus: /#\+/.test(currentBlock.line) && currentBlock.originalIdx !== undefined
-          });
-
-          i = lookahead - 1;
+          const finalText = combinedText
+            .replace(/^"(.*)"$/, '$1')
+            .replace(/\\n/g, '\n')
+            .replace(/\\/g, '∾');
+          textBlocks.push({ idx: currentBlock.originalIdx, text: finalText, type: 'ShowText', generated: /#\+/.test(currentBlock.line), manualPlus: /#\+/.test(currentBlock.line) && currentBlock.originalIdx !== undefined, commonEventId: currentBlock.commonEventId });
         } else {
-          // --- Существующая логика для всех остальных блоков (остаётся без изменений) ---
           const text = currentBlock.text.replace(/^"(.*)"$/, '$1').replace(/\\n/g, '\n').replace(/\\/g, '∾');
-          textBlocks.push({
-            idx: currentBlock.originalIdx,
-            text: (currentBlock.type === 'ShowChoices') ? currentBlock.text : text,
-            type: currentBlock.type,
-            generated: /#\+/.test(currentBlock.line),
-            manualPlus: /#\+/.test(currentBlock.line) && currentBlock.originalIdx !== undefined,
-            choices: currentBlock.choices,
-            defaultChoice: currentBlock.defaultChoice,
-            choiceIndex: currentBlock.choiceIndex
-          });
+          const newBlock = { idx: currentBlock.originalIdx, text: (currentBlock.type === 'ShowChoices') ? currentBlock.text : text, type: currentBlock.type, generated: /#\+/.test(currentBlock.line), manualPlus: /#\+/.test(currentBlock.line) && currentBlock.originalIdx !== undefined, choices: currentBlock.choices, defaultChoice: currentBlock.defaultChoice, choiceIndex: currentBlock.choiceIndex, commonEventId: currentBlock.commonEventId };
+          
+          if (newBlock.generated && textBlocks.length > 0) {
+            for (let j = textBlocks.length - 1; j >= 0; j--) {
+              if (textBlocks[j].idx !== undefined) {
+                newBlock.parentIdx = textBlocks[j].idx;
+                break;
+              }
+            }
+          }
+          textBlocks.push(newBlock);
         }
       }
       
@@ -627,6 +678,7 @@
 
     function extractJapaneseTexts(lines) {
       const tempBlocks = [];
+      let currentEventId = null;
       window.japDisplayName = '';
       const textCmdRegex = /^\s*ShowText\(\[\s*"([\s\S]*?)"\s*\]\)/;
       const displayNameRegex = /^\s*Display Name\s*=\s*"(.*)"/;
@@ -636,131 +688,93 @@
       const nameValueRegex = /^\s*(\w+)\s*=\s*"(.*)"$/;
 
       lines.forEach((line, idx) => {
+        const ceMatch = line.match(/^CommonEvent (\d+)/);
+        if (ceMatch) {
+          currentEventId = parseInt(ceMatch[1], 10);
+        }
         let match;
         if ((match = line.match(textCmdRegex))) {
           const textContent = match[1];
-          // --- НОВАЯ ПРОВЕРКА ---
-          // Игнорируем ShowText блоки, которые содержат только пробелы
           if (textContent.trim() !== '') {
-            tempBlocks.push({ text: textContent, type: 'ShowText', originalIdx: idx });
+            tempBlocks.push({ text: textContent, type: 'ShowText', originalIdx: idx, commonEventId: currentEventId });
           }
         } else if ((match = line.match(displayNameRegex))) {
           window.japDisplayName = match[1];
         } else if ((match = line.match(showChoicesRegex))) {
           const choices = match[1].split('", "').map(c => c.replace(/^"|"$/, ''));
-          tempBlocks.push({ text: choices.join(' | '), type: 'ShowChoices', originalIdx: idx, choices: choices });
+          tempBlocks.push({ text: choices.join(' | '), type: 'ShowChoices', originalIdx: idx, choices: choices, commonEventId: currentEventId });
         } else if ((match = line.match(whenRegex))) {
-          tempBlocks.push({ text: match[2], type: 'When', originalIdx: idx, choiceIndex: parseInt(match[1]) });
+          tempBlocks.push({ text: match[2], type: 'When', originalIdx: idx, choiceIndex: parseInt(match[1]), commonEventId: currentEventId });
         } else if ((match = line.match(otherRegex))) {
-          // Для блоков Label проверяем, содержит ли текст японские символы
-          if (match[1] === 'Label') {
-            const labelText = match[2];
-            // Проверяем наличие японских символов
-            if (/[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(labelText)) {
-              tempBlocks.push({ text: labelText, type: match[1], originalIdx: idx });
+          const commandType = match[1];
+          const commandText = match[2];
+          const translatableCommands = ['Script', 'ScriptMore', 'Label', 'JumpToLabel', 'Name', 'ShowTextAttributes'];
+          if (translatableCommands.includes(commandType)) {
+            if (commandType === 'Label' && !(/[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(commandText))) {
+              // Пустой Label без JP — пропускаем
+            } else {
+              tempBlocks.push({ text: commandText, type: commandType, originalIdx: idx, commonEventId: currentEventId });
             }
-          } else {
-          tempBlocks.push({ text: match[2], type: match[1], originalIdx: idx });
           }
         } else if ((match = line.match(nameValueRegex))) {
-          tempBlocks.push({ text: match[2], type: match[1], originalIdx: idx });
+          // Обрабатываем только Name = "..."
+          const commandType = match[1];
+          const commandText = match[2];
+          if (commandType === 'Name') {
+            tempBlocks.push({ text: commandText, type: commandType, originalIdx: idx, line: line, commonEventId: currentEventId });
+          }
         }
       });
       
       window.japBlocks = japBlocks = [];
       const nameRegex = /^【.*】$/;
       const affinityRegex = /^【(.+?)】（好感度：(.*)）$/;
-      
-      // >>> НАЧАЛО ИЗМЕНЕНИЯ: Новый регекс для "Имя + Реплика" в одной строке <<<
-      // Он ищет 【Имя】 в начале строки и захватывает остаток как реплику.
       const nameAndDialogueRegex = /^(【.+?】)(.*)$/;
-      // >>> КОНЕЦ ИЗМЕНЕНИЯ <<<
 
       for (let i = 0; i < tempBlocks.length; i++) {
         const currentBlock = tempBlocks[i];
         if (currentBlock.type !== 'ShowText') {
-          japBlocks.push({
-            type: 'no_name',
-            text: currentBlock.text,
-            blockType: currentBlock.type,
-            originalIdx: currentBlock.originalIdx,
-            choices: currentBlock.choices,
-            choiceIndex: currentBlock.choiceIndex
-          });
+          japBlocks.push({ type: 'no_name', text: currentBlock.text, blockType: currentBlock.type, originalIdx: currentBlock.originalIdx, choices: currentBlock.choices, choiceIndex: currentBlock.choiceIndex, commonEventId: currentBlock.commonEventId });
           continue;
         }
 
         const rawText = currentBlock.text;
         let affinityMatch = rawText.match(affinityRegex);
-        
-        // >>> НАЧАЛО ИЗМЕНЕНИЯ: Новая логика проверки <<<
         let nameAndDialogueMatch = rawText.match(nameAndDialogueRegex);
-        // >>> КОНЕЦ ИЗМЕНЕНИЯ <<<
 
         if (affinityMatch) {
           const name = affinityMatch[1];
           const restOfText = `（好感度：${affinityMatch[2]}）`;
-          japBlocks.push({
-            type: 'name',
-            text: `【${name}】\n${restOfText}`,
-            blockType: 'ShowText'
-          });
-        
-        // >>> НАЧАЛО ИЗМЕНЕНИЯ: Обработка нового шаблона <<<
+          japBlocks.push({ type: 'name', text: `【${name}】\n${restOfText}`, blockType: 'ShowText', commonEventId: currentBlock.commonEventId, originalIdx: currentBlock.originalIdx });
         } else if (nameAndDialogueMatch) {
-            const namePart = nameAndDialogueMatch[1]; // 【影紬】
-            const dialoguePart = nameAndDialogueMatch[2]; // （集めた親方の数：\\V[1354]人）
-
-            // Если после имени есть текст, обрабатываем как единый блок "имя + реплика"
+            const namePart = nameAndDialogueMatch[1];
+            const dialoguePart = nameAndDialogueMatch[2];
             if (dialoguePart.trim()) {
-                japBlocks.push({
-                    type: 'name',
-                    text: `${namePart}\n${dialoguePart}`, // Мы приводим его к стандартному виду с переносом строки
-                    blockType: 'ShowText'
-                });
+                japBlocks.push({ type: 'name', text: `${namePart}\n${dialoguePart}`, blockType: 'ShowText', commonEventId: currentBlock.commonEventId, originalIdx: currentBlock.originalIdx });
             } else {
-                // Если текста после имени нет, это старая логика (имя на отдельной строке)
-                // и мы передаем управление ей.
-                // Этот блок кода дублирует старую логику для ясности.
-                const name = rawText;
                 if (i + 1 < tempBlocks.length && tempBlocks[i+1].type === 'ShowText' && !nameRegex.test(tempBlocks[i+1].text)) {
-                    japBlocks.push({
-                        type: 'name',
-                        text: `${name}\n${tempBlocks[i+1].text}`,
-                        blockType: 'ShowText'
-                    });
+                    japBlocks.push({ type: 'name', text: `${rawText}\n${tempBlocks[i+1].text}`, blockType: 'ShowText', commonEventId: currentBlock.commonEventId, originalIdx: currentBlock.originalIdx });
                     i++;
                 } else {
-                    japBlocks.push({
-                        type: 'name',
-                        text: name,
-                        blockType: 'ShowText'
-                    });
+                    japBlocks.push({ type: 'name', text: rawText, blockType: 'ShowText', commonEventId: currentBlock.commonEventId, originalIdx: currentBlock.originalIdx });
                 }
             }
-        // >>> КОНЕЦ ИЗМЕНЕНИЯ <<<
-        
-        } else if (nameRegex.test(rawText)) { // Эта ветка теперь будет обрабатывать только оставшиеся случаи
-          const name = rawText;
+        } else if (nameRegex.test(rawText)) {
           if (i + 1 < tempBlocks.length && tempBlocks[i+1].type === 'ShowText' && !nameRegex.test(tempBlocks[i+1].text)) {
-            japBlocks.push({
-              type: 'name',
-              text: `${name}\n${tempBlocks[i+1].text}`,
-              blockType: 'ShowText'
-            });
+            japBlocks.push({ type: 'name', text: `${rawText}\n${tempBlocks[i+1].text}`, blockType: 'ShowText', commonEventId: currentBlock.commonEventId, originalIdx: currentBlock.originalIdx });
             i++;
           } else {
-            japBlocks.push({
-              type: 'name',
-              text: name,
-              blockType: 'ShowText'
-            });
+            japBlocks.push({ type: 'name', text: rawText, blockType: 'ShowText', commonEventId: currentBlock.commonEventId, originalIdx: currentBlock.originalIdx });
           }
         } else {
-          japBlocks.push({ type: 'no_name', text: rawText, blockType: 'ShowText' });
+          japBlocks.push({ type: 'no_name', text: rawText, blockType: 'ShowText', commonEventId: currentBlock.commonEventId, originalIdx: currentBlock.originalIdx });
         }
       }
-      linkAndRender();
+
+      // ВЫВОД В КОНСОЛЬ
+      // (удалено) вывод отладочных таблиц
+ 
+       linkAndRender();
     }
 
     // Новая функция для работы только с японским файлом
@@ -788,22 +802,11 @@
           window.japDisplayName = match[1];
         } else if ((match = line.match(showChoicesRegex))) {
           const choicesText = match[1];
-          const choices = choicesText.split('", "').map(choice => 
-            choice.replace(/^"/, '').replace(/"$/, '')
+          const choices = choicesText.split('", "').map(c => c.replace(/^"/, '').replace(/"$/, '')
           );
-          tempBlocks.push({ 
-            text: choices.join(' | '), 
-            type: 'ShowChoices', 
-            originalIdx: idx,
-            choices: choices
-          });
+          tempBlocks.push({ text: choices.join(' | '), type: 'ShowChoices', originalIdx: idx, choices: choices, commonEventId: currentEventId });
         } else if ((match = line.match(whenRegex))) {
-          tempBlocks.push({ 
-            text: match[2], 
-            type: 'When', 
-            originalIdx: idx,
-            choiceIndex: parseInt(match[1])
-          });
+          tempBlocks.push({ text: match[2], type: 'When', originalIdx: idx, choiceIndex: parseInt(match[1]), commonEventId: currentEventId });
         } else if ((match = line.match(scriptJpRegex))) {
           tempBlocks.push({ 
             text: match[1], 
@@ -954,182 +957,134 @@
     }
 
     function linkAndRender() {
-      textBlocks.forEach(block => { delete block.japaneseLink; });
-      japaneseBlockMapping = new Array(japBlocks.length).fill(-1);
-      manualJapaneseMapping = []; // Сброс ручных привязок при перезагрузке
 
-      // --- собираем только «основные» (оригинальные) русские блоки, у которых idx !== undefined
-      const rusMainIndices = textBlocks.reduce((arr, b, i) => {
-        if (b.idx !== undefined && !b.generated && !b.isDeleted) arr.push(i);
-        return arr;
-      }, []);
-      const rusMainBlocks = rusMainIndices.map(i => textBlocks[i]);
-
-      if (textBlocks.length === 0 || japBlocks.length === 0) {
-        renderTextBlocks();
-        return;
-      }
-      
-      // Если все блоки без idx (режим работы только с японским файлом), пропускаем привязку
-      if (textBlocks.every(block => block.idx === undefined)) {
-        renderTextBlocks();
-        return;
-      }
+      // --- ЭТАП 1: Сопоставление блоков (логика осталась прежней) ---
+      let japaneseBlockMapping = new Array(japBlocks.length).fill(-1);
       let rusLinked = new Array(textBlocks.length).fill(false);
+      const allEventIds = new Set();
+      textBlocks.forEach(b => { if (b.commonEventId !== null) allEventIds.add(b.commonEventId); });
+      japBlocks.forEach(b => { if (b.commonEventId !== null) allEventIds.add(b.commonEventId); });
+      const sortedEventIds = Array.from(allEventIds).sort((a, b) => a - b);
 
-      // 1. ПРИОРИТЕТНАЯ ПРИВЯЗКА ДЛЯ НЕ-ShowText БЛОКОВ, пропуская все сгенерированные
-      const blockTypesToMatch = ['DisplayName', 'ShowChoices', 'Script', 'ScriptMore', 'JumpToLabel', 'Label', 'Name'];
-      blockTypesToMatch.forEach(type => {
-        const japIndices = japBlocks.map((b, i) => b.blockType === type ? i : -1).filter(i => i !== -1);
-        const rusMainTypeIndices = rusMainBlocks
-          .map((b, j) => b.type === type ? j : -1)
-          .filter(j => j !== -1);
-        const rusIndices = rusMainTypeIndices.map(j => rusMainIndices[j]);
-        const len = Math.min(japIndices.length, rusIndices.length);
-        for (let k = 0; k < len; k++) {
-          const japIdx = japIndices[k];
-          const realRusIdx = rusIndices[k];
-          if (typeof realRusIdx === 'number'
-              && textBlocks[realRusIdx]
-              && !textBlocks[realRusIdx].generated
-              && japaneseBlockMapping[japIdx] === -1
-              && !rusLinked[realRusIdx]) {
-            textBlocks[realRusIdx].japaneseLink = { type: 'no_name', text: japBlocks[japIdx].text };
-            japaneseBlockMapping[japIdx] = realRusIdx;
-            rusLinked[realRusIdx] = true;
-          }
-        }
-      });
-
-      // 1.1. ОТДЕЛЬНАЯ ПРИВЯЗКА ДЛЯ When БЛОКОВ ПО choiceIndex
-      const japWhenIndices = japBlocks.map((b, i) => b.blockType === 'When' ? i : -1).filter(i => i !== -1);
-      const rusWhenIndices = rusMainBlocks
-        .map((b, j) => b.type === 'When' ? j : -1)
-        .filter(j => j !== -1);
-      
-
-      
-      // Сопоставляем When блоки по порядку, а не по choiceIndex
-      const len = Math.min(japWhenIndices.length, rusWhenIndices.length);
-      for (let k = 0; k < len; k++) {
-        const japIdx = japWhenIndices[k];
-        const rusMainIdx = rusWhenIndices[k];
-        const realRusIdx = rusMainIndices[rusMainIdx];
-        const japWhen = japBlocks[japIdx];
-        const rusBlock = textBlocks[realRusIdx];
+      for (const eventId of sortedEventIds) {
+        const currentRusItems = textBlocks
+          .map((b, i) => ({ block: b, originalIndex: i }))
+          .filter(item => item.block.commonEventId === eventId && !item.block.generated);
+        const currentJapItems = japBlocks
+          .map((b, i) => ({ block: b, originalIndex: i }))
+          .filter(item => item.block.commonEventId === eventId);
+        if (currentRusItems.length === 0 || currentJapItems.length === 0) continue;
         
-        if (rusBlock && !rusBlock.generated && !rusLinked[realRusIdx]) {
-          textBlocks[realRusIdx].japaneseLink = { type: 'no_name', text: japWhen.text };
-          japaneseBlockMapping[japIdx] = realRusIdx;
-          rusLinked[realRusIdx] = true;
+        let matchedPairs = [];
+        let japAnchorCursor = 0;
+        const rusIndicesInEvent = currentRusItems.map(item => item.originalIndex);
+        const japIndicesInEvent = currentJapItems.map(item => item.originalIndex);
+
+        for (let i = 0; i < currentRusItems.length; i++) {
+          const rusItem = currentRusItems[i];
+          if (rusItem.block.type !== 'ShowText') {
+            for (let j = japAnchorCursor; j < currentJapItems.length; j++) {
+              const japItem = currentJapItems[j];
+              if (japItem.block.blockType !== 'ShowText' && rusItem.block.type === japItem.block.blockType) {
+                matchedPairs.push({ rus: rusItem.originalIndex, jap: japItem.originalIndex });
+                japAnchorCursor = j + 1;
+                break;
+              }
+            }
+          }
+        }
+        
+        const anchors = [
+          { rus: rusIndicesInEvent[0] - 1, jap: japIndicesInEvent[0] - 1 },
+          ...matchedPairs,
+          { rus: rusIndicesInEvent[rusIndicesInEvent.length - 1] + 1, jap: japIndicesInEvent[japIndicesInEvent.length - 1] + 1 }
+        ];
+
+        for (let i = 0; i < anchors.length - 1; i++) {
+          const startAnchor = anchors[i];
+          const endAnchor = anchors[i+1];
+          const rusShowTextSegment = currentRusItems.filter(item => item.block.type === 'ShowText' && item.originalIndex > startAnchor.rus && item.originalIndex < endAnchor.rus);
+          const japShowTextSegment = currentJapItems.filter(item => item.block.blockType === 'ShowText' && item.originalIndex > startAnchor.jap && item.originalIndex < endAnchor.jap);
+          let japCursor = 0;
+          for (let k = 0; k < rusShowTextSegment.length; k++) {
+            const rusItem = rusShowTextSegment[k];
+            if (rusItem.block.isManualContinuation) continue;
+            if (japCursor < japShowTextSegment.length) {
+              matchedPairs.push({ rus: rusItem.originalIndex, jap: japShowTextSegment[japCursor].originalIndex });
+              japCursor++;
+            }
+          }
+        }
+
+        for (const pair of matchedPairs) {
+          if (!rusLinked[pair.rus] && japaneseBlockMapping[pair.jap] === -1) {
+            japaneseBlockMapping[pair.jap] = pair.rus;
+            rusLinked[pair.rus] = true;
+          }
         }
       }
       
+      // --- ЭТАП 2: Полностью новый, надежный алгоритм сборки ---
+      const finalTextBlocks = [];
+      const rusBlocksUsed = new Set();
+      let lastMatchedRusIndex = -1;
 
-
-      // 2. СЕГМЕНТАЦИЯ И ПРИВЯЗКА ShowText БЛОКОВ
-      let japNameIndices = [-1];
-      japBlocks.forEach((b, i) => {
-        if (b.blockType === 'ShowText' && b.type === 'name') japNameIndices.push(i);
-      });
-      japNameIndices.push(japBlocks.length);
-
-      // Аналогично — только по оригинальным русским блокам:
-      let rusMainNameIndices = [-1];
-      rusMainBlocks.forEach((b, j) => {
-        if (b.type === 'ShowText' && window.isNameBlock(b.text)) rusMainNameIndices.push(j);
-      });
-      rusMainNameIndices.push(rusMainBlocks.length);
-
-      // 2.1. Привязка блоков с именами (опять же — skip generated)
-      for (let i = 1; i < japNameIndices.length - 1; i++) {
-        const japIdx = japNameIndices[i];
-        const rusMainIdx = rusMainNameIndices[i];
-        if (Number.isInteger(rusMainIdx) && rusMainIdx >= 0 && rusMainIdx < rusMainIndices.length) {
-          const realRusIdx = rusMainIndices[rusMainIdx];
-          if (realRusIdx !== undefined
-              && textBlocks[realRusIdx]
-              && !textBlocks[realRusIdx].generated
-              && !rusLinked[realRusIdx]) {
-            textBlocks[realRusIdx].japaneseLink = { type: 'name', text: japBlocks[japIdx].text };
-            japaneseBlockMapping[japIdx] = realRusIdx;
-            rusLinked[realRusIdx] = true;
-          }
-        }
-      }
-
-      // 2.2. Привязка блоков без имен внутри сегментов
-      for (let seg = 0; seg < japNameIndices.length - 1; seg++) {
-        let japStart = japNameIndices[seg] + 1;
-        let japEnd = japNameIndices[seg + 1];
-        let rusMainStart = (rusMainNameIndices[seg] !== undefined ? rusMainNameIndices[seg] : -1) + 1;
-        let rusMainEnd = rusMainNameIndices[seg + 1] !== undefined ? rusMainNameIndices[seg + 1] : rusMainBlocks.length;
-
-        let japNoNameIndices = [];
-        for (let j = japStart; j < japEnd; j++) {
-          if (japBlocks[j].blockType === 'ShowText' && japBlocks[j].type === 'no_name' && japaneseBlockMapping[j] === -1) {
-            japNoNameIndices.push(j);
-          }
-        }
-
-        let rusMainNoNameIndices = [];
-        for (let r = rusMainStart; r < rusMainEnd; r++) {
-          if (rusMainBlocks[r].type === 'ShowText' && !window.isNameBlock(rusMainBlocks[r].text) && !rusLinked[rusMainIndices[r]]) {
-            rusMainNoNameIndices.push(r);
-          }
-        }
-
-        const len = Math.min(japNoNameIndices.length, rusMainNoNameIndices.length);
-        for (let k = 0; k < len; k++) {
-          const japIdx = japNoNameIndices[k];
-          const rusMainNoNameIdx = rusMainNoNameIndices[k];
-          if (Number.isInteger(rusMainNoNameIdx) && rusMainNoNameIdx >= 0 && rusMainNoNameIdx < rusMainIndices.length) {
-            const realRusIdx = rusMainIndices[rusMainNoNameIdx];
-            if (realRusIdx !== undefined
-                && textBlocks[realRusIdx]
-                && !textBlocks[realRusIdx].generated) {
-              textBlocks[realRusIdx].japaneseLink = { type: 'no_name', text: japBlocks[japIdx].text };
-              japaneseBlockMapping[japIdx] = realRusIdx;
-              rusLinked[realRusIdx] = true;
-            }
-          }
-        }
-      }
-      // 3. ОБРАБОТКА ОСТАВШИХСЯ ЯПОНСКИХ БЛОКОВ (если для них не нашлось русского)
+      // Проходим по структуре японского файла
       for (let j = 0; j < japBlocks.length; j++) {
-        if (japaneseBlockMapping[j] === -1) {
-          
-          let insertAt = textBlocks.length;
-          for (let prev = j - 1; prev >= 0; prev--) {
-            if (japaneseBlockMapping[prev] !== -1) {
-              insertAt = japaneseBlockMapping[prev] + 1;
-              break;
-            }
+          const matchedRusIndex = japaneseBlockMapping[j];
+
+          if (matchedRusIndex !== -1) {
+              // Найден сопоставленный блок.
+              // Сначала добавляем все "пропущенные" русские блоки (разделители, и т.д.),
+              // которые были между предыдущим сопоставленным блоком и текущим.
+              for (let i = lastMatchedRusIndex + 1; i < matchedRusIndex; i++) {
+                  if (textBlocks[i] && !rusBlocksUsed.has(i)) {
+                      finalTextBlocks.push(textBlocks[i]);
+                      rusBlocksUsed.add(i);
+                  }
+              }
+
+              // Теперь добавляем сам сопоставленный блок
+              const rusBlock = textBlocks[matchedRusIndex];
+              rusBlock.japaneseLink = { 
+                  type: (rusBlock.type === 'ShowText' && window.isNameBlock(rusBlock.text)) ? 'name' : 'no_name', 
+                  text: japBlocks[j].text 
+              };
+              finalTextBlocks.push(rusBlock);
+              rusBlocksUsed.add(matchedRusIndex);
+              
+              lastMatchedRusIndex = matchedRusIndex; // Обновляем позицию
+
+          } else {
+              // Сопоставление не найдено, создаем плейсхолдер "ТРЕБУЕТСЯ ПЕРЕВОД"
+              const japBlock = japBlocks[j];
+              let placeholderText = 'ТРЕБУЕТСЯ ПЕРЕВОД';
+              if (japBlock.blockType === 'ShowText' && japBlock.type === 'name') {
+                  const nameMatch = japBlock.text.match(/^【(.*?)】/);
+                  if (nameMatch && nameMatch[1]) {
+                      placeholderText = `∾\n<∾∾C[6]${nameMatch[1]}∾∾C[0]>ТРЕБУЕТСЯ ПЕРЕВОД`;
+                  }
+              }
+              finalTextBlocks.push({
+                  idx: undefined,
+                  japIdx: japBlock.originalIdx,
+                  text: placeholderText,
+                  type: japBlock.blockType || 'ShowText',
+                  generated: true,
+                  commonEventId: japBlock.commonEventId,
+                  japaneseLink: { type: japBlock.type, text: japBlock.text }
+              });
           }
-          const newBlock = {
-            idx: undefined,
-            text: 'ТРЕБУЕТСЯ ПЕРЕВОД',
-            type: japBlocks[j].blockType || 'ShowText',
-            generated: true
-          };
-          textBlocks.splice(insertAt, 0, newBlock);
-          newBlock.japaneseLink = { type: japBlocks[j].type, text: japBlocks[j].text };
-          japaneseBlockMapping[j] = insertAt;
-          for (let k = 0; k < japaneseBlockMapping.length; k++) {
-            if (k !== j && japaneseBlockMapping[k] >= insertAt) {
-              japaneseBlockMapping[k]++;
-            }
-          }
-        }
       }
-      // --- после всех сопоставлений ---
-      reorderTextBlocksByJapBlocks();
-      // --- ДОБАВЛЕНО: сохраняем все Script/ScriptMore без японского аналога ---
-      textBlocks.forEach(block => {
-        if ((block.type === 'Script' || block.type === 'ScriptMore') && !block.japaneseLink) {
-          block.japaneseLink = { type: 'no_name', text: '' };
-        }
-      });
+
+      // Добавляем все оставшиеся русские блоки из конца файла, которые не были использованы
+      for (let i = lastMatchedRusIndex + 1; i < textBlocks.length; i++) {
+          if (textBlocks[i] && !rusBlocksUsed.has(i)) {
+              finalTextBlocks.push(textBlocks[i]);
+          }
+      }
+
+      window.textBlocks = textBlocks = finalTextBlocks;
       renderTextBlocks();
     }
 
@@ -1223,44 +1178,13 @@
         
         // Создаем заголовок в зависимости от типа блока
         if (block.idx !== undefined) {
-          switch (block.type) {
-            case 'ShowText':
-              label.textContent = `ShowText [строка ${block.idx+1}]:`;
-              break;
-            case 'DisplayName':
-              label.textContent = `Display Name [строка ${block.idx+1}]:`;
-              break;
-            case 'ShowChoices':
-              label.textContent = `ShowChoices [строка ${block.idx+1}]:`;
-              break;
-            case 'When':
-              label.textContent = `When [строка ${block.idx+1}]:`;
-              break;
-            case 'JumpToLabel':
-              label.textContent = `JumpToLabel [строка ${block.idx+1}]:`;
-              break;
-            case 'Label':
-              label.textContent = `Label [строка ${block.idx+1}]:`;
-              break;
-            case 'ScriptMore':
-              label.textContent = `ScriptMore [строка ${block.idx+1}]:`;
-              break;
-            case 'Script':
-              label.textContent = `Script [строка ${block.idx+1}]:`;
-              break;
-            case 'ScriptMore':
-              label.textContent = `ScriptMore [строка ${block.idx+1}]:`;
-              break;
-            case 'ShowTextAttributes':
-              label.textContent = `ShowTextAttributes [строка ${block.idx+1}]:`;
-              break;
-            case 'Name':
-              label.textContent = `Name [строка ${block.idx+1}]:`;
-              break;
-            default:
-              label.textContent = `[строка ${block.idx+1}]:`;
-          }
+          // Блок из оригинального русского файла
+          label.textContent = `${block.type || 'Block'} [строка ${block.idx + 1}]:`;
+        } else if (block.japIdx !== undefined) {
+          // Плейсхолдер для блока из японского файла
+          label.textContent = `${block.type || 'Block'} [JP строка ${block.japIdx + 1}]:`;
         } else {
+          // Настоящее «продолжение», добавленное пользователем
           label.textContent = '[продолжение]:';
         }
         div.appendChild(label);
@@ -1417,7 +1341,6 @@
               }
             }
           } catch (e) {
-            // console.error('Ошибка обработки дубликата на строке', block.idx + 1, e);
           }
         }
         
@@ -1614,80 +1537,11 @@
         plusBtn.textContent = '+';
         plusBtn.style.marginTop = '4px';
         plusBtn.onclick = function() {
-          saveEditorBlockPosition(); // Сохраняем позицию до изменений
-          pushUndo();
-          const info = getGameTextInfo(textarea.value);
-          let namePart = info.fullPrefix;
-          let textPart = info.rawGameText;
-          let acc = '';
-          let rest = '';
-
-          // Логика разделения текста (остается без изменений)
-          if (wrapMode === 'equal') {
-            const totalLen = textPart.length;
-            const midPoint = Math.floor(totalLen / 2);
-            let splitIndex = textPart.lastIndexOf(' ', midPoint);
-            if (splitIndex === -1) { splitIndex = textPart.indexOf(' ', midPoint); }
-            if (splitIndex === -1) {
-                acc = textPart;
-                rest = '';
-            } else {
-                acc = textPart.substring(0, splitIndex);
-                rest = textPart.substring(splitIndex + 1);
-            }
-          } else { 
-            const words = textPart.split(' ');
-            let firstLineWords = [];
-            for (const word of words) {
-                firstLineWords.push(word);
-                if (firstLineWords.join(' ').replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/g, '').replace(/∾/g, '').length > 50) {
-                    firstLineWords.pop();
-                    break;
-                }
-            }
-            acc = firstLineWords.join(' ');
-            rest = words.slice(firstLineWords.length).join(' ');
-          }
-
-          // В первую строку — namePart + acc, во вторую — только rest (без namePart)
-          textarea.value = namePart + acc.trimEnd();
-          textBlocks[i].text = textarea.value;
-
-          // --- Новый механизм разбиения окна ---
-          // 1. Находим начало текущего "окна" (индекс последнего ShowTextAttributes)
-          let windowStartIndex = 0;
-          for (let j = i - 1; j >= 0; j--) {
-            if (textBlocks[j].type === 'ShowTextAttributes') {
-              windowStartIndex = j + 1;
-              break;
-            }
-          }
-          // 2. Считаем строки ShowText в текущем окне до текущего блока
-          let linesInWindow = 0;
-          for (let j = windowStartIndex; j <= i; j++) {
-            if (textBlocks[j].type === 'ShowText' || textBlocks[j].type === undefined) {
-              linesInWindow++;
-            }
-          }
-          // 3. Если мы разделяем 4-ю строку, нужно вставить ShowTextAttributes
-          if (linesInWindow >= 4 && rest.trim() !== '') {
-            // Найти текст последнего атрибута для копирования
-            let attrText = '["",0,0,2]';
-            for (let j = i; j >= 0; j--) {
-              if (textBlocks[j].type === 'ShowTextAttributes') {
-                attrText = textBlocks[j].text;
-                break;
-              }
-            }
-            // Вставляем новый ShowTextAttributes, а затем новую строку ShowText
-            textBlocks.splice(i + 1, 0, { type: 'ShowTextAttributes', text: attrText, idx: undefined, generated: true });
-            textBlocks.splice(i + 2, 0, { text: rest.trimStart(), type: 'ShowText', idx: undefined, generated: true });
-          } else {
-            // В противном случае, просто добавляем новую строку как продолжение
-            textBlocks.splice(i + 1, 0, { text: rest.trimStart(), type: 'ShowText', idx: undefined, generated: true });
-          }
+          saveEditorBlockPosition();
+          if (splitDialogueBlock(i, textBlocks)) {
           renderTextBlocks();
-          restoreEditorBlockPosition(); // Восстанавливаем позицию после перерисовки
+          restoreEditorBlockPosition();
+          }
         };
         
         minusBtn.textContent = '-';
@@ -1752,6 +1606,13 @@
         return match;
       });
       return result;
+    }
+
+    // === НОВАЯ ЕДИНАЯ ФУНКЦИЯ ФОРМАТИРОВАНИЯ ===
+    function formatShowTextContent(text) {
+        // Эта логика конвертирует внутренние символы ∾ в игровые \ и экранирует кавычки
+        let txt = text.replace(/∿/g, '<<ONE>>').replace(/\n/g, '\\n').replace(/∾∾/g, '\\\\').replace(/∾/g, '\\').replace(/<<ONE>>/g, '\\').replace(/\\(?=[\?\.!\,—])/g, '');
+        return txt.replace(/(?<!\\)"/g, '\\"');
     }
 
     // === Счётчик предупреждений для кнопки сохранения ===
@@ -1820,9 +1681,7 @@
 
             switch (block.type) {
               case 'ShowText':
-                let txt = block.text.replace(/∿/g, '<<ONE>>').replace(/\n/g, '\\n').replace(/∾∾/g, '\\\\').replace(/∾/g, '\\').replace(/<<ONE>>/g, '\\').replace(/\\(?=[\?\.!\,—])/g, '');
-                let newText = txt.replace(/(?<!\\)"/g, '\\"');
-                formattedLine = originalLine.replace(/\[(.*)\]/, `["${newText}"]`);
+                formattedLine = originalLine.replace(/\[(.*)\]/, `["${formatShowTextContent(block.text)}"]`);
                 break;
               case 'ShowTextAttributes':
                 // ShowTextAttributes не требует экранирования кавычек, но заменяем ∾ на \
@@ -1923,57 +1782,58 @@
           }
         }
         
-        // 3. Вставляем новые строки (продолжения)
+        // 3. Вставляем новые строки - ФИНАЛЬНЫЙ ИСПРАВЛЕННЫЙ АЛГОРИТМ
+        const generatedBlocksByAnchor = new Map();
+
+        // Шаг 1: Группируем все новые блоки по их "якорю" (предыдущему реальному блоку)
         textBlocks.forEach(block => {
           if (block.idx === undefined && !block.isDeleted) {
-            if (block.generated && block.text === 'ТРЕБУЕТСЯ ПЕРЕВОД') {
+                if (block.text.includes('ТРЕБУЕТСЯ ПЕРЕВОД')) {
               return;
             }
-
-            let lastMainBlockLine = -1;
-            // >>> НАЧАЛО ИЗМЕНЕНИЯ: Определяем отступ родителя <<<
-            let parentIndent = '    '; // Отступ по умолчанию
-
+                let anchorIdx = -1;
             for (let j = textBlocks.indexOf(block) - 1; j >= 0; j--) {
               if (textBlocks[j].idx !== undefined) {
-                if (originalIdxToPosMap.has(textBlocks[j].idx)) {
-                  lastMainBlockLine = originalIdxToPosMap.get(textBlocks[j].idx);
+                        anchorIdx = textBlocks[j].idx;
+                        break;
+                    }
                 }
-                // Находим оригинальную строку родителя, чтобы получить её отступ
-                const parentOriginalLine = newLines[textBlocks[j].idx];
-                if (parentOriginalLine) {
-                  const indentMatch = parentOriginalLine.match(/^\s*/);
-                  parentIndent = indentMatch ? indentMatch[0] : '    ';
+                if (!generatedBlocksByAnchor.has(anchorIdx)) {
+                    generatedBlocksByAnchor.set(anchorIdx, []);
                 }
-                break;
-              }
+                generatedBlocksByAnchor.get(anchorIdx).push(block);
             }
-            // >>> КОНЕЦ ИЗМЕНЕНИЯ <<<
+        });
 
-            if (lastMainBlockLine !== -1) {
-              // >>> НАЧАЛО ИЗМЕНЕНИЯ: Добавляем проверку типа блока <<<
-              let lineToInsert = '';
-              if (block.type === 'ShowTextAttributes') {
-                lineToInsert = `${parentIndent}ShowTextAttributes([${block.text}]) #+`;
-              } else { // По умолчанию считаем, что это ShowText
-                lineToInsert = `${parentIndent}ShowText(["${block.text}"]) #+`;
-              }
-              // >>> КОНЕЦ ИЗМЕНЕНИЯ <<<
+        // Шаг 2: Вставляем сгруппированные блоки, идя СНИЗУ ВВЕРХ
+        const sortedAnchors = Array.from(generatedBlocksByAnchor.keys()).sort((a, b) => b - a);
 
-              exportLines.splice(lastMainBlockLine + 1, 0, lineToInsert);
-              
-              // >>> НАЧАЛО ИЗМЕНЕНИЯ: Сдвигаем позиции в карте <<<
-              // Так как мы вставили новую строку, все последующие позиции сдвинулись.
-              for (const [key, value] of originalIdxToPosMap.entries()) {
-                if (value > lastMainBlockLine) {
-                  originalIdxToPosMap.set(key, value + 1);
-                }
-              }
-              // >>> КОНЕЦ ИЗМЕНЕНИЯ <<<
+        sortedAnchors.forEach(anchorIdx => {
+            const blocksToInsert = generatedBlocksByAnchor.get(anchorIdx);
+            const anchorPosition = (anchorIdx === -1) ? -1 : originalIdxToPosMap.get(anchorIdx);
+
+            if (anchorPosition !== undefined) {
+                const linesToInsert = blocksToInsert.map(block => {
+                    let parentIndent = '    ';
+                    if (anchorIdx !== -1) {
+                        const parentOriginalLine = newLines[anchorIdx];
+                        if (parentOriginalLine) {
+                            const indentMatch = parentOriginalLine.match(/^\s*/);
+                            parentIndent = indentMatch ? indentMatch[0] : '    ';
+                        }
+                    }
+                    
+                    // Определяем, нужно ли ставить метку #+
+                    const marker = block.isManualContinuation ? ' #+' : '';
+
+                    if (block.type === 'ShowTextAttributes') {
+                        return `${parentIndent}ShowTextAttributes([${block.text}])${marker}`;
             } else {
-              // Эта ситуация не должна происходить, но на всякий случай оставим лог
-              console.error("Не удалось найти родительский блок для сгенерированной строки:", block);
+                        return `${parentIndent}ShowText(["${formatShowTextContent(block.text)}"])${marker}`;
             }
+                });
+                
+                exportLines.splice(anchorPosition + 1, 0, ...linesToInsert);
           }
         });
       }
@@ -2066,30 +1926,24 @@
     };
     document.getElementById('wrapModeBtn').title = 'Переносятся только слова, не вмещающиеся в лимит';
 
-    // Кнопка "Разделить Строки": корректная массовая обработка без появления пустых строк
-    document.getElementById('splitAllBtn').onclick = function() {
-      let i = 0;
-      while (i < textBlocks.length) {
-        const block = textBlocks[i];
-        if (block.type === 'ShowText' && block.text && block.text.trim().length > 0 && !block.generated) {
-          const info = getGameTextInfo(block.text);
+    // Новая единая функция для разделения строк с правильной логикой
+    function splitDialogueBlock(blockIndex, textBlocks) {
+      const block = textBlocks[blockIndex];
+      if (!block || block.type !== 'ShowText' || !block.text) return false;
+
+      const info = window.getGameTextInfo(block.text);
+      const visibleText = info.rawGameText;
+
+      if (visibleText.length <= 50) return false; // Нечего разделять
+
+      pushUndo(); // Сохраняем состояние для отмены
+
           let namePart = info.fullPrefix;
           let textPart = info.rawGameText;
           let acc = '';
           let rest = '';
-          if (wrapMode === 'equal') {
-            const totalLen = textPart.length;
-            let midPoint = Math.floor(totalLen / 2);
-            let splitIndex = textPart.lastIndexOf(' ', midPoint);
-            if (splitIndex === -1) { splitIndex = textPart.indexOf(' ', midPoint); }
-            if (splitIndex === -1) {
-                acc = textPart;
-                rest = '';
-            } else {
-                acc = textPart.substring(0, splitIndex);
-                rest = textPart.substring(splitIndex + 1);
-            }
-          } else {
+
+      // Логика разделения текста (остаточный режим)
             const words = textPart.split(' ');
             let firstLineWords = [];
             for (const word of words) {
@@ -2101,41 +1955,147 @@
             }
             acc = firstLineWords.join(' ');
             rest = words.slice(firstLineWords.length).join(' ');
+
+      // Обновляем текущий блок
+      textBlocks[blockIndex].text = namePart + acc.trimEnd();
+
+      if (rest.trim() === '') return true; // Разделили, но новой строки не будет
+
+      // Теперь самая важная часть: определяем, нужно ли вставлять ShowTextAttributes
+      // 1. Находим начало текущего диалогового окна
+      let windowStartIndex = blockIndex;
+      while (windowStartIndex > 0 && textBlocks[windowStartIndex - 1].idx === undefined && textBlocks[windowStartIndex - 1].type === 'ShowText') {
+              windowStartIndex--;
           }
-          textBlocks[i].text = namePart + acc.trimEnd();
-          // --- механизм разбиения окна ---
-          let windowStartIndex = 0;
-          for (let j = i - 1; j >= 0; j--) {
-            if (textBlocks[j].type === 'ShowTextAttributes') {
-              windowStartIndex = j + 1;
+
+      // 2. Считаем, сколько строк УЖЕ есть в этом окне
+      let linesInWindow = 0;
+          let counterIndex = windowStartIndex;
+          while (counterIndex < textBlocks.length && textBlocks[counterIndex].type === 'ShowText') {
+              // Прерываем подсчет, если следующий блок - это НАЧАЛО нового, другого диалога
+        if (textBlocks[counterIndex].idx !== undefined && counterIndex > windowStartIndex && window.isNameBlock(textBlocks[counterIndex].text)) {
               break;
             }
+        linesInWindow++;
+              counterIndex++;
           }
-          let linesInWindow = 0;
-          for (let j = windowStartIndex; j <= i; j++) {
-            if (textBlocks[j].type === 'ShowText' || textBlocks[j].type === undefined) {
-              linesInWindow++;
-            }
-          }
-          if (linesInWindow >= 4 && rest.trim() !== '') {
-            let attrText = '["",0,0,2]';
-            for (let j = i; j >= 0; j--) {
+
+      // 3. Если текущая строка - 4-я, перед 5-й нужно вставить ShowTextAttributes
+      if (linesInWindow === 4) {
+        let attrText = '"",0,0,2'; // Атрибуты по умолчанию
+        // Ищем предыдущие атрибуты, чтобы их скопировать
+        for (let j = blockIndex; j >= 0; j--) {
               if (textBlocks[j].type === 'ShowTextAttributes') {
                 attrText = textBlocks[j].text;
                 break;
               }
             }
-            textBlocks.splice(i + 1, 0, { type: 'ShowTextAttributes', text: attrText, idx: undefined, generated: true });
-            textBlocks.splice(i + 2, 0, { text: rest.trimStart(), type: 'ShowText', idx: undefined, generated: true });
-            i += 2;
-          } else if (rest.trim() !== '') {
-            textBlocks.splice(i + 1, 0, { text: rest.trimStart(), type: 'ShowText', idx: undefined, generated: true });
-            i += 1;
+        textBlocks.splice(blockIndex + 1, 0, { type: 'ShowTextAttributes', text: attrText, idx: undefined, generated: true, isManualContinuation: true });
+        textBlocks.splice(blockIndex + 2, 0, { text: rest.trimStart(), type: 'ShowText', idx: undefined, generated: true, isManualContinuation: true });
+      } else {
+        // В противном случае просто вставляем новую строку
+        textBlocks.splice(blockIndex + 1, 0, { text: rest.trimStart(), type: 'ShowText', idx: undefined, generated: true, isManualContinuation: true });
+      }
+
+      return true; // Возвращаем true, если было произведено разделение
+    }
+
+    // === НОВАЯ ФУНКЦИЯ ДЛЯ ИСПРАВЛЕНИЯ ДЛИННЫХ ДИАЛОГОВ ===
+    function fixLongDialogues() {
+      // 1. Находим все группы проблемных диалогов
+      const longDialogueGroups = [];
+      const checkedIndices = new Set();
+
+      textBlocks.forEach((block, i) => {
+        if (checkedIndices.has(i) || block.isDeleted) return;
+
+        // Ищем начало диалога - блок с именем персонажа
+        if (block.type === 'ShowText' && window.isNameBlock(block.text)) {
+          let dialogueBlockIndices = [];
+          let lineCount = 0;
+          let counterIndex = i;
+
+          // Считаем все последующие строки этого диалога
+          while (counterIndex < textBlocks.length && textBlocks[counterIndex].type === 'ShowText') {
+            if (counterIndex > i && window.isNameBlock(textBlocks[counterIndex].text)) {
+              break; // Наткнулись на начало следующего диалога
+            }
+            dialogueBlockIndices.push(counterIndex);
+            checkedIndices.add(counterIndex);
+            lineCount++;
+            counterIndex++;
+          }
+
+          // Если диалог слишком длинный, запоминаем его
+          if (lineCount >= 5) {
+            longDialogueGroups.push(dialogueBlockIndices);
           }
         }
-        i++;
+      });
+
+      if (longDialogueGroups.length === 0) {
+        alert('Проблемных диалогов не найдено.');
+        return;
       }
-      renderTextBlocks();
+
+      pushUndo(); // Сохраняем состояние для возможной отмены
+      let fixedCount = 0;
+
+      // 2. Обрабатываем найденные группы в ОБРАТНОМ ПОРЯДКЕ
+      // Это важно, чтобы вставка элементов не сбивала индексы для следующих групп
+      for (let i = longDialogueGroups.length - 1; i >= 0; i--) {
+        const groupIndices = longDialogueGroups[i];
+        const startIndex = groupIndices[0]; // Индекс строки с именем
+
+        // 3. Ищем родительский ShowTextAttributes
+        let parentAttrText = '"",0,0,2'; // Значение по умолчанию
+        for (let j = startIndex - 1; j >= 0; j--) {
+          if (textBlocks[j].type === 'ShowTextAttributes') {
+            parentAttrText = textBlocks[j].text;
+            break;
+          }
+        }
+
+        // 4. Вставляем копию после 4-й строки диалога
+        // Индекс 4-й строки в массиве groupIndices - это 3 (счет с нуля)
+        // Её реальный индекс в textBlocks - это groupIndices[3]
+        const insertionPoint = groupIndices[3] + 1;
+
+        const newAttributesBlock = {
+          type: 'ShowTextAttributes',
+          text: parentAttrText,
+          idx: undefined,
+          generated: true,
+          isManualContinuation: true // Чтобы в файле появился маркер #+
+        };
+        
+        textBlocks.splice(insertionPoint, 0, newAttributesBlock);
+        fixedCount++;
+      }
+
+      alert(`Исправлено ${fixedCount} длинных диалогов.`);
+      renderTextBlocks(); // Перерисовываем редактор, чтобы увидеть изменения
+    }
+
+    // === ОПТИМИЗИРОВАННЫЙ ОБРАБОТЧИК для кнопки "Разделить Строки" ===
+    document.getElementById('splitAllBtn').onclick = function() {
+      let hasSplitted = false;
+
+      // Итерируем по массиву С КОНЦА В НАЧАЛО.
+      // Это безопасно, так как `splice` не будет влиять на индексы еще не проверенных элементов.
+      for (let i = textBlocks.length - 1; i >= 0; i--) {
+        // Вызываем функцию разделения для каждого блока.
+        if (splitDialogueBlock(i, textBlocks)) {
+          hasSplitted = true;
+          // 'break' и внешний цикл 'while' больше не нужны. Просто продолжаем цикл.
+        }
+      }
+
+      if (hasSplitted) {
+        renderTextBlocks(); // Перерисовываем редактор один раз в самом конце.
+      } else {
+        alert('Нет строк для разделения (все строки короче 50 символов).');
+      }
     };
 
     // Собирает актуальный список индексов красных textarea
@@ -2162,8 +2122,8 @@
           if (visibleText.length > 50) isError = true;
           if (info.isCorrupted) isError = true;
         }
-        // Проверка на японский текст (исключаем блоки типа Name)
-        if (block.type !== 'Name' && /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.text)) isError = true;
+        // Проверка на японский текст (исключаем блоки типа Name, Comment, JumpToLabel и Label)
+        if (block.type !== 'Name' && block.type !== 'Comment' && block.type !== 'JumpToLabel' && block.type !== 'Label' && /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.text)) isError = true;
         
         // === НОВАЯ ПРОВЕРКА: ShowText без имени без сопоставления с японским файлом ===
         if (block.type === 'ShowText' && 
@@ -2286,7 +2246,23 @@
 
     // === Обработчик кнопки восстановления структуры ===
     document.getElementById('restoreStructBtn').onclick = function() {
-      if (typeof window.safeRestoreStructure === 'function') {
+      // Новый, безопасный обработчик: заменяем только проблемные CommonEvent
+      if (!window.fullRusLines || !window.fullJapLines) {
+        alert('Сначала загрузите оба файла: русский и японский.');
+        return;
+      }
+      if (typeof window.fixOnlyMismatchedEvents === 'function') {
+        const fixedLines = window.fixOnlyMismatchedEvents(window.fullRusLines, window.fullJapLines);
+        if (fixedLines) {
+          window.fullRusLines = fixedLines;
+          window.restoreModeEnabled = true;
+          const syncBtn = document.getElementById('syncEditorBtn');
+          if (syncBtn) syncBtn.style.display = '';
+          if (typeof window.updatePreviewArea === 'function') {
+            window.updatePreviewArea();
+          }
+        }
+      } else if (typeof window.safeRestoreStructure === 'function') {
         window.safeRestoreStructure();
       } else if (typeof window.immediateRestoreStructure === 'function') {
         window.immediateRestoreStructure();
@@ -2320,6 +2296,12 @@
       var tabContentEditor = document.getElementById('tabContentEditor');
       if (editorDiv && tabContentEditor && editorDiv.parentNode !== tabContentEditor) {
         tabContentEditor.appendChild(editorDiv);
+      }
+
+      // === ПРИВЯЗКА ОБРАБОТЧИКА К НОВОЙ КНОПКЕ ===
+      const fixBtn = document.getElementById('fixLongDialoguesBtn');
+      if (fixBtn) {
+        fixBtn.onclick = fixLongDialogues;
       }
     });
 
@@ -2363,8 +2345,8 @@
               reason: 'Повреждён тег имени (<∾∾C[6]...∾∾C[0]>) или синтаксис строки'
             });
           }
-          // --- Ошибка: наличие японского текста (исключаем блоки типа Name) ---
-          if (block.type !== 'Name' && /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.text)) {
+          // --- Ошибка: наличие японского текста (исключаем блоки типа Name, Comment, JumpToLabel и Label) ---
+          if (block.type !== 'Name' && block.type !== 'Comment' && block.type !== 'JumpToLabel' && block.type !== 'Label' && /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.text)) {
             errors.push({
               idx: block.idx,
               label: block.idx !== undefined ? `строка ${block.idx+1}` : '[продолжение]',
@@ -2395,7 +2377,19 @@
               page.errors.forEach(err => {
                 // --- Добавляем номер BranchEnd если он есть ---
                 const branchEndInfo = err.branchEndNumber !== undefined ? `<div style='color:#666; font-size:12px; margin-bottom:2px;'>BranchEnd ${err.branchEndNumber}</div>` : '';
-                html += `<div style='color:#b00; margin-left:12px; margin-bottom:8px;'>${branchEndInfo}<b>Строка ${err.line}:</b> ${err.msg}<br>`;
+                
+                // ✨ НАЧАЛО ИЗМЕНЕНИЯ: Формируем строку с глобальными номерами
+                let linePointers = [];
+                if (err.jpLineNum !== undefined) {
+                    linePointers.push(`JP: ${err.jpLineNum + 1}`);
+                }
+                if (err.ruLineNum !== undefined) {
+                    linePointers.push(`RU: ${err.ruLineNum + 1}`);
+                }
+                const lineInfo = linePointers.length > 0 ? `<span style="color:#555; background:#eee; padding: 2px 5px; border-radius:3px; font-size:12px; margin-right:8px;">${linePointers.join(' | ')}</span>` : '';
+                // ✨ КОНЕЦ ИЗМЕНЕНИЯ
+                
+                html += `<div style='color:#b00; margin-left:12px; margin-bottom:8px;'>${branchEndInfo}${lineInfo}<b>Строка ${err.line}:</b> ${err.msg}<br>`;
                 if (err.jp || err.ru) {
                   html += `<div style='font-size:13px; margin-top:2px;'><span style='color:#444;'>JP:</span> <pre style='display:inline; background:#f7f7f7; border-radius:4px; padding:2px 6px;'>${(err.jp||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre><br><span style='color:#444;'>RU:</span> <pre style='display:inline; background:#f7f7f7; border-radius:4px; padding:2px 6px;'>${(err.ru||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre></div>`;
                 }
@@ -2493,7 +2487,6 @@
     // === Функция для синхронизации редактора с восстановленными строками ===
     window.syncEditorWithRestored = function() {
       if (!window.fullRusLines || window.fullRusLines.length === 0) {
-        console.warn('Нет восстановленных строк для синхронизации');
         return;
       }
       // Сохраняем текущую позицию прокрутки
@@ -2528,7 +2521,6 @@
       setTimeout(() => {
         window.scrollTo(0, currentScrollPosition);
       }, 100);
-      console.log('Редактор синхронизирован с восстановленными строками');
       // --- СБРОС режима восстановления ---
       window.restoreModeEnabled = false;
     };
