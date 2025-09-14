@@ -1255,12 +1255,18 @@
                 // Функция для получения объединённого текста (в одну строку)
                 const collectText = start => {
                   let end = start + 1;
+                  // Строгое условие продолжения: только вручную добавленные строки (idx === undefined) и не удалённые
                   while (
                     end < textBlocks.length &&
                     textBlocks[end].type === 'ShowText' &&
-                    (!textBlocks[end].japaneseLink || !textBlocks[end].japaneseLink.text.trim())
-                  ) end++;
+                    textBlocks[end].idx === undefined &&
+                    !textBlocks[end].isDeleted
+                  ) {
+                    end++;
+                  }
+                  // Собираем текст, пропуская удалённые блоки
                   return textBlocks.slice(start, end)
+                    .filter(b => !b.isDeleted)
                     .map(b => b.dom?.rusInput?.value.trim() || '')
                     .filter(v => v)
                     .join(' ');
@@ -2549,12 +2555,12 @@
         return;
       }
 
-      // Собираем индексы строк-огрызков
+      // Собираем индексы строк-огрызков для удаления
       let orphanedIndices = [];
       textBlocks.forEach((block, i) => {
         if (block.isDeleted) return;
         
-        // Проверяем, является ли это строкой-огрызком
+        // Условие для определения "строки-огрызка"
         if (block.type === 'ShowText' && 
             window.japBlocks && window.japBlocks.length > 0 && 
             !window.isNameBlock(block.text) && 
@@ -2571,26 +2577,27 @@
 
       const confirmed = confirm(
         `Найдено ${orphanedIndices.length} строк-огрызков без сопоставления с японским файлом.\n\n` +
-        'Очистить содержимое этих строк?\n\n' +
+        'Эти строки будут полностью удалены из файла при сохранении. Продолжить?\n\n' +
         'Это действие можно отменить с помощью Ctrl+Z.'
       );
 
       if (confirmed) {
-        // Сохраняем состояние для undo
+        // Сохраняем состояние в историю для возможности отмены
         pushUndo();
         
-        // Очищаем содержимое строк-огрызков
+        // Помечаем все найденные блоки как удаленные
         orphanedIndices.forEach(i => {
-          if (textBlocks[i] && textBlocks[i].dom && textBlocks[i].dom.rusInput) {
-            textBlocks[i].dom.rusInput.value = '';
-            textBlocks[i].text = '';
+          if (textBlocks[i]) {
+            // Вместо очистки текста, помечаем блок как удаленный.
+            // Функции renderTextBlocks() и saveBtn.onclick уже умеют обрабатывать этот флаг.
+            textBlocks[i].isDeleted = true;
           }
         });
 
-        // Перерисовываем редактор
+        // Перерисовываем редактор, чтобы удаленные строки исчезли.
         renderTextBlocks();
         
-        alert(`Очищено ${orphanedIndices.length} строк-огрызков!`);
+        alert(`Удалено ${orphanedIndices.length} строк-огрызков! Изменения будут применены при сохранении файла.`);
       }
     };
   </script>
