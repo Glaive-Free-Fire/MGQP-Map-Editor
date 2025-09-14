@@ -649,7 +649,7 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
               }
             } else {
               // ПРОВЕРКА №3: Полное совпадение строк для команд, которые не редактируются в редакторе
-              const fullyEditableCommands = ['ShowText', 'Script', 'ScriptMore', 'Label', 'JumpToLabel', 'Name', 'ShowTextAttributes'];
+              const fullyEditableCommands = ['ShowText', 'ShowScrollingText', 'Script', 'ScriptMore', 'Label', 'JumpToLabel', 'Name', 'ShowTextAttributes', 'Comment'];
               const formatOnlyCommands = ['When', 'ShowChoices'];
               
               if (!fullyEditableCommands.includes(jpCmd) && !formatOnlyCommands.includes(jpCmd) && jpRaw && ruRaw && jpRaw.trim() !== ruRaw.trim()) {
