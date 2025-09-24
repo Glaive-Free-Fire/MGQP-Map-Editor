@@ -93,10 +93,6 @@ window.updateAllForBlock = function(block, textarea, plusBtn, minusBtn, counter,
     minusBtn.style.display = (text.trim() === '' && textBlocks.length > 1) ? '' : 'none';
     counter.textContent = `Символов: ${len}`;
   }
-  // --- Мгновенно обновляем состояние стрелок при любой красной строке ---
-  if (typeof window.updateRedIndices === 'function') {
-    window.updateRedIndices();
-  }
 };
 
 // --- Навигация по красным строкам ---

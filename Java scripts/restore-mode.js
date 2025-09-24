@@ -1021,13 +1021,15 @@
     const jpContent = window.fullJapLines.join('\n');
     const checkResult = window.checkMapStructureMatch(jpContent, ruContent);
     
+    // Собираем ТОЛЬКО ИСПРАВИМЫЕ ошибки отступов
     let indentErrors = [];
     if (checkResult.grouped) {
       checkResult.grouped.forEach(ev => {
         ev.pages.forEach(page => {
           if (!page.ok && page.errors) {
             page.errors.forEach(err => {
-              if (err.msg && err.msg.includes('Неправильный отступ')) {
+              // Добавляем ошибку, только если она помечена как исправимая
+              if (err.isFixableIndent) {
                 indentErrors.push(err);
               }
             });
@@ -1037,7 +1039,8 @@
     }
     
     if (indentErrors.length === 0) {
-      alert('Ошибок отступов не найдено.');
+      alert('Исправимых ошибок отступов не найдено.');
+      if (typeof window.updateMatchLamp === 'function') window.updateMatchLamp();
       return;
     }
     
@@ -1045,29 +1048,153 @@
     let fixedCount = 0;
     
     indentErrors.forEach(err => {
-      const lineNum = err.line - 1; // lineNum - это номер строки в файле (1-based)
-      if (fixedLines[lineNum]) {
-        const correctIndent = (err.jp.match(/^(\s*)/) || ['',''])[1];
+      const lineNum = err.ruLineNum;
+      // Убеждаемся, что все данные для исправления существуют
+      if (lineNum !== undefined && err.correctIndent !== undefined && fixedLines[lineNum] !== undefined) {
         const lineContent = fixedLines[lineNum].trim();
-        fixedLines[lineNum] = correctIndent + lineContent;
+        fixedLines[lineNum] = err.correctIndent + lineContent;
         fixedCount++;
       }
     });
     
-    window.fullRusLines = fixedLines;
-    window.originalLines = fixedLines;
-    window.restoreModeEnabled = true;
+    if (fixedCount === 0) {
+      alert('Не удалось применить исправления отступов.');
+      return;
+    }
 
-    // Показываем кнопку синхронизации
-    const syncBtn = document.getElementById('syncEditorBtn');
-    if (syncBtn) {
-      syncBtn.style.display = '';
+    window.fullRusLines = fixedLines;
+
+    alert(`Исправлено ${fixedCount} ошибок отступов.\n\nРедактор будет автоматически обновлен.`);
+
+    if (typeof window.syncEditorWithRestored === 'function') {
+        window.syncEditorWithRestored();
+    } else {
+        alert('Критическая ошибка: syncEditorWithRestored не найдена. Обновите страницу.');
+    }
+  };
+
+  // === Функции для работы с тегами имён ===
+  // Функция для ПРОВЕРКИ наличия ошибок тегов
+  global.hasNameTagErrors = function() {
+    if (!window.textBlocks) return false;
+    
+    // Теперь эта функция использует ТОЧНО ТАКУЮ ЖЕ логику, как и основной детектор ошибок.
+    return window.textBlocks.some(block => {
+      if (block.isDeleted || block.type !== 'ShowText') return false;
+      
+      const text = block.text;
+      const hasNameTag = /<∾∾C\[6\].*?∾∾C\[0\]>/.test(text);
+      const isMissingPrefix = !/^∾\n/.test(text);
+      
+      // Ошибка есть, только если есть тег И отсутствует правильный префикс.
+      return hasNameTag && isMissingPrefix;
+    });
+  };
+
+  // Функция для ИСПРАВЛЕНИЯ ошибок тегов
+  global.autoFixNameTagErrors = function() {
+    if (!window.textBlocks) return;
+
+    // ИСПРАВЛЕННАЯ ЛОГИКА ОТБОРА:
+    // Теперь мы ищем блоки, где есть тег, НО ОТСУТСТВУЕТ правильный префикс.
+    const blocksToFix = textBlocks.filter(block => {
+      if (block.isDeleted || block.type !== 'ShowText') return false;
+      
+      const text = block.text;
+      const hasNameTag = /<∾∾C\[6\].*?∾∾C\[0\]>/.test(text);
+      const isMissingPrefix = !/^∾\n/.test(text);
+      
+      return hasNameTag && isMissingPrefix;
+    });
+
+    if (blocksToFix.length === 0) {
+      alert('Ошибок в тегах имён для исправления не найдено.');
+      return;
     }
     
-    alert(`Исправлено ${fixedCount} ошибок отступов.\n\nИспользуйте кнопку "Обновить редактор" для синхронизации.`);
+    const confirmed = confirm(`Найдено ${blocksToFix.length} строк с неправильными тегами имён. Исправить их автоматически? (Это действие можно отменить)`);
+    if (!confirmed) return;
+
+    if (typeof pushUndo === 'function') pushUndo();
     
-    // Обновляем проверку, чтобы кнопка исчезла
-    setTimeout(window.updateMatchLamp, 100);
+    let fixedCount = 0;
+    blocksToFix.forEach(block => {
+      const fixedText = '∾\n' + block.text;
+      
+      if (block.text !== fixedText) {
+        block.text = fixedText;
+        fixedCount++;
+      }
+    });
+
+    alert(`Исправлено ${fixedCount} ошибок в тегах имён.`);
+    
+    // Перерисовываем редактор и обновляем все ошибки
+    if (typeof renderTextBlocks === 'function') renderTextBlocks();
+    if (typeof window.updateMatchLamp === 'function') window.updateMatchLamp();
+    if (typeof updateRedIndices === 'function') updateRedIndices();
+  };
+
+  // === Функция для запоминания строк-огрызков ===
+  global.memorizeOrphanedLines = function() {
+    if (!window.textBlocks || textBlocks.length === 0) return;
+
+    // 1. Находим все "строки-огрызки"
+    let orphanedIndices = [];
+    textBlocks.forEach((block, i) => {
+      if (block.isDeleted) return;
+      if (block.type === 'ShowText' && 
+          window.japBlocks && window.japBlocks.length > 0 && 
+          !window.isNameBlock(block.text) && 
+          !block.japaneseLink &&
+          !block.generated) {
+        orphanedIndices.push(i);
+      }
+    });
+
+    if (orphanedIndices.length === 0) {
+      alert('Строки для запоминания не найдены!');
+      return;
+    }
+
+    const confirmed = confirm(
+      `Найдено ${orphanedIndices.length} дополнительных строк (огрызков).\n\n` +
+      `К каждой из этих строк будет добавлен маркер "#+", после чего они будут считаться легитимными строками-продолжениями.\n\n` +
+      `Продолжить? (Это действие можно отменить)`
+    );
+
+    if (!confirmed) return;
+
+    // Сохраняем состояние для отмены
+    if(typeof pushUndo === 'function') pushUndo();
+    
+    // 2. Модифицируем фоновые данные файла
+    let modifiedLines = window.fullRusLines.slice();
+    let modifiedCount = 0;
+    
+    orphanedIndices.forEach(blockIndex => {
+      const block = textBlocks[blockIndex];
+      if (block && block.idx !== undefined && modifiedLines[block.idx]) {
+        // Добавляем маркер в конец строки, если его там еще нет
+        if (!modifiedLines[block.idx].trim().endsWith('#+')) {
+          modifiedLines[block.idx] = modifiedLines[block.idx].trimEnd() + ' #+';
+          modifiedCount++;
+        }
+      }
+    });
+
+    if (modifiedCount > 0) {
+      // 3. Обновляем фоновое хранилище
+      window.fullRusLines = modifiedLines;
+      alert(`Запомнено ${modifiedCount} строк. Редактор будет обновлен.`);
+      
+      // 4. Синхронизируем редактор, чтобы изменения стали видны
+      if (typeof window.syncEditorWithRestored === 'function') {
+        window.syncEditorWithRestored();
+      }
+    } else {
+      alert('Все подходящие строки уже были помечены ранее.');
+    }
   };
 
   // === Функция для обновления видимости кнопок исправления ===
@@ -1075,19 +1202,42 @@
     const restoreBtn = document.getElementById('restoreStructBtn');
     const fixScriptBtn = document.getElementById('fixScriptBtn');
     const fixIndentBtn = document.getElementById('fixIndentBtn');
+    const fixNameTagsBtn = document.getElementById('fixNameTagsBtn'); // Новая кнопка
     const clearOrphanedBtn = document.getElementById('clearOrphanedBtn');
+    const memorizeOrphanedBtn = document.getElementById('memorizeOrphanedBtn');
     
-    if (!restoreBtn || !fixScriptBtn || !fixIndentBtn || !clearOrphanedBtn) return;
+    if (!restoreBtn || !fixScriptBtn || !fixIndentBtn || !clearOrphanedBtn || !memorizeOrphanedBtn || !fixNameTagsBtn) return;
     
+    // Определяем, какие типы ошибок присутствуют
     const hasStructureErrors = window.hasStructureErrors();
     const hasScriptErrors = window.hasScriptErrors();
     const hasIndentErrors = window.hasIndentErrors();
+    const hasTagsErrors = window.hasNameTagErrors(); // Новая проверка
     
+    // Считаем количество "строк-огрызков"
+    let orphanedCount = 0;
+    if (window.textBlocks && window.japBlocks && window.japBlocks.length > 0) {
+      textBlocks.forEach((block) => {
+        if (!block.isDeleted && block.type === 'ShowText' && 
+            !window.isNameBlock(block.text) && !block.japaneseLink && !block.generated) {
+          orphanedCount++;
+        }
+      });
+    }
+
+    // Управляем видимостью кнопок
     restoreBtn.style.display = hasStructureErrors ? '' : 'none';
     fixScriptBtn.style.display = hasScriptErrors ? '' : 'none';
     fixIndentBtn.style.display = hasIndentErrors ? '' : 'none';
+    fixNameTagsBtn.style.display = hasTagsErrors ? '' : 'none'; // Новая строка
     
-    // Управление кнопкой "Очистить строки" вынесено в updateRedIndices
-    // для более точного подсчета строк-огрызков
+    // Показываем ОБЕ кнопки, если есть "огрызки"
+    clearOrphanedBtn.style.display = orphanedCount > 0 ? '' : 'none';
+    memorizeOrphanedBtn.style.display = orphanedCount > 0 ? '' : 'none';
+
+    if (orphanedCount > 0) {
+      clearOrphanedBtn.title = `Удалить ${orphanedCount} строк без сопоставления с японским файлом`;
+      memorizeOrphanedBtn.title = `Пометить ${orphanedCount} строк как строки-продолжения, добавив в конец #+`;
+    }
   };
 })(window);

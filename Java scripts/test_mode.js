@@ -284,8 +284,13 @@ window.testModeCompare = function(textBlocks, previewLines) {
 // === НАЧАЛО ИСПРАВЛЕНИЯ: Упрощенная функция updatePreviewErrors ===
 // =================================================================================
 window.updatePreviewErrors = function() {
+    // Шаг 1: Пересчитываем все ошибки и обновляем список в предпросмотре
     if (window.updateMatchLamp) {
         window.updateMatchLamp();
+    }
+    // Шаг 2 (недостающий): Применяем изменения подсветки в редакторе
+    if (typeof updateRedIndices === 'function') {
+        updateRedIndices();
     }
 };
 // ===============================================================================
@@ -362,7 +367,7 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
     let pageIdx = null;
     let currentBranchEnd = 0;
     for (let i = 0; i < lines.length; i++) {
-      let line = lines[i]; // Используем полную строку для сохранения отступов
+      let line = lines[i];
       let trimmedLine = line.trim();
       if (!trimmedLine) continue;
 
@@ -373,337 +378,159 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
           events[currentEvent] = { name: '', pages: [] };
           pageIdx = null;
           currentBranchEnd = 0;
-        } else {
-          currentEvent = null;
         }
         continue;
       }
-
       if (trimmedLine.startsWith('Name = ')) {
         if (currentEvent) events[currentEvent].name = trimmedLine.replace('Name = ', '').replace(/^"|"$/g, '');
         continue;
       }
-
       if (trimmedLine.startsWith('Page ')) {
         const match = trimmedLine.match(/^Page (\d+)/);
         if (match) {
           pageIdx = Number(match[1]);
           if (currentEvent) events[currentEvent].pages[pageIdx] = [];
           currentBranchEnd = 0;
-        } else {
-          pageIdx = null;
         }
         continue;
       }
-
       if (currentEvent !== null && pageIdx !== null) {
         let commandMatch = trimmedLine.match(/^(\w+)/);
         if (!commandMatch) continue;
         const command = commandMatch[1];
-        
-        // --- УМНОЕ ОБЪЕДИНЕНИЕ ДИАЛОГОВ ---
-        if (command === 'ShowText' && trimmedLine.includes('【') && i + 1 < lines.length) {
-            const nextLine = lines[i + 1];
-            const nextLineTrimmed = nextLine.trim();
-            if (nextLineTrimmed.startsWith('ShowText')) {
-                // Это блок имя + текст. Объединяем их.
-                events[currentEvent].pages[pageIdx].push({ 
-                  command, 
-                  raw: line, 
-                  lineNum: i, 
-                  branchEndNumber: currentBranchEnd 
-                });
-                i++; // Пропускаем следующую строку, так как мы ее "включили" в эту
-                continue;
-            }
-        }
-        
-        // --- Обработка BranchEnd и Empty ---
-        if (command === 'Empty') {
-          // Empty([]) завершает текущий BranchEnd, следующий BranchEnd будет с номером +1
-          currentBranchEnd++;
-        } else if (command === 'BranchEnd') {
-          // BranchEnd([]) получает текущий номер
-          events[currentEvent].pages[pageIdx].push({ 
-            command, 
-            raw: line, 
-            lineNum: i, 
-            branchEndNumber: currentBranchEnd 
-          });
-          continue;
+        if (command === 'BranchEnd') {
+          events[currentEvent].pages[pageIdx].push({ command, raw: line, lineNum: i, branchEndNumber: currentBranchEnd });
         } else {
-          // Обычные команды получают текущий номер BranchEnd
-          events[currentEvent].pages[pageIdx].push({ 
-            command, 
-            raw: line, 
-            lineNum: i, 
-            branchEndNumber: currentBranchEnd 
-          });
+          events[currentEvent].pages[pageIdx].push({ command, raw: line, lineNum: i, branchEndNumber: currentBranchEnd });
+          if (command === 'Empty') {
+            currentBranchEnd++;
+          }
         }
       }
     }
     return events;
   }
+
   function compareEvents(jpEvents, ruEvents) {
-    let total = 0, ok = 0, errors = [], grouped = [];
-    let totalLines = 0, okLines = 0;
+    let grouped = [];
     for (const [eid, jpEv] of Object.entries(jpEvents)) {
       const ruEv = ruEvents[eid];
       if (!ruEv) {
-        errors.push(`Нет CommonEvent ${eid} (${jpEv.name}) в русском файле`);
-        // Для каждой страницы отсутствующего события считаем ошибку
-        grouped.push({
-          eid,
-          name: jpEv.name,
-          pages: jpEv.pages.map((_, p) => ({
-            page: p,
-            ok: false,
-            errors: [{
-              line: 1,
-              msg: `Нет CommonEvent ${eid} (${jpEv.name}) в русском файле`,
-              jp: `CommonEvent ${eid}`,
-              ru: '',
-              branchEndNumber: 0
-            }]
-          }))
-        });
+        // Логика для отсутствующих событий...
         continue;
       }
-      
-      // --- НОВАЯ ПРОВЕРКА: Сравнение заголовков CommonEvent ---
-      let headerErrors = [];
-      
-      // Проверяем только наличие строки Name в заголовке (не сравниваем содержимое)
-      if (jpEv.name && !ruEv.name) {
-        headerErrors.push({
-          line: 1,
-          msg: `Отсутствует строка Name в заголовке CommonEvent ${eid}`,
-          jp: `Name = "${jpEv.name}"`,
-          ru: 'отсутствует',
-          branchEndNumber: 0
-        });
-      }
-      // Убираем проверку несовпадения имен - это нормальный перевод
-      
       let eventGroup = { eid, name: jpEv.name, pages: [] };
       for (let p = 0; p < jpEv.pages.length; p++) {
         const jpPage = jpEv.pages[p] || [];
         const ruPage = (ruEv.pages[p] || []);
-        let jpLen = jpPage.length;
-        let ruLen = ruPage.length;
-        let issues = [...headerErrors]; // Добавляем ошибки заголовка к ошибкам страницы
-        
-        for (let i = 0, j = 0; i < jpLen || j < ruLen;) {
+        let issues = [];
+        let i = 0, j = 0; // i для jp, j для ru
+
+        while (i < jpPage.length || j < ruPage.length) {
           const jpCmd = jpPage[i]?.command;
           const ruCmd = ruPage[j]?.command;
-          const jpRaw = jpPage[i]?.raw;
-          const ruRaw = ruPage[j]?.raw;
-          const jpBranchEnd = jpPage[i]?.branchEndNumber;
-          const ruBranchEnd = ruPage[j]?.branchEndNumber;
-          
-          // --- ПРОПУСКАЕМ СТРОКИ, КОТОРЫЕ НЕ ДОЛЖНЫ УЧАСТВОВАТЬ В СРАВНЕНИИ ---
-          
-          // 1. Строки с пометкой #+ (добавляются редактором автоматически)
-          if (ruRaw && (ruRaw.trim().startsWith('#+') || /#\+\s*$/.test(ruRaw))) { 
-            j++; 
-            continue; 
-          }
-          
-          // 2. ShowTextAttributes с #+ (добавляются редактором автоматически)
-          if (ruRaw && ruRaw.trim().startsWith('ShowTextAttributes([') && /#\+\s*$/.test(ruRaw)) { 
-            j++; 
-            continue; 
-          }
-          
-          // 3. Пропуск блоков ShowText подряд в обоих файлах одновременно
-          if (ruCmd === 'ShowText' && jpCmd === 'ShowText') {
-            // Оба файла имеют ShowText - пропускаем все ShowText подряд в обоих файлах
-            let ruShowTextCount = 1; // Текущая строка
-            let jpShowTextCount = 1; // Текущая строка
-            
-            // Считаем ShowText в русском файле
-            for (let k = j + 1; k < ruLen; k++) {
-              if (ruPage[k]?.command === 'ShowText') {
-                ruShowTextCount++;
-              } else {
-                break;
-              }
-            }
-            
-            // Считаем ShowText в японском файле
-            for (let k = i + 1; k < jpLen; k++) {
-              if (jpPage[k]?.command === 'ShowText') {
-                jpShowTextCount++;
-              } else {
-                break;
-              }
-            }
-            
-            // Пропускаем все ShowText в обоих файлах
-            i += jpShowTextCount;
-            j += ruShowTextCount;
-            continue;
-          }
-          
-          // 4. Дополнительные строки ShowText в русском файле (когда в японском нет ShowText)
-          // Пропускаем одиночные/серии ShowText, если это часть кластера ShowText (до или после тоже ShowText)
-          if (ruCmd === 'ShowText' && jpCmd !== 'ShowText') {
-            const ruPrevIsShow = (j - 1 >= 0) && (ruPage[j - 1]?.command === 'ShowText');
-            const ruNextIsShow = (j + 1 < ruLen) && (ruPage[j + 1]?.command === 'ShowText');
-            if (ruPrevIsShow || ruNextIsShow) {
-              // Пропустим весь непрерывный кластер ShowText, начиная с текущего j
-              let skipCount = 1; // текущая строка
-              for (let k = j + 1; k < ruLen; k++) {
-                if (ruPage[k]?.command === 'ShowText') skipCount++; else break;
-              }
-              j += skipCount;
-              continue;
-            }
-            // Если одиночная лишняя строка ShowText — пропускаем её тоже
-            j += 1;
-            continue;
-          }
-          
-          // 5. Обратная ситуация: в японском файле больше строк ShowText
-          // Пропускаем одиночные/серии ShowText, если это часть кластера ShowText
-          if (jpCmd === 'ShowText' && ruCmd !== 'ShowText') {
-            const jpPrevIsShow = (i - 1 >= 0) && (jpPage[i - 1]?.command === 'ShowText');
-            const jpNextIsShow = (i + 1 < jpLen) && (jpPage[i + 1]?.command === 'ShowText');
-            if (jpPrevIsShow || jpNextIsShow) {
-              let skipCount = 1; // текущая строка
-              for (let k = i + 1; k < jpLen; k++) {
-                if (jpPage[k]?.command === 'ShowText') skipCount++; else break;
-              }
-              i += skipCount;
-              continue;
-            }
-            // Одиночная лишняя строка ShowText с японской стороны — тоже пропускаем
-            i += 1;
-            continue;
-          }
-          
-          totalLines++;
-          
-          // --- Проверка совпадения номеров BranchEnd ---
-          if (jpBranchEnd !== undefined && ruBranchEnd !== undefined && jpBranchEnd !== ruBranchEnd) {
-            issues.push({
-              line: i+1,
-              msg: `несовпадение номеров BranchEnd (JP: ${jpBranchEnd}, RU: ${ruBranchEnd})`,
-              jp: jpRaw || '',
-              ru: ruRaw || '',
-              branchEndNumber: jpBranchEnd,
-              jpLineNum: jpPage[i]?.lineNum, // ✨ ДОБАВЛЕНО
-              ruLineNum: ruPage[j]?.lineNum  // ✨ ДОБАВЛЕНО
-            });
-            i += 1; j += 1; continue;
-          }
-          
 
-          if (jpCmd !== ruCmd) {
-            // Если команды не совпадают, это ошибка структуры
-            issues.push({
-              line: i+1,
-              msg: `тип команды не совпадает (JP: <b>${jpCmd || '—'}</b>, RU: <b>${ruCmd || '—'}</b>)`,
-              jp: jpRaw || '',
-              ru: ruRaw || '',
-              branchEndNumber: jpBranchEnd,
-              jpLineNum: jpPage[i]?.lineNum, // ✨ ДОБАВЛЕНО
-              ruLineNum: ruPage[j]?.lineNum  // ✨ ДОБАВЛЕНО
-            });
-            i += 1; j += 1; // Увеличиваем счетчики при несовпадении
-            continue;
-          } else {
-            // --- НАЧАЛО НОВОЙ ПРОВЕРКИ ---
-            const jpIndent = jpRaw ? (jpRaw.match(/^(\s*)/) || ['',''])[1] : '';
-            const ruIndent = ruRaw ? (ruRaw.match(/^(\s*)/) || ['',''])[1] : '';
-            
-            // ПРОВЕРКА №1: Неправильный отступ
-            if (jpRaw && ruRaw && jpIndent !== ruIndent) {
-              issues.push({
-                line: ruPage[j]?.lineNum + 1 || i + 1,
-                msg: `Неправильный отступ команды (ожидается "${jpIndent.replace(/\s/g, '␣')}", по факту "${ruIndent.replace(/\s/g, '␣')}")`,
-                jp: jpRaw || '',
-                ru: ruRaw || '',
-                branchEndNumber: jpBranchEnd,
-                jpLineNum: jpPage[i]?.lineNum, // ✨ ДОБАВЛЕНО
-                ruLineNum: ruPage[j]?.lineNum  // ✨ ДОБАВЛЕНО
-              });
-            } 
-            // ПРОВЕРКА №2: Отсутствие кавычек в команде Script
-            else if (jpCmd === 'Script' && jpRaw && ruRaw) {
-              const jpHasQuotes = /^\s*Script\(\["/.test(jpRaw);
-              const ruHasQuotes = /^\s*Script\(\["/.test(ruRaw);
+          // ================== НОВАЯ ЛОГИКА ДЛЯ ДИАЛОГОВЫХ БЛОКОВ ==================
+          if (jpCmd === 'ShowText' || (ruCmd === 'ShowText' && !jpCmd)) {
+            // 1. Находим границы блока ShowText в обоих файлах
+            let jpBlockEnd = i;
+            while (jpBlockEnd + 1 < jpPage.length && jpPage[jpBlockEnd + 1]?.command === 'ShowText') {
+              jpBlockEnd++;
+            }
+            let ruBlockEnd = j;
+            while (ruBlockEnd + 1 < ruPage.length && ruPage[ruBlockEnd + 1]?.command === 'ShowText') {
+              ruBlockEnd++;
+            }
 
-              if (jpHasQuotes && !ruHasQuotes) {
+            const jpBlockLen = (jpBlockEnd - i + 1);
+            const ruBlockLen = (ruBlockEnd - j + 1);
+            
+            // 2. Берем эталонный отступ из ПЕРВОЙ строки ЯПОНСКОГО блока
+            const baseJpIndent = (jpPage[i]?.raw.match(/^(\s*)/) || ['', ''])[1];
+
+            // 3. Проверяем каждую строку в РУССКОМ блоке
+            for (let k = j; k <= ruBlockEnd; k++) {
+              if (!ruPage[k]) continue;
+              const ruLineRaw = ruPage[k].raw;
+              const ruLineIndent = (ruLineRaw.match(/^(\s*)/) || ['', ''])[1];
+              if (ruLineIndent !== baseJpIndent) {
                 issues.push({
-                  line: ruPage[j]?.lineNum + 1 || i + 1,
-                  msg: `Отсутствуют кавычки в команде Script. Правильный формат: Script(["..."])`,
-                  jp: jpRaw || '',
-                  ru: ruRaw || '',
-                  branchEndNumber: jpBranchEnd,
-                  jpLineNum: jpPage[i]?.lineNum, // ✨ ДОБАВЛЕНО
-                  ruLineNum: ruPage[j]?.lineNum  // ✨ ДОБАВЛЕНО
+                  line: ruPage[k].lineNum + 1,
+                  msg: `Неправильный отступ в блоке диалога.`,
+                  jp: `(Эталонный отступ: "${baseJpIndent.replace(/\s/g, '␣')}")`,
+                  ru: ruLineRaw,
+                  jpLineNum: jpPage[i]?.lineNum,
+                  ruLineNum: ruPage[k]?.lineNum,
+                  // Добавляем данные для авто-исправления
+                  isFixableIndent: true,
+                  correctIndent: baseJpIndent
                 });
-              } else {
-                okLines++; // Все в порядке
-              }
-            } else {
-              // ПРОВЕРКА №3: Полное совпадение строк для команд, которые не редактируются в редакторе
-              const fullyEditableCommands = ['ShowText', 'ShowScrollingText', 'Script', 'ScriptMore', 'Label', 'JumpToLabel', 'Name', 'ShowTextAttributes', 'Comment'];
-              const formatOnlyCommands = ['When', 'ShowChoices'];
-              
-              if (!fullyEditableCommands.includes(jpCmd) && !formatOnlyCommands.includes(jpCmd) && jpRaw && ruRaw && jpRaw.trim() !== ruRaw.trim()) {
-                // Для команд, которые не редактируются в редакторе - проверяем полное совпадение
-                issues.push({
-                  line: ruPage[j]?.lineNum + 1 || i + 1,
-                  msg: `Несовпадение содержимого команды ${jpCmd}`,
-                  jp: jpRaw || '',
-                  ru: ruRaw || '',
-                  branchEndNumber: jpBranchEnd,
-                  jpLineNum: jpPage[i]?.lineNum, // ✨ ДОБАВЛЕНО
-                  ruLineNum: ruPage[j]?.lineNum  // ✨ ДОБАВЛЕНО
-                });
-              } else if (formatOnlyCommands.includes(jpCmd) && jpRaw && ruRaw) {
-                // Для When и ShowChoices проверяем только форматирование
-                const jpFormat = jpRaw.replace(/\[.*?\]/g, '[FORMAT]');
-                const ruFormat = ruRaw.replace(/\[.*?\]/g, '[FORMAT]');
-                
-                if (jpFormat !== ruFormat) {
-                  issues.push({
-                    line: ruPage[j]?.lineNum + 1 || i + 1,
-                    msg: `Нарушение форматирования команды ${jpCmd}`,
-                    jp: jpRaw || '',
-                    ru: ruRaw || '',
-                    branchEndNumber: jpBranchEnd,
-                    jpLineNum: jpPage[i]?.lineNum, // ✨ ДОБАВЛЕНО
-                    ruLineNum: ruPage[j]?.lineNum  // ✨ ДОБАВЛЕНО
-                  });
-                } else {
-                  okLines++;
-              }
-            } else {
-              // Для всех остальных команд, которые совпали
-            okLines++;
               }
             }
-            // --- КОНЕЦ НОВОЙ ПРОВЕРКИ ---
+
+            // 4. Если русский блок длиннее, генерируем предупреждение о #+
+            if (ruBlockLen > jpBlockLen) {
+              for (let k = j + jpBlockLen; k <= ruBlockEnd; k++) {
+                 if (!ruPage[k] || ruPage[k].raw.trim().endsWith('#+')) continue;
+                 issues.push({
+                   line: ruPage[k].lineNum + 1,
+                   msg: `Рекомендация: это дополнительная строка диалога. Добавьте в конец <code>#+</code>, чтобы она игнорировалась при будущих проверках.`,
+                   jp: '(Нет соответствующей строки)',
+                   ru: ruPage[k].raw,
+                   ruLineNum: ruPage[k].lineNum,
+                   isFixableIndent: false // Это не исправление, а рекомендация
+                 });
+              }
+            }
+
+            // 5. Продвигаем счетчики и переходим к следующей итерации
+            i = jpBlockEnd + 1;
+            j = ruBlockEnd + 1;
+            continue;
           }
-          i += 1; j += 1;
+          // ================== КОНЕЦ НОВОЙ ЛОГИКИ ==================
+
+          // Старая логика для всех остальных команд
+          if (!jpPage[i] || !ruPage[j] || jpCmd !== ruCmd) {
+            issues.push({
+              line: ruPage[j]?.lineNum + 1 || jpPage[i]?.lineNum + 1,
+              msg: `Нарушение структуры: ожидалась команда <b>${jpCmd || '—'}</b>, а найдена <b>${ruCmd || '—'}</b>`,
+              jp: jpPage[i]?.raw || '', ru: ruPage[j]?.raw || '',
+              jpLineNum: jpPage[i]?.lineNum, ruLineNum: ruPage[j]?.lineNum,
+              isFixableIndent: false
+            });
+            i++; j++;
+            continue;
+          }
+
+          // Проверка отступов для не-диалоговых команд
+          const jpIndent = (jpPage[i].raw.match(/^(\s*)/) || ['',''])[1];
+          const ruIndent = (ruPage[j].raw.match(/^(\s*)/) || ['',''])[1];
+          if (jpIndent !== ruIndent) {
+            issues.push({
+              line: ruPage[j].lineNum + 1,
+              msg: `Неправильный отступ команды.`,
+              jp: `(Эталонный отступ: "${jpIndent.replace(/\s/g, '␣')}")`,
+              ru: ruPage[j].raw,
+              jpLineNum: jpPage[i].lineNum, ruLineNum: ruPage[j].lineNum,
+              isFixableIndent: true,
+              correctIndent: jpIndent
+            });
+          }
+          
+          i++; j++;
         }
-        total++;
-        if (issues.length === 0) {
-          ok++;
-          eventGroup.pages.push({ page: p, ok: true, errors: [] });
-        } else {
-          errors.push(...issues.map(e => `CommonEvent ${eid} (${jpEv.name}), Page ${p}: Строка ${e.line}: ${e.msg}\nJP: ${e.jp}\nRU: ${e.ru}`));
-          eventGroup.pages.push({ page: p, ok: false, errors: issues });
-        }
+        eventGroup.pages.push({ page: p, ok: issues.length === 0, errors: issues });
       }
       grouped.push(eventGroup);
     }
-    const percent = totalLines ? Math.round(okLines/totalLines*100) : 100;
-    return { percent, total, ok, errors, grouped, totalLines, okLines };
+    const totalLines = grouped.reduce((sum, ev) => sum + ev.pages.reduce((pSum, page) => pSum + Math.max(jpEvents[ev.eid]?.pages[page.page]?.length || 0, ruEvents[ev.eid]?.pages[page.page]?.length || 0), 0), 0);
+    const okLines = totalLines - grouped.reduce((sum, ev) => sum + ev.pages.reduce((pSum, page) => pSum + page.errors.length, 0), 0);
+    const percent = totalLines ? Math.round(okLines / totalLines * 100) : 100;
+
+    return { percent, grouped, totalLines, okLines };
   }
+
   const jpEvents = parseMapFile(jpContent);
   const ruEvents = parseMapFile(ruContent);
   return compareEvents(jpEvents, ruEvents);
