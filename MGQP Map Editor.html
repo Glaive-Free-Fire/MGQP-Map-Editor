@@ -241,6 +241,33 @@
       });
     }
 
+    // === Предварительная проверка синтаксиса строк файла ===
+    function checkForSyntaxErrors(lines) {
+      const errors = [];
+      const commandSyntaxRegex = /^\s*(\w+)\[/; // Команды, ошибочно записанные с квадратными скобками
+      const validCommands = [
+        'ShowText','ShowTextAttributes','ConditionalBranch','PlaySE','SetMoveRoute','Unnamed',
+        'ChangeItems','ControlSwitches','ControlSelfSwitch','Script','ScriptMore','ShowChoices',
+        'When','Empty','BranchEnd','JumpToLabel','Label','Name','Display','DisplayName'
+      ];
+      lines.forEach((line, index) => {
+        const trimmedLine = line.trim();
+        if (trimmedLine.length === 0) return;
+        const match = trimmedLine.match(commandSyntaxRegex);
+        if (match) {
+          const commandName = match[1];
+          if (validCommands.includes(commandName)) {
+            errors.push({
+              label: `строка ${index + 1}`,
+              type: 'Синтаксическая ошибка',
+              reason: `Команда <b>${commandName}</b> записана с квадратными скобками. Правильно: <code>${commandName}([...])</code>, у вас: <code>${commandName}[...]</code>. Исправьте в исходном файле.`
+            });
+          }
+        }
+      });
+      return errors;
+    }
+
     // =================================================================================
     // НАЧАЛО ЗАМЕНЫ: Новая объединенная функция для вывода всех ошибок
     // =================================================================================
@@ -253,6 +280,11 @@
       let hasLongDialogueError = false;
 
       const redLineErrors = [];
+      // --- Новая предварительная проверка синтаксиса ---
+      if (window.fullRusLines && window.fullRusLines.length > 0) {
+        const syntaxErrors = checkForSyntaxErrors(window.fullRusLines);
+        redLineErrors.push(...syntaxErrors);
+      }
       if (window.textBlocks && window.textBlocks.length > 0) {
           let checkedIndices_long = new Set();
           window.textBlocks.forEach((block, i) => {
@@ -356,14 +388,19 @@
                   });
                   window.allErrorIndices.add(i); // << ДОБАВИТЬ
               }
+              // Проверяем на "лишние" строки, которые нуждаются в #+
               if (block.type === 'ShowText' && window.japBlocks && window.japBlocks.length > 0 &&
-                  !window.isNameBlock(block.text) && !block.japaneseLink && !block.generated) {
+                  !window.isNameBlock(block.text) && // Это не строка с именем
+                  !block.japaneseLink &&             // У неё НЕТ пары в японском файле
+                  !block.generated &&                // Это не сгенерированный плейсхолдер
+                  !block.manualPlus)                 // И у неё еще нет метки #+
+              {
                   redLineErrors.push({
                       label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[продолжение]',
-                      type: 'Ошибка строки',
-                      reason: 'Строка-огрызок без пары в японском файле'
+                      type: 'Рекомендация',
+                      reason: 'Это дополнительная строка диалога. Добавьте в конец `#+` с помощью кнопки "Запомнить Доп. Строки".'
                   });
-                  window.allErrorIndices.add(i); // << ДОБАВИТЬ
+                  window.allErrorIndices.add(i);
               }
               if (window.isNameBlock(block.text)) {
                   let precedingStructuralBlock = null;
@@ -991,131 +1028,92 @@
     }
 
     function linkAndRender() {
+      // Предварительная очистка ссылок
+      textBlocks.forEach(b => delete b.japaneseLink);
 
-      // --- ЭТАП 1: Сопоставление блоков (логика осталась прежней) ---
-      let japaneseBlockMapping = new Array(japBlocks.length).fill(-1);
-      let rusLinked = new Array(textBlocks.length).fill(false);
-      const allEventIds = new Set();
-      textBlocks.forEach(b => { if (b.commonEventId !== null) allEventIds.add(b.commonEventId); });
-      japBlocks.forEach(b => { if (b.commonEventId !== null) allEventIds.add(b.commonEventId); });
-      const sortedEventIds = Array.from(allEventIds).sort((a, b) => a - b);
+      // Новый, простой и надежный алгоритм сопоставления
+      let rusCursor = 0; // Указатель для русского массива, движется только вперед
+      const japaneseBlockMapping = new Array(japBlocks.length).fill(-1);
+      const rusLinked = new Array(textBlocks.length).fill(false);
 
-      for (const eventId of sortedEventIds) {
-        const currentRusItems = textBlocks
-          .map((b, i) => ({ block: b, originalIndex: i }))
-          .filter(item => item.block.commonEventId === eventId && !item.block.generated);
-        const currentJapItems = japBlocks
-          .map((b, i) => ({ block: b, originalIndex: i }))
-          .filter(item => item.block.commonEventId === eventId);
-        if (currentRusItems.length === 0 || currentJapItems.length === 0) continue;
-        
-        let matchedPairs = [];
-        let japAnchorCursor = 0;
-        const rusIndicesInEvent = currentRusItems.map(item => item.originalIndex);
-        const japIndicesInEvent = currentJapItems.map(item => item.originalIndex);
+      // Проходим по каждому японскому блоку как по эталону
+      japBlocks.forEach((japBlock, japIndex) => {
+        // Ищем для него пару в русском массиве, начиная с позиции курсора
+        for (let i = rusCursor; i < textBlocks.length; i++) {
+          const rusBlock = textBlocks[i];
 
-        for (let i = 0; i < currentRusItems.length; i++) {
-          const rusItem = currentRusItems[i];
-          if (rusItem.block.type !== 'ShowText') {
-            for (let j = japAnchorCursor; j < currentJapItems.length; j++) {
-              const japItem = currentJapItems[j];
-              if (japItem.block.blockType !== 'ShowText' && rusItem.block.type === japItem.block.blockType) {
-                matchedPairs.push({ rus: rusItem.originalIndex, jap: japItem.originalIndex });
-                japAnchorCursor = j + 1;
-                break;
-              }
+          // Пропускаем уже сопоставленные, сгенерированные или удаленные блоки
+          if (rusLinked[i] || rusBlock.generated || rusBlock.isDeleted) {
+            continue;
+          }
+
+          let isMatch = false;
+          // Правило сопоставления для ShowText
+          if (japBlock.blockType === 'ShowText' && rusBlock.type === 'ShowText') {
+            // Сопоставляем, только если русская строка - не "продолжение"
+            if (!rusBlock.manualPlus) {
+              isMatch = true;
             }
+          } 
+          // Правило сопоставления для всех остальных команд
+          else if (japBlock.blockType === rusBlock.type) {
+            isMatch = true;
           }
-        }
-        
-        const anchors = [
-          { rus: rusIndicesInEvent[0] - 1, jap: japIndicesInEvent[0] - 1 },
-          ...matchedPairs,
-          { rus: rusIndicesInEvent[rusIndicesInEvent.length - 1] + 1, jap: japIndicesInEvent[japIndicesInEvent.length - 1] + 1 }
-        ];
 
-        for (let i = 0; i < anchors.length - 1; i++) {
-          const startAnchor = anchors[i];
-          const endAnchor = anchors[i+1];
-          const rusShowTextSegment = currentRusItems.filter(item => item.block.type === 'ShowText' && item.originalIndex > startAnchor.rus && item.originalIndex < endAnchor.rus);
-          const japShowTextSegment = currentJapItems.filter(item => item.block.blockType === 'ShowText' && item.originalIndex > startAnchor.jap && item.originalIndex < endAnchor.jap);
-          let japCursor = 0;
-          for (let k = 0; k < rusShowTextSegment.length; k++) {
-            const rusItem = rusShowTextSegment[k];
-            if (rusItem.block.isManualContinuation) continue;
-            if (japCursor < japShowTextSegment.length) {
-              matchedPairs.push({ rus: rusItem.originalIndex, jap: japShowTextSegment[japCursor].originalIndex });
-              japCursor++;
-            }
+          if (isMatch) {
+            japaneseBlockMapping[japIndex] = i; // Запоминаем индекс найденной пары
+            rusLinked[i] = true;               // Помечаем русскую строку как сопоставленную
+            rusCursor = i + 1;                 // Следующий поиск начнем со следующей строки
+            break; // Переходим к следующему японскому блоку
           }
         }
-
-        for (const pair of matchedPairs) {
-          if (!rusLinked[pair.rus] && japaneseBlockMapping[pair.jap] === -1) {
-            japaneseBlockMapping[pair.jap] = pair.rus;
-            rusLinked[pair.rus] = true;
-          }
-        }
-      }
+      });
       
-      // --- ЭТАП 2: Полностью новый, надежный алгоритм сборки ---
+      // Финальная сборка редактора на основе созданной карты сопоставлений
       const finalTextBlocks = [];
       const rusBlocksUsed = new Set();
       let lastMatchedRusIndex = -1;
 
-      // Проходим по структуре японского файла
-      for (let j = 0; j < japBlocks.length; j++) {
-          const matchedRusIndex = japaneseBlockMapping[j];
+      japBlocks.forEach((japBlock, japIndex) => {
+        const matchedRusIndex = japaneseBlockMapping[japIndex];
 
-          if (matchedRusIndex !== -1) {
-              // Найден сопоставленный блок.
-              // Сначала добавляем все "пропущенные" русские блоки (разделители, и т.д.),
-              // которые были между предыдущим сопоставленным блоком и текущим.
-              for (let i = lastMatchedRusIndex + 1; i < matchedRusIndex; i++) {
-                  if (textBlocks[i] && !rusBlocksUsed.has(i)) {
-                      finalTextBlocks.push(textBlocks[i]);
-                      rusBlocksUsed.add(i);
-                  }
-              }
-
-              // Теперь добавляем сам сопоставленный блок
-              const rusBlock = textBlocks[matchedRusIndex];
-              rusBlock.japaneseLink = { 
-                  type: (rusBlock.type === 'ShowText' && window.isNameBlock(rusBlock.text)) ? 'name' : 'no_name', 
-                  text: japBlocks[j].text 
-              };
-              finalTextBlocks.push(rusBlock);
-              rusBlocksUsed.add(matchedRusIndex);
-              
-              lastMatchedRusIndex = matchedRusIndex; // Обновляем позицию
-
-          } else {
-              // Сопоставление не найдено, создаем плейсхолдер "ТРЕБУЕТСЯ ПЕРЕВОД"
-              const japBlock = japBlocks[j];
-              let placeholderText = 'ТРЕБУЕТСЯ ПЕРЕВОД';
-              if (japBlock.blockType === 'ShowText' && japBlock.type === 'name') {
-                  const nameMatch = japBlock.text.match(/^【(.*?)】/);
-                  if (nameMatch && nameMatch[1]) {
-                      placeholderText = `∾\n<∾∾C[6]${nameMatch[1]}∾∾C[0]>ТРЕБУЕТСЯ ПЕРЕВОД`;
-                  }
-              }
-              finalTextBlocks.push({
-                  idx: undefined,
-                  japIdx: japBlock.originalIdx,
-                  text: placeholderText,
-                  type: japBlock.blockType || 'ShowText',
-                  generated: true,
-                  commonEventId: japBlock.commonEventId,
-                  japaneseLink: { type: japBlock.type, text: japBlock.text }
-              });
-          }
-      }
-
-      // Добавляем все оставшиеся русские блоки из конца файла, которые не были использованы
-      for (let i = lastMatchedRusIndex + 1; i < textBlocks.length; i++) {
-          if (textBlocks[i] && !rusBlocksUsed.has(i)) {
+        if (matchedRusIndex !== -1) {
+          // Найден сопоставленный блок
+          // Сначала добавляем все "осиротевшие" русские блоки между этим и предыдущим совпадением
+          for (let i = lastMatchedRusIndex + 1; i < matchedRusIndex; i++) {
+            if (textBlocks[i] && !rusBlocksUsed.has(i)) {
               finalTextBlocks.push(textBlocks[i]);
+              rusBlocksUsed.add(i);
+            }
           }
+          // Теперь добавляем сам сопоставленный блок
+          const rusBlock = textBlocks[matchedRusIndex];
+          rusBlock.japaneseLink = { type: japBlock.type, text: japBlock.text };
+          finalTextBlocks.push(rusBlock);
+          rusBlocksUsed.add(matchedRusIndex);
+          lastMatchedRusIndex = matchedRusIndex;
+        } else {
+          // Сопоставление не найдено, создаем плейсхолдер "ТРЕБУЕТСЯ ПЕРЕВОД"
+          let placeholderText = 'ТРЕБУЕТСЯ ПЕРЕВОД';
+          if (japBlock.blockType === 'ShowText' && japBlock.type === 'name') {
+            const nameMatch = japBlock.text.match(/^【(.*?)】/);
+            if (nameMatch && nameMatch[1]) {
+              placeholderText = `∾\n<∾∾C[6]${nameMatch[1]}∾∾C[0]>ТРЕБУЕТСЯ ПЕРЕВОД`;
+            }
+          }
+          finalTextBlocks.push({
+            idx: undefined, japIdx: japBlock.originalIdx, text: placeholderText,
+            type: japBlock.blockType || 'ShowText', generated: true,
+            commonEventId: japBlock.commonEventId, japaneseLink: { type: japBlock.type, text: japBlock.text }
+          });
+        }
+      });
+
+      // Добавляем все оставшиеся русские блоки из конца файла
+      for (let i = lastMatchedRusIndex + 1; i < textBlocks.length; i++) {
+        if (textBlocks[i] && !rusBlocksUsed.has(i)) {
+          finalTextBlocks.push(textBlocks[i]);
+        }
       }
 
       window.textBlocks = textBlocks = finalTextBlocks;
