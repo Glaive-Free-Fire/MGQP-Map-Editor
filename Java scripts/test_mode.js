@@ -360,24 +360,21 @@ function escapeSkillAttributes(str) {
 
 // --- Проверка структуры для красной лампочки ---
 window.checkMapStructureMatch = function(jpContent, ruContent) {
+  // 1) Простой единый парсер для обоих языков
   function parseMapFile(content) {
     const events = {};
-    let currentEvent = null, currentPage = null;
+    let currentEvent = null, pageIdx = null;
     const lines = content.split(/\r?\n/);
-    let pageIdx = null;
-    let currentBranchEnd = 0;
     for (let i = 0; i < lines.length; i++) {
       let line = lines[i];
       let trimmedLine = line.trim();
       if (!trimmedLine) continue;
-
       if (trimmedLine.startsWith('CommonEvent')) {
         const match = trimmedLine.match(/^CommonEvent (\d+)/);
         if (match) {
           currentEvent = match[1];
           events[currentEvent] = { name: '', pages: [] };
           pageIdx = null;
-          currentBranchEnd = 0;
         }
         continue;
       }
@@ -390,7 +387,6 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
         if (match) {
           pageIdx = Number(match[1]);
           if (currentEvent) events[currentEvent].pages[pageIdx] = [];
-          currentBranchEnd = 0;
         }
         continue;
       }
@@ -398,126 +394,75 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
         let commandMatch = trimmedLine.match(/^(\w+)/);
         if (!commandMatch) continue;
         const command = commandMatch[1];
-        if (command === 'BranchEnd') {
-          events[currentEvent].pages[pageIdx].push({ command, raw: line, lineNum: i, branchEndNumber: currentBranchEnd });
-        } else {
-          events[currentEvent].pages[pageIdx].push({ command, raw: line, lineNum: i, branchEndNumber: currentBranchEnd });
-          if (command === 'Empty') {
-            currentBranchEnd++;
-          }
-        }
+        events[currentEvent].pages[pageIdx].push({ command, raw: line, lineNum: i });
       }
     }
     return events;
   }
 
+  // 2) Умный и безопасный компаратор
   function compareEvents(jpEvents, ruEvents) {
     let grouped = [];
     for (const [eid, jpEv] of Object.entries(jpEvents)) {
       const ruEv = ruEvents[eid];
-      if (!ruEv) {
-        // Логика для отсутствующих событий...
-        continue;
-      }
+      if (!ruEv) continue;
       let eventGroup = { eid, name: jpEv.name, pages: [] };
-      for (let p = 0; p < jpEv.pages.length; p++) {
+      for (let p = 0; p < Math.max(jpEv.pages.length, ruEv.pages.length); p++) {
         const jpPage = jpEv.pages[p] || [];
         const ruPage = (ruEv.pages[p] || []);
         let issues = [];
-        let i = 0, j = 0; // i для jp, j для ru
+        let i = 0, j = 0;
 
         while (i < jpPage.length || j < ruPage.length) {
-          const jpCmd = jpPage[i]?.command;
-          const ruCmd = ruPage[j]?.command;
+          // 1) Пропускаем русские строки-продолжения (#+)
+          if (ruPage[j] && ruPage[j].raw.trim().endsWith('#+')) { j++; continue; }
 
-          // ================== НОВАЯ ЛОГИКА ДЛЯ ДИАЛОГОВЫХ БЛОКОВ ==================
-          if (jpCmd === 'ShowText' || (ruCmd === 'ShowText' && !jpCmd)) {
-            // 1. Находим границы блока ShowText в обоих файлах
-            let jpBlockEnd = i;
-            while (jpBlockEnd + 1 < jpPage.length && jpPage[jpBlockEnd + 1]?.command === 'ShowText') {
-              jpBlockEnd++;
-            }
-            let ruBlockEnd = j;
-            while (ruBlockEnd + 1 < ruPage.length && ruPage[ruBlockEnd + 1]?.command === 'ShowText') {
-              ruBlockEnd++;
-            }
+          const jpLine = jpPage[i];
+          const ruLine = ruPage[j];
+          const jpCmd = jpLine?.command;
+          const ruCmd = ruLine?.command;
 
-            const jpBlockLen = (jpBlockEnd - i + 1);
-            const ruBlockLen = (ruBlockEnd - j + 1);
-            
-            // 2. Берем эталонный отступ из ПЕРВОЙ строки ЯПОНСКОГО блока
-            const baseJpIndent = (jpPage[i]?.raw.match(/^(\s*)/) || ['', ''])[1];
-
-            // 3. Проверяем каждую строку в РУССКОМ блоке
-            for (let k = j; k <= ruBlockEnd; k++) {
-              if (!ruPage[k]) continue;
-              const ruLineRaw = ruPage[k].raw;
-              const ruLineIndent = (ruLineRaw.match(/^(\s*)/) || ['', ''])[1];
-              if (ruLineIndent !== baseJpIndent) {
-                issues.push({
-                  line: ruPage[k].lineNum + 1,
-                  msg: `Неправильный отступ в блоке диалога.`,
-                  jp: `(Эталонный отступ: "${baseJpIndent.replace(/\s/g, '␣')}")`,
-                  ru: ruLineRaw,
-                  jpLineNum: jpPage[i]?.lineNum,
-                  ruLineNum: ruPage[k]?.lineNum,
-                  // Добавляем данные для авто-исправления
-                  isFixableIndent: true,
-                  correctIndent: baseJpIndent
-                });
+          // 2) Обработка ShowText: учитываем, что JP может иметь Имя+Диалог двумя строками
+          if (jpCmd === 'ShowText' || ruCmd === 'ShowText') {
+            const isJpNameLine = jpLine?.raw.includes('["【');
+            if (isJpNameLine && (jpPage[i + 1]?.command === 'ShowText') && !jpPage[i + 1]?.raw.includes('["【')) {
+              if (ruCmd === 'ShowText') {
+                const jpIndent = (jpLine.raw.match(/^(\s*)/) || ['',''])[1];
+                const ruIndent = (ruLine.raw.match(/^(\s*)/) || ['',''])[1];
+                if (jpIndent !== ruIndent) {
+                  issues.push({
+                    line: ruLine.lineNum + 1,
+                    msg: `Неправильный отступ в блоке диалога.`,
+                    jp: `(Эталонный отступ: "${jpIndent.replace(/\s/g, '␣')}")`,
+                    ru: ruLine.raw,
+                    jpLineNum: jpLine.lineNum,
+                    ruLineNum: ruLine.lineNum,
+                    isFixableIndent: true,
+                    correctIndent: jpIndent
+                  });
+                }
+                i += 2; // JP: имя + диалог
+                j += 1; // RU: одна объединенная строка
+                continue;
               }
             }
-
-            // 4. Если русский блок длиннее, генерируем предупреждение о #+
-            if (ruBlockLen > jpBlockLen) {
-              for (let k = j + jpBlockLen; k <= ruBlockEnd; k++) {
-                 if (!ruPage[k] || ruPage[k].raw.trim().endsWith('#+')) continue;
-                 issues.push({
-                   line: ruPage[k].lineNum + 1,
-                   msg: `Рекомендация: это дополнительная строка диалога. Добавьте в конец <code>#+</code>, чтобы она игнорировалась при будущих проверках.`,
-                   jp: '(Нет соответствующей строки)',
-                   ru: ruPage[k].raw,
-                   ruLineNum: ruPage[k].lineNum,
-                   isFixableIndent: false // Это не исправление, а рекомендация
-                 });
-              }
-            }
-
-            // 5. Продвигаем счетчики и переходим к следующей итерации
-            i = jpBlockEnd + 1;
-            j = ruBlockEnd + 1;
-            continue;
+            // Русский длиннее — допустимо: просто пропускаем лишние RU ShowText
+            if (ruCmd === 'ShowText' && !jpLine) { j++; continue; }
           }
-          // ================== КОНЕЦ НОВОЙ ЛОГИКИ ==================
 
-          // Старая логика для всех остальных команд
-          if (!jpPage[i] || !ruPage[j] || jpCmd !== ruCmd) {
+          // 3) Строгая проверка для остальных команд
+          if (!jpLine || !ruLine || jpCmd !== ruCmd) {
             issues.push({
-              line: ruPage[j]?.lineNum + 1 || jpPage[i]?.lineNum + 1,
+              line: ruLine?.lineNum + 1 || jpLine?.lineNum + 1,
               msg: `Нарушение структуры: ожидалась команда <b>${jpCmd || '—'}</b>, а найдена <b>${ruCmd || '—'}</b>`,
-              jp: jpPage[i]?.raw || '', ru: ruPage[j]?.raw || '',
-              jpLineNum: jpPage[i]?.lineNum, ruLineNum: ruPage[j]?.lineNum,
-              isFixableIndent: false
+              jp: jpLine?.raw || '',
+              ru: ruLine?.raw || '',
+              jpLineNum: jpLine?.lineNum,
+              ruLineNum: ruLine?.lineNum
             });
-            i++; j++;
-            continue;
+            break; // Останавливаемся на первой ошибке
           }
 
-          // Проверка отступов для не-диалоговых команд
-          const jpIndent = (jpPage[i].raw.match(/^(\s*)/) || ['',''])[1];
-          const ruIndent = (ruPage[j].raw.match(/^(\s*)/) || ['',''])[1];
-          if (jpIndent !== ruIndent) {
-            issues.push({
-              line: ruPage[j].lineNum + 1,
-              msg: `Неправильный отступ команды.`,
-              jp: `(Эталонный отступ: "${jpIndent.replace(/\s/g, '␣')}")`,
-              ru: ruPage[j].raw,
-              jpLineNum: jpPage[i].lineNum, ruLineNum: ruPage[j].lineNum,
-              isFixableIndent: true,
-              correctIndent: jpIndent
-            });
-          }
-          
           i++; j++;
         }
         eventGroup.pages.push({ page: p, ok: issues.length === 0, errors: issues });
@@ -527,7 +472,6 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
     const totalLines = grouped.reduce((sum, ev) => sum + ev.pages.reduce((pSum, page) => pSum + Math.max(jpEvents[ev.eid]?.pages[page.page]?.length || 0, ruEvents[ev.eid]?.pages[page.page]?.length || 0), 0), 0);
     const okLines = totalLines - grouped.reduce((sum, ev) => sum + ev.pages.reduce((pSum, page) => pSum + page.errors.length, 0), 0);
     const percent = totalLines ? Math.round(okLines / totalLines * 100) : 100;
-
     return { percent, grouped, totalLines, okLines };
   }
 

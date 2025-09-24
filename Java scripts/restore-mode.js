@@ -1139,13 +1139,13 @@
   global.memorizeOrphanedLines = function() {
     if (!window.textBlocks || textBlocks.length === 0) return;
 
-    // 1. Находим все "строки-огрызки"
+    // Находим ВСЕ ShowText без пары (не имя, не сгенерированы)
     let orphanedIndices = [];
     textBlocks.forEach((block, i) => {
       if (block.isDeleted) return;
-      if (block.type === 'ShowText' && 
-          window.japBlocks && window.japBlocks.length > 0 && 
-          !window.isNameBlock(block.text) && 
+      if (block.type === 'ShowText' &&
+          window.japBlocks && window.japBlocks.length > 0 &&
+          !window.isNameBlock(block.text) &&
           !block.japaneseLink &&
           !block.generated) {
         orphanedIndices.push(i);
@@ -1165,17 +1165,14 @@
 
     if (!confirmed) return;
 
-    // Сохраняем состояние для отмены
-    if(typeof pushUndo === 'function') pushUndo();
-    
-    // 2. Модифицируем фоновые данные файла
+    if (typeof pushUndo === 'function') pushUndo();
+
     let modifiedLines = window.fullRusLines.slice();
     let modifiedCount = 0;
-    
+
     orphanedIndices.forEach(blockIndex => {
       const block = textBlocks[blockIndex];
       if (block && block.idx !== undefined && modifiedLines[block.idx]) {
-        // Добавляем маркер в конец строки, если его там еще нет
         if (!modifiedLines[block.idx].trim().endsWith('#+')) {
           modifiedLines[block.idx] = modifiedLines[block.idx].trimEnd() + ' #+';
           modifiedCount++;
@@ -1184,11 +1181,9 @@
     });
 
     if (modifiedCount > 0) {
-      // 3. Обновляем фоновое хранилище
       window.fullRusLines = modifiedLines;
       alert(`Запомнено ${modifiedCount} строк. Редактор будет обновлен.`);
-      
-      // 4. Синхронизируем редактор, чтобы изменения стали видны
+
       if (typeof window.syncEditorWithRestored === 'function') {
         window.syncEditorWithRestored();
       }
