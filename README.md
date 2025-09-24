@@ -1,4 +1,4 @@
-# MGQP Map Editor v1.4.50
+# MGQP Map Editor v1.4.60
 
 **A modern web-based tool for editing and batch-fixing RPG Maker XP map/event files, with advanced support for translation workflows (RU/JP), structure validation, and mass error correction.**
 
@@ -131,13 +131,13 @@
 - **Affinity System:** Character affinity strings (好感度) are automatically detected and properly formatted for translation.
 - **Block Synchronization:** Related blocks are automatically kept in sync, reducing manual work and preventing inconsistencies.
 - **Smart Filtering:** The editor intelligently shows only relevant blocks, making it easier to focus on translatable content.
-- **Contextual Buttons:** Fix buttons appear only when relevant errors are detected, providing a cleaner interface.
+- **Contextual Fix Buttons:** Fix buttons appear only when relevant errors are detected, providing a cleaner interface.
 - **Script Error Fixing:** Automatic detection and correction of missing quotes in Script commands.
 - **Skill Attributes:** Proper handling of skill attribute strings with correct escaping of control sequences like `\I[98]` and `\C[1]`.
 - **Indentation Fixing:** Automatic detection and correction of indentation errors in map files.
 - **Complete Batch Visibility:** All files from both folders are displayed with clear indication of missing files and detailed statistics.
 - **Orphaned Line Management:** New system for detecting and managing ShowText lines without Japanese counterparts.
-- **Soft Deletion:** Blocks can be marked as deleted while preserving array structure for proper Japanese mapping.
+- **Soft Deletion:** Blocks can be marked as deleted while preserving file structure for proper Japanese mapping.
 - **Robust File Generation:** Improved algorithm ensures consistent file output with proper handling of all block types.
 - **Advanced Block Matching:** Revolutionary anchor-based algorithm eliminates false translation placeholders by precisely matching Russian and Japanese blocks.
 - **Intelligent Dialogue Management:** Automatic insertion of `ShowTextAttributes` commands ensures proper dialogue window structure.
@@ -146,6 +146,43 @@
 - **Enhanced Diagnostics:** Comprehensive logging system provides detailed insights for troubleshooting complex issues.
 - **Type-Aware Matching:** Advanced algorithm considers block types for more accurate Russian-Japanese correspondence.
 - **Boundary Respect:** Strict adherence to CommonEvent boundaries prevents cross-contamination between different events.
+
+---
+
+## Changelog (v1.4.60)
+
+### New
+- **Fix Name Tags button:** Automatically fixes broken name tags by adding the required `∾\n` prefix only when missing.
+- **Memorize Additional Lines button:** Marks orphaned ShowText lines as legitimate continuations by appending `#+` to their source lines.
+
+### Improvements
+- **Unified error-highlighting pipeline:**
+  - Introduced a global `window.allErrorIndices` as the single source of truth for error indices.
+  - `updateMatchLamp()` now populates the error set; `updateRedIndices()` only applies the highlighting.
+  - `updatePreviewErrors()` now calls `updateMatchLamp()` followed by `updateRedIndices()` on each edit to keep visuals in sync.
+- **Consistent updates after actions:**
+  - The "+" split button triggers a full error recompute via `updateMatchLamp()` before re-rendering, preventing stale highlights.
+  - Removed the legacy `updateRedIndices()` call from the old `updateAllForBlock` (main_script.js) to avoid race conditions.
+- **Save button UX:**
+  - The save button is no longer force-disabled when errors are present. It now shows a red warning style and informative tooltip while remaining clickable.
+  - Your double-click/confirm flow is preserved and works reliably.
+- **Name tag validation:**
+  - Precise detection: checks that a name tag `<∾∾C[6]...∾∾C[0]>` is preceded by the correct `∾\n` prefix (validated against the text before the tag).
+  - The fix operates only on truly broken lines and won't duplicate prefixes.
+- **Structure checker refinements:**
+  - Added `ShowScrollingText` and `Comment` to fully editable commands.
+  - Indentation check is evaluated early in the compare loop, and dialogue blocks are validated as consistent indent groups using the first JP line as the base.
+
+### Bug Fixes
+- Immediate red-line refresh across edits, splits, and automated fixes.
+- Eliminated highlight desynchronization after splitting lines.
+- Fixed a conflict between outdated and new highlight logic by centralizing the pipeline.
+- Prevented incorrect re-highlighting caused by outdated calls in `main_script.js`.
+
+### Developer Notes
+- Highlight pipeline is now: edit → `updatePreviewErrors()` → `updateMatchLamp()` → `updateRedIndices()`.
+- `updateRedIndices()` must never compute errors; it only reflects `window.allErrorIndices` to the UI.
+- When adding new error detectors, always push indices into `window.allErrorIndices` in `updateMatchLamp()`.
 
 ---
 
@@ -161,7 +198,6 @@
 - **Comprehensive Diagnostic Logging:** Detailed logging system provides insights for troubleshooting complex file structure issues.
 - **Type-Aware Block Matching:** Advanced matching algorithm that considers block types for more accurate Russian-Japanese correspondence.
 - **CommonEvent Boundary Respect:** Strict adherence to CommonEvent boundaries prevents cross-contamination of blocks between different events.
-- **ShowTextAttributes Parsing:** Fixed parsing of `ShowTextAttributes` commands from Japanese files, eliminating false "ТРЕБУЕТСЯ ПЕРЕВОД" placeholders.
 
 ### Bug Fixes
 - **Fixed ShowTextAttributes Parsing:** Resolved critical issue where `ShowTextAttributes` commands were not parsed from Japanese files, creating false translation placeholders.
@@ -197,7 +233,9 @@
 - **Improved Statistics:** Detailed file counts and error summaries in batch mode.
 - **New Error Types:** Visual indicators for orphaned lines and other new error categories.
 
-### Previous Features (v1.4.30)
+---
+
+## Previous Features (v1.4.30)
 - **Japanese-Only Mode:** Added ability to create translations from scratch by loading only Japanese files.
 - **New Block Types:** Added support for JumpToLabel, Label, and ScriptMore block types.
 - **Affinity System Support:** Automatic detection and handling of character affinity/好感度 system strings.
