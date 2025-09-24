@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <title>MGQP Map Editor v1.4.50</title>
+  <title>MGQP Map Editor v1.4.60</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="Java scripts/restore-mode.js"></script>
   <script src="Java scripts/test_mode.js"></script>
@@ -106,7 +106,9 @@
     <button id="restoreStructBtn" class="control-btn" style="background:#cdf; display:none;">Безопасно исправить ошибки</button>
     <button id="fixScriptBtn" class="control-btn" style="background:#fcd; display:none;">Исправить ошибки Script</button>
     <button id="fixIndentBtn" class="control-btn" style="background:#fde; display:none;">Исправить отступы</button>
+    <button id="fixNameTagsBtn" class="control-btn" style="background:#cfc; display:none;">Исправить теги имён</button>
     <button id="clearOrphanedBtn" class="control-btn" style="background:#fdd; display:none;">Очистить строки</button>
+    <button id="memorizeOrphanedBtn" class="control-btn" style="background:#dff; display:none;">Запомнить Доп. Строки</button>
     <button id="syncEditorBtn" class="control-btn" style="background:#ffc; display:none;">Обновить редактор</button>
     <button id="fixLongDialoguesBtn" class="control-btn" style="background:#b3ffb3; display:none;">Исправить ShowTextAttributes</button>
 
@@ -165,6 +167,7 @@
     // Глобальные массивы инициализируем сразу
     window.textBlocks = window.textBlocks || [];
     window.japBlocks = window.japBlocks || [];
+    window.allErrorIndices = new Set(); // <<< ДОБАВЬТЕ ЭТУ СТРОКУ
     // === 1. Глобальные переменные для полного файла ===
     window.fullRusLines = [];
     window.fullJapLines = [];
@@ -242,6 +245,7 @@
     // НАЧАЛО ЗАМЕНЫ: Новая объединенная функция для вывода всех ошибок
     // =================================================================================
     window.updateMatchLamp = function() {
+      window.allErrorIndices.clear(); // <<< ДОБАВЬТЕ ЭТУ СТРОКУ
       const lampDiv = document.getElementById('matchLampContainer');
       const diffsDiv = document.getElementById('previewDiffs');
       let statHtml = '';
@@ -308,6 +312,7 @@
                           type: 'Ошибка строки',
                           reason: `Превышен лимит символов: ${len} > 50`
                       });
+                      window.allErrorIndices.add(i); // << ДОБАВИТЬ
                   }
                   if (info.isCorrupted) {
                       redLineErrors.push({
@@ -315,6 +320,32 @@
                           type: 'Ошибка строки',
                           reason: 'Повреждён тег имени или синтаксис'
                       });
+                      window.allErrorIndices.add(i); // << ДОБАВИТЬ
+                  }
+
+// ================== НОВЫЙ ПРАВИЛЬНЫЙ КОД ==================
+                  // Проверка на сломанный тег имени
+                  if (block.type === 'ShowText') {
+                      const text = block.text;
+
+                      // Ищем тег имени в формате <∾∾C[6]...>
+                      const nameTagMatch = text.match(/<∾∾C\[6\].*?∾∾C\[0\]>/);
+                      
+                      if (nameTagMatch) {
+                        // Тег найден. Теперь проверяем, есть ли ПЕРЕД ним правильный префикс.
+                        // Для этого смотрим на часть строки ДО начала тега.
+                        const textBeforeTag = text.substring(0, nameTagMatch.index);
+
+                        // Ошибка, если текст перед тегом НЕ заканчивается на "∾\n"
+                        if (!/∾\n$/.test(textBeforeTag)) {
+                          redLineErrors.push({
+                              label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[продолжение]',
+                              type: 'Ошибка тега имени',
+                              reason: 'Тег имени должен начинаться с префикса `\\n` (в редакторе `∾` и перенос строки).'
+                          });
+                          window.allErrorIndices.add(i);
+                        }
+                      }
                   }
               }
               if (block.type !== 'Name' && block.type !== 'Comment' && block.type !== 'JumpToLabel' && block.type !== 'Label' && /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.text)) {
@@ -323,6 +354,7 @@
                       type: 'Ошибка строки',
                       reason: 'Обнаружен японский текст'
                   });
+                  window.allErrorIndices.add(i); // << ДОБАВИТЬ
               }
               if (block.type === 'ShowText' && window.japBlocks && window.japBlocks.length > 0 &&
                   !window.isNameBlock(block.text) && !block.japaneseLink && !block.generated) {
@@ -331,6 +363,7 @@
                       type: 'Ошибка строки',
                       reason: 'Строка-огрызок без пары в японском файле'
                   });
+                  window.allErrorIndices.add(i); // << ДОБАВИТЬ
               }
               if (window.isNameBlock(block.text)) {
                   let precedingStructuralBlock = null;
@@ -350,6 +383,7 @@
                           type: 'Потенциальная ошибка',
                           reason: 'Строка с именем персонажа без предшествующей команды ShowTextAttributes'
                       });
+                      window.allErrorIndices.add(i); // << ДОБАВИТЬ
                   }
               }
           });
@@ -1252,24 +1286,13 @@
                 dupBtn.style.marginLeft = '8px';
                 div.appendChild(dupBtn);
 
-                // Функция для получения объединённого текста (в одну строку)
+                // Функция для получения текста ТОЛЬКО из одного блока
                 const collectText = start => {
-                  let end = start + 1;
-                  // Строгое условие продолжения: только вручную добавленные строки (idx === undefined) и не удалённые
-                  while (
-                    end < textBlocks.length &&
-                    textBlocks[end].type === 'ShowText' &&
-                    textBlocks[end].idx === undefined &&
-                    !textBlocks[end].isDeleted
-                  ) {
-                    end++;
+                  const block = textBlocks[start];
+                  if (!block || !block.dom?.rusInput) {
+                    return '';
                   }
-                  // Собираем текст, пропуская удалённые блоки
-                  return textBlocks.slice(start, end)
-                    .filter(b => !b.isDeleted)
-                    .map(b => b.dom?.rusInput?.value.trim() || '')
-                    .filter(v => v)
-                    .join(' ');
+                  return block.dom.rusInput.value;
                 };
 
                 // Функция для получения счётчика символов блока
@@ -1545,8 +1568,13 @@
         plusBtn.onclick = function() {
           saveEditorBlockPosition();
           if (splitDialogueBlock(i, textBlocks)) {
-          renderTextBlocks();
-          restoreEditorBlockPosition();
+            // СНАЧАЛА полностью пересчитываем все ошибки
+            if (typeof window.updateMatchLamp === 'function') {
+              window.updateMatchLamp();
+            }
+            // И ТОЛЬКО ПОТОМ перерисовываем редактор
+            renderTextBlocks();
+            restoreEditorBlockPosition();
           }
         };
         
@@ -1579,19 +1607,18 @@
       // --- Повторно блокируем saveBtn, если есть красные строки (на случай, если updateRedIndices не вызвался) --- 
       const saveBtn = document.getElementById('saveBtn');
       if (saveBtn) {
-        // Если активирован режим восстановления структуры, разблокируем кнопку
         if (window.restoreModeEnabled) {
           saveBtn.disabled = false;
-          saveBtn.style.background = '#cdf'; // Голубой фон для обозначения режима восстановления
+          saveBtn.style.background = '#cdf';
           saveBtn.style.color = '#333';
           saveBtn.title = 'Структура восстановлена. Можно сохранить файл.';
         } else {
-          // Обычная логика блокировки
+          // Кнопка всегда активна, при ошибках показываем только визуальное предупреждение
           saveBtn.disabled = false;
           if (redIndices.length > 0) {
             saveBtn.style.background = '#ffd6d6';
             saveBtn.style.color = '#a00';
-            saveBtn.title = 'Есть неисправленные красные строки (ошибка или японский текст)! Исправьте ошибки перед сохранением.';
+            saveBtn.title = 'Есть неисправленные строки! Нажмите один раз для предупреждения, второй раз для сохранения.';
           } else {
             saveBtn.style.background = '';
             saveBtn.style.color = '';
@@ -2106,48 +2133,13 @@
 
     // Собирает актуальный список индексов красных textarea
     function updateRedIndices() {
-      // Собираем индексы всех ошибочных строк (по длине, синтаксису и японскому тексту)
-      window.redIndices = redIndices = [];
-      textBlocks.forEach((block, i) => {
-        // Пропускаем удаленные блоки
-        if (block.isDeleted) return;
-        
-        const ta = block.dom?.rusInput;
-        if (!ta) return;
-        let isError = false;
-        // Проверка на превышение длины
-        if ((block.type === 'ShowText' || block.type === undefined)) {
-          const info = window.getGameTextInfo(block.text);
-          const visibleText = info.rawGameText
-            .replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/g, '')
-            .replace(/∾∾C\[\d+\]/g, '')
-            .replace(/C\[\d+\]/g, '')
-            .replace(/∾/g, '')
-            .replace(/∿/g, '')
-            .trim();
-          if (visibleText.length > 50) isError = true;
-          if (info.isCorrupted) isError = true;
-        }
-        // Проверка на японский текст (исключаем блоки типа Name, Comment, JumpToLabel и Label)
-        if (block.type !== 'Name' && block.type !== 'Comment' && block.type !== 'JumpToLabel' && block.type !== 'Label' && /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.text)) isError = true;
-        
-        // === НОВАЯ ПРОВЕРКА: ShowText без имени без сопоставления с японским файлом ===
-        if (block.type === 'ShowText' && 
-            japBlocks && japBlocks.length > 0 && 
-            !window.isNameBlock(block.text) && 
-            !block.japaneseLink &&
-            !block.generated) { // Пропускаем сгенерированные блоки (с пометкой #+)
-          // Это ShowText без имени, который не нашел сопоставления с японским файлом
-          // Считаем его "огрызком" - ненужной строкой для удаления
-          isError = true;
-        }
-        if (isError) redIndices.push(i);
-      });
+      // Теперь мы не ищем ошибки заново, а просто берем их из глобального списка,
+      // который заполнила функция updateMatchLamp.
+      window.redIndices = redIndices = Array.from(window.allErrorIndices || []);
+      
       // Окрашиваем все textarea с ошибками
       textBlocks.forEach((block, i) => {
-        // Пропускаем удаленные блоки
         if (block.isDeleted) return;
-        
         const ta = block.dom?.rusInput;
         if (!ta) return;
         if (redIndices.includes(i)) {
@@ -2156,6 +2148,7 @@
           ta.style.backgroundColor = '';
         }
       });
+      
       // Если после пересчёта указатель ушёл за пределы — сбросим
       if (redPointer >= redIndices.length) redPointer = -1;
 
@@ -2169,19 +2162,18 @@
       // --- Блокировка кнопки сохранения, если есть красные строки ---
       const saveBtn = document.getElementById('saveBtn');
       if (saveBtn) {
-        // Если активирован режим восстановления структуры, разблокируем кнопку
         if (window.restoreModeEnabled) {
           saveBtn.disabled = false;
-          saveBtn.style.background = '#cdf'; // Голубой фон для обозначения режима восстановления
+          saveBtn.style.background = '#cdf';
           saveBtn.style.color = '#333';
           saveBtn.title = 'Структура восстановлена. Можно сохранить файл.';
         } else {
-          // Обычная логика блокировки
+          // Кнопка всегда активна, при ошибках показываем только визуальное предупреждение
           saveBtn.disabled = false;
           if (redIndices.length > 0) {
             saveBtn.style.background = '#ffd6d6';
             saveBtn.style.color = '#a00';
-            saveBtn.title = 'Есть неисправленные красные строки (ошибка или японский текст)! Исправьте ошибки перед сохранением.';
+            saveBtn.title = 'Есть неисправленные строки! Нажмите один раз для предупреждения, второй раз для сохранения.';
           } else {
             saveBtn.style.background = '';
             saveBtn.style.color = '';
@@ -2193,30 +2185,6 @@
       // Обновляем видимость кнопок исправления
       if (typeof window.updateFixButtonsVisibility === 'function') {
         window.updateFixButtonsVisibility();
-      }
-      
-      // === Управление видимостью кнопки "Очистить строки" ===
-      const clearOrphanedBtn = document.getElementById('clearOrphanedBtn');
-      if (clearOrphanedBtn) {
-        // Считаем количество строк-огрызков
-        let orphanedCount = 0;
-        textBlocks.forEach((block, i) => {
-          if (block.isDeleted) return;
-          
-          if (block.type === 'ShowText' && 
-              window.japBlocks && window.japBlocks.length > 0 && 
-              !window.isNameBlock(block.text) && 
-              !block.japaneseLink &&
-              !block.generated) {
-            orphanedCount++;
-          }
-        });
-        
-        // Показываем кнопку только если есть строки-огрызки
-        clearOrphanedBtn.style.display = orphanedCount > 0 ? '' : 'none';
-        if (orphanedCount > 0) {
-          clearOrphanedBtn.title = `Очистить ${orphanedCount} строк-огрызков без сопоставления с японским файлом`;
-        }
       }
     }
 
@@ -2293,6 +2261,24 @@
         window.autoFixIndentErrors();
       } else {
         alert("Функция исправления отступов недоступна!");
+      }
+    };
+    
+    // === Обработчик кнопки запоминания строк-огрызков ===
+    document.getElementById('memorizeOrphanedBtn').onclick = function() {
+      if (typeof window.memorizeOrphanedLines === 'function') {
+        window.memorizeOrphanedLines();
+      } else {
+        alert("Функция запоминания строк недоступна!");
+      }
+    };
+    
+    // === Обработчик кнопки исправления тегов имён ===
+    document.getElementById('fixNameTagsBtn').onclick = function() {
+      if (typeof window.autoFixNameTagErrors === 'function') {
+        window.autoFixNameTagErrors();
+      } else {
+        alert("Функция исправления тегов имён недоступна!");
       }
     };
 
