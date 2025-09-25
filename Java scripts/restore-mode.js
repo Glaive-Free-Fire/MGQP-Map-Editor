@@ -77,6 +77,15 @@
   // Экспортируем функцию для отладки
   global.parseCommonEvents = parseCommonEvents;
 
+  // === ВСПОМОГАТЕЛЬНАЯ: актуальное содержимое RU-файла ===
+  function getActualRuContent() {
+    if (typeof window.generateCurrentFileContentAsLines !== 'function') {
+      return (window.fullRusLines || []).join('\n');
+    }
+    const currentRuLines = window.generateCurrentFileContentAsLines();
+    return (currentRuLines || []).join('\n');
+  }
+
   /**
    * Создаёт содержимое исправленного файла, заменяя только те CommonEvent,
    * в которых были обнаружены структурные ошибки.
@@ -911,103 +920,42 @@
 
   // === Функция для проверки наличия ошибок Script ===
   global.hasScriptErrors = function() {
-    if (!window.fullRusLines || !window.fullJapLines || window.fullRusLines.length === 0 || window.fullJapLines.length === 0) {
-      return false;
-    }
-
+    if (!window.fullJapLines || window.fullJapLines.length === 0) return false;
     const jpContent = window.fullJapLines.join('\n');
-    const ruContent = window.fullRusLines.join('\n');
+    const ruContent = getActualRuContent();
     const result = window.checkMapStructureMatch(jpContent, ruContent);
-    
     if (!result.grouped) return false;
-    
-    for (const ev of result.grouped) {
-      for (const page of ev.pages) {
-        if (!page.ok && page.errors && page.errors.length > 0) {
-          for (const error of page.errors) {
-            if (error.msg && error.msg.includes('кавычки в команде Script')) {
-              return true;
-            }
-          }
-        }
-      }
-    }
-    return false;
+    return result.grouped.some(ev => ev.pages.some(p => !p.ok && p.errors?.some(err => err.msg?.includes('кавычки в команде Script'))));
   };
 
   // === Функция для проверки наличия ошибок структуры CommonEvent ===
   global.hasStructureErrors = function() {
-    if (!window.fullRusLines || !window.fullJapLines || window.fullRusLines.length === 0 || window.fullJapLines.length === 0) {
-      return false;
-    }
-
+    if (!window.fullJapLines || window.fullJapLines.length === 0) return false;
     const jpContent = window.fullJapLines.join('\n');
-    const ruContent = window.fullRusLines.join('\n');
+    const ruContent = getActualRuContent();
     const result = window.checkMapStructureMatch(jpContent, ruContent);
-    
     if (!result.grouped) return false;
-    
-    for (const ev of result.grouped) {
-      for (const page of ev.pages) {
-        if (!page.ok && page.errors && page.errors.length > 0) {
-          // Проверяем, есть ли ошибки, не связанные с Script
-          for (const error of page.errors) {
-            if (error.msg && !error.msg.includes('кавычки в команде Script')) {
-              return true;
-            }
-          }
-        }
-      }
-    }
-    return false;
+    return result.grouped.some(ev => ev.pages.some(p => !p.ok && p.errors?.some(err => !err.msg?.includes('кавычки в команде Script'))));
   };
 
   // === Функция для проверки наличия любых ошибок ===
   global.hasAnyErrors = function() {
-    if (!window.fullRusLines || !window.fullJapLines || window.fullRusLines.length === 0 || window.fullJapLines.length === 0) {
-      return false;
-    }
-
+    if (!window.fullJapLines || window.fullJapLines.length === 0) return false;
     const jpContent = window.fullJapLines.join('\n');
-    const ruContent = window.fullRusLines.join('\n');
+    const ruContent = getActualRuContent();
     const result = window.checkMapStructureMatch(jpContent, ruContent);
-    
     if (!result.grouped) return false;
-    
-    for (const ev of result.grouped) {
-      for (const page of ev.pages) {
-        if (!page.ok && page.errors && page.errors.length > 0) {
-          return true;
-        }
-      }
-    }
-    return false;
+    return result.grouped.some(ev => ev.pages.some(p => !p.ok && p.errors && p.errors.length > 0));
   };
 
   // === Функция для проверки наличия ошибок отступов ===
   global.hasIndentErrors = function() {
-    if (!window.fullRusLines || !window.fullJapLines || window.fullRusLines.length === 0 || window.fullJapLines.length === 0) {
-      return false;
-    }
-
+    if (!window.fullJapLines || window.fullJapLines.length === 0) return false;
     const jpContent = window.fullJapLines.join('\n');
-    const ruContent = window.fullRusLines.join('\n');
+    const ruContent = getActualRuContent();
     const result = window.checkMapStructureMatch(jpContent, ruContent);
-    
     if (!result.grouped) return false;
-    
-    for (const ev of result.grouped) {
-      for (const page of ev.pages) {
-        if (!page.ok && page.errors && page.errors.length > 0) {
-          for (const error of page.errors) {
-            if (error.msg && error.msg.includes('Неправильный отступ')) {
-              return true;
-            }
-          }
-        }
-      }
-    }
-    return false;
+    return result.grouped.some(ev => ev.pages.some(p => !p.ok && p.errors?.some(err => err.msg?.includes('Неправильный отступ'))));
   };
 
   // === Функция для автоматического исправления ошибок отступов ===
@@ -1214,21 +1162,22 @@
     if (window.textBlocks && window.japBlocks && window.japBlocks.length > 0) {
       textBlocks.forEach((block) => {
         if (!block.isDeleted && block.type === 'ShowText' && 
-            !window.isNameBlock(block.text) && !block.japaneseLink && !block.generated) {
+            !window.isNameBlock(block.text) && !block.japaneseLink && !block.generated && !block.manualPlus) {
           orphanedCount++;
         }
       });
     }
 
-    // Управляем видимостью кнопок
-    restoreBtn.style.display = hasStructureErrors ? '' : 'none';
+    // Взаимоисключающие кнопки: при наличии огрызков не показываем восстановление
+    const showOrphaned = orphanedCount > 0;
+    restoreBtn.style.display = (hasStructureErrors && !showOrphaned) ? '' : 'none';
     fixScriptBtn.style.display = hasScriptErrors ? '' : 'none';
     fixIndentBtn.style.display = hasIndentErrors ? '' : 'none';
     fixNameTagsBtn.style.display = hasTagsErrors ? '' : 'none'; // Новая строка
     
     // Показываем ОБЕ кнопки, если есть "огрызки"
-    clearOrphanedBtn.style.display = orphanedCount > 0 ? '' : 'none';
-    memorizeOrphanedBtn.style.display = orphanedCount > 0 ? '' : 'none';
+    clearOrphanedBtn.style.display = showOrphaned ? '' : 'none';
+    memorizeOrphanedBtn.style.display = showOrphaned ? '' : 'none';
 
     if (orphanedCount > 0) {
       clearOrphanedBtn.title = `Удалить ${orphanedCount} строк без сопоставления с японским файлом`;

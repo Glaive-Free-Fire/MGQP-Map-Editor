@@ -1,57 +1,56 @@
 document.addEventListener('DOMContentLoaded', function() {
-  // --- Функция генерации preview ---
-  window.updatePreviewArea = function() {
-    let previewLines;
-
+  // --- Универсальный генератор актуального содержимого файла ---
+  window.generateCurrentFileContentAsLines = function() {
     if (window.restoreModeEnabled) {
-      previewLines = window.fullRusLines.slice();
-    } else if (!originalLines || originalLines.length === 0) {
-      previewLines = ["Предпросмотр недоступен в этом режиме."];
-    } else {
-      // === НОВЫЙ ЕДИНЫЙ АЛГОРИТМ СБОРКИ ПРЕДПРОСМОТРА ===
-      previewLines = [];
-      let newLines = [...originalLines];
+      return window.fullRusLines.slice();
+    }
+    if (!originalLines || originalLines.length === 0) {
+      return ["Сборка файла невозможна. Сначала загрузите файл."];
+    }
 
-      // 1. Обновляем Display Name
-      let displayNameLine = `Display Name = "${mapDisplayName}"`;
-      let foundDisplayName = false;
-      for (let i = 0; i < newLines.length; i++) {
-        if (/^\s*Display Name\s*=/.test(newLines[i])) {
-          newLines[i] = displayNameLine;
-          foundDisplayName = true;
-          break;
-        }
+    const previewLines = [];
+    let newLines = [...originalLines];
+
+    // 1. Обновляем Display Name
+    let displayNameLine = `Display Name = "${mapDisplayName}"`;
+    let foundDisplayName = false;
+    for (let i = 0; i < newLines.length; i++) {
+      if (/^\s*Display Name\s*=/.test(newLines[i])) {
+        newLines[i] = displayNameLine;
+        foundDisplayName = true;
+        break;
       }
-      if (!foundDisplayName) {
-        newLines.unshift(displayNameLine);
-      }
+    }
+    if (!foundDisplayName) {
+      newLines.unshift(displayNameLine);
+    }
       
       // 2. Создаём карту блоков и карту позиций
-      const blockMap = new Map();
-      textBlocks.forEach(block => {
-        if (block.idx !== undefined) {
-          blockMap.set(block.idx, block);
-        }
-      });
+    const blockMap = new Map();
+    textBlocks.forEach(block => {
+      if (block.idx !== undefined) {
+        blockMap.set(block.idx, block);
+      }
+    });
       
       // >>> НАЧАЛО ИЗМЕНЕНИЯ: Создаём карту для отслеживания позиций <<<
-      const originalIdxToPosMap = new Map();
+    const originalIdxToPosMap = new Map();
       // >>> КОНЕЦ ИЗМЕНЕНИЯ <<<
       
       // 3. Собираем итоговый файл
-      for (let i = 0; i < newLines.length; i++) {
-        const originalLine = newLines[i];
-        const block = blockMap.get(i);
+    for (let i = 0; i < newLines.length; i++) {
+      const originalLine = newLines[i];
+      const block = blockMap.get(i);
+      
+      if (block) {
+        if (block.isDeleted) {
+          continue;
+        }
+        const indentMatch = originalLine.match(/^\s*/);
+        const indent = indentMatch ? indentMatch[0] : '';
+        let formattedLine = originalLine; // Default fallback
         
-        if (block) {
-          if (block.isDeleted) {
-            continue;
-          }
-          const indentMatch = originalLine.match(/^\s*/);
-          const indent = indentMatch ? indentMatch[0] : '';
-          let formattedLine = originalLine; // Default fallback
-          
-          switch (block.type) {
+        switch (block.type) {
             case 'ShowText':
               let txt = block.text.replace(/∿/g, '<<ONE>>').replace(/\n/g, '\\n').replace(/∾∾/g, '\\\\').replace(/∾/g, '\\').replace(/<<ONE>>/g, '\\').replace(/\\(?=[\?\.!\,—])/g, '');
               let newText = txt.replace(/(?<!\\)"/g, '\\"');
@@ -144,68 +143,64 @@ document.addEventListener('DOMContentLoaded', function() {
               formattedLine = originalLine;
               break;
           }
-          previewLines.push(indent + formattedLine.trimStart());
-          
-          // >>> НАЧАЛО ИЗМЕНЕНИЯ: Заполняем карту позиций <<<
-          originalIdxToPosMap.set(block.idx, previewLines.length - 1);
-          // >>> КОНЕЦ ИЗМЕНЕНИЯ <<<
-        } else {
-          previewLines.push(originalLine);
-        }
+        previewLines.push(indent + formattedLine.trimStart());
+        originalIdxToPosMap.set(block.idx, previewLines.length - 1);
+      } else {
+        previewLines.push(originalLine);
       }
+    }
       
       // 4. Вставляем новые строки, используя карту позиций
-      textBlocks.forEach(block => {
-        if (block.idx === undefined && !block.isDeleted) {
-          if (block.generated && block.text === 'ТРЕБУЕТСЯ ПЕРЕВОД') {
-            return;
-          }
+    textBlocks.forEach(block => {
+      if (block.idx === undefined && !block.isDeleted) {
+        if (block.generated && block.text === 'ТРЕБУЕТСЯ ПЕРЕВОД') {
+          return;
+        }
 
-          let lastMainBlockLine = -1;
-          // >>> НАЧАЛО ИЗМЕНЕНИЯ: Определяем отступ родителя <<<
-          let parentIndent = '    '; // Отступ по умолчанию
+        let lastMainBlockLine = -1;
+        let parentIndent = '    ';
 
-          for (let j = textBlocks.indexOf(block) - 1; j >= 0; j--) {
-            if (textBlocks[j].idx !== undefined) {
-              if (originalIdxToPosMap.has(textBlocks[j].idx)) {
-                lastMainBlockLine = originalIdxToPosMap.get(textBlocks[j].idx);
-              }
-              // Находим оригинальную строку родителя, чтобы получить её отступ
-              const parentOriginalLine = newLines[textBlocks[j].idx];
-              if (parentOriginalLine) {
-                  const indentMatch = parentOriginalLine.match(/^\s*/);
-                  parentIndent = indentMatch ? indentMatch[0] : '    ';
-              }
-              break;
+        for (let j = textBlocks.indexOf(block) - 1; j >= 0; j--) {
+          if (textBlocks[j].idx !== undefined) {
+            if (originalIdxToPosMap.has(textBlocks[j].idx)) {
+              lastMainBlockLine = originalIdxToPosMap.get(textBlocks[j].idx);
             }
-          }
-          // >>> КОНЕЦ ИЗМЕНЕНИЯ <<<
-
-          if (lastMainBlockLine !== -1) {
-            // >>> НАЧАЛО ИЗМЕНЕНИЯ: Добавляем проверку типа блока <<<
-            let lineToInsert = '';
-          if (block.type === 'ShowTextAttributes') {
-                lineToInsert = `${parentIndent}ShowTextAttributes([${block.text}]) #+`;
-            } else { // По умолчанию считаем, что это ShowText
-                lineToInsert = `${parentIndent}ShowText(["${block.text}"]) #+`;
+            const parentOriginalLine = newLines[textBlocks[j].idx];
+            if (parentOriginalLine) {
+              const indentMatch = parentOriginalLine.match(/^\s*/);
+              parentIndent = indentMatch ? indentMatch[0] : '    ';
             }
-            // >>> КОНЕЦ ИЗМЕНЕНИЯ <<<
-
-            previewLines.splice(lastMainBlockLine + 1, 0, lineToInsert);
-            
-            // >>> НАЧАЛО ИЗМЕНЕНИЯ: Сдвигаем позиции в карте <<<
-            for (const [key, value] of originalIdxToPosMap.entries()) {
-              if (value > lastMainBlockLine) {
-                originalIdxToPosMap.set(key, value + 1);
-              }
-            }
-            // >>> КОНЕЦ ИЗМЕНЕНИЯ <<<
+            break;
           }
         }
-      });
-    }
+
+        if (lastMainBlockLine !== -1) {
+          let lineToInsert = '';
+          if (block.type === 'ShowTextAttributes') {
+            lineToInsert = `${parentIndent}ShowTextAttributes([${block.text}]) #+`;
+          } else {
+            let txt = block.text.replace(/∿/g, '<<ONE>>').replace(/\n/g, '\\n').replace(/∾∾/g, '\\\\').replace(/∾/g, '\\').replace(/<<ONE>>/g, '\\').replace(/\\(?=[\?\.!\,—])/g, '');
+            let newText = txt.replace(/(?<!\\)"/g, '\\"');
+            lineToInsert = `${parentIndent}ShowText(["${newText}"]) #+`;
+          }
+
+          previewLines.splice(lastMainBlockLine + 1, 0, lineToInsert);
+          for (const [key, value] of originalIdxToPosMap.entries()) {
+            if (value > lastMainBlockLine) {
+              originalIdxToPosMap.set(key, value + 1);
+            }
+          }
+        }
+      }
+    });
+
+    return previewLines;
+  }
+
+  // --- Обновленная функция предпросмотра ---
+  window.updatePreviewArea = function() {
+    const previewLines = window.generateCurrentFileContentAsLines();
     document.getElementById('previewArea').value = previewLines.join('\n');
-    // Обновляем ошибки через объединенную функцию
     if (window.updateMatchLamp) {
       window.updateMatchLamp();
     }
@@ -400,7 +395,7 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
     return events;
   }
 
-  // 2) Умный и безопасный компаратор
+  // 2) Умный и безопасный компаратор (исправленный: проверяем отступы у всех ShowText, включая #+)
   function compareEvents(jpEvents, ruEvents) {
     let grouped = [];
     for (const [eid, jpEv] of Object.entries(jpEvents)) {
@@ -413,44 +408,64 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
         let issues = [];
         let i = 0, j = 0;
 
-        while (i < jpPage.length || j < ruPage.length) {
-          // 1) Пропускаем русские строки-продолжения (#+)
-          if (ruPage[j] && ruPage[j].raw.trim().endsWith('#+')) { j++; continue; }
+        // Эталонный отступ текущего диалогового блока
+        let expectedIndent = null;
 
+        while (i < jpPage.length || j < ruPage.length) {
           const jpLine = jpPage[i];
           const ruLine = ruPage[j];
           const jpCmd = jpLine?.command;
           const ruCmd = ruLine?.command;
 
-          // 2) Обработка ShowText: учитываем, что JP может иметь Имя+Диалог двумя строками
+          // Проверяем отступ на каждой RU-строке ShowText, включая продолжения
+          if (ruCmd === 'ShowText' && ruLine) {
+            const isContinuation = ruLine.raw.trim().endsWith('#+');
+            const isRuNameBlock = ruLine.raw.includes('<\\C[6]');
+            // Начало диалога: не продолжение или явно строка имени
+            if (!isContinuation || isRuNameBlock) {
+              expectedIndent = (jpLine?.raw.match(/^(\s*)/) || ['', ''])[1];
+            }
+            if (expectedIndent !== null) {
+              const ruIndent = (ruLine.raw.match(/^(\s*)/) || ['', ''])[1];
+              if (ruIndent !== expectedIndent) {
+                const already = issues.some(e => e.ruLineNum === ruLine.lineNum && e.msg.includes('отступ'));
+                if (!already) {
+                  issues.push({
+                    line: ruLine.lineNum + 1,
+                    msg: `Неправильный отступ в блоке диалога.`,
+                    jp: `(Эталонный отступ: "${expectedIndent.replace(/\s/g, '␣')}")`,
+                    ru: ruLine.raw,
+                    jpLineNum: jpLine?.lineNum,
+                    ruLineNum: ruLine.lineNum,
+                    isFixableIndent: true,
+                    correctIndent: expectedIndent
+                  });
+                }
+              }
+            }
+          } else {
+            // Вышли из диалогового блока
+            expectedIndent = null;
+          }
+
+          // Для структурного сравнения пропускаем только RU-продолжения (#+)
+          if (ruPage[j] && ruPage[j].raw.trim().endsWith('#+')) { j++; continue; }
+
+          // Учет JP: Имя + Диалог (2 строки) против одной RU-строки
           if (jpCmd === 'ShowText' || ruCmd === 'ShowText') {
             const isJpNameLine = jpLine?.raw.includes('["【');
             if (isJpNameLine && (jpPage[i + 1]?.command === 'ShowText') && !jpPage[i + 1]?.raw.includes('["【')) {
               if (ruCmd === 'ShowText') {
-                const jpIndent = (jpLine.raw.match(/^(\s*)/) || ['',''])[1];
-                const ruIndent = (ruLine.raw.match(/^(\s*)/) || ['',''])[1];
-                if (jpIndent !== ruIndent) {
-                  issues.push({
-                    line: ruLine.lineNum + 1,
-                    msg: `Неправильный отступ в блоке диалога.`,
-                    jp: `(Эталонный отступ: "${jpIndent.replace(/\s/g, '␣')}")`,
-                    ru: ruLine.raw,
-                    jpLineNum: jpLine.lineNum,
-                    ruLineNum: ruLine.lineNum,
-                    isFixableIndent: true,
-                    correctIndent: jpIndent
-                  });
-                }
                 i += 2; // JP: имя + диалог
                 j += 1; // RU: одна объединенная строка
                 continue;
               }
             }
-            // Русский длиннее — допустимо: просто пропускаем лишние RU ShowText
+            // Допустим «лишние» RU ShowText
             if (ruCmd === 'ShowText' && !jpLine) { j++; continue; }
           }
 
-          // 3) Строгая проверка для остальных команд
+          // Строгая проверка команд
           if (!jpLine || !ruLine || jpCmd !== ruCmd) {
             issues.push({
               line: ruLine?.lineNum + 1 || jpLine?.lineNum + 1,
@@ -460,7 +475,7 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
               jpLineNum: jpLine?.lineNum,
               ruLineNum: ruLine?.lineNum
             });
-            break; // Останавливаемся на первой ошибке
+            break;
           }
 
           i++; j++;
