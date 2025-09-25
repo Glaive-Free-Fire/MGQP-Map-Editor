@@ -199,7 +199,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // --- Обновленная функция предпросмотра ---
   window.updatePreviewArea = function() {
-    const previewLines = window.generateCurrentFileContentAsLines();
+    // Используем единую функцию сборки файла для предпросмотра
+    const previewLines = window.generateFinalFileLines ? window.generateFinalFileLines() : window.generateCurrentFileContentAsLines();
     document.getElementById('previewArea').value = previewLines.join('\n');
     if (window.updateMatchLamp) {
       window.updateMatchLamp();
