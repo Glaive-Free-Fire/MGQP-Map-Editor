@@ -4,9 +4,9 @@
   <meta charset="UTF-8">
   <title>MGQP Map Editor v1.4.60</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="Java scripts/main_script.js"></script>
   <script src="Java scripts/restore-mode.js"></script>
   <script src="Java scripts/test_mode.js"></script>
-  <script src="Java scripts/main_script.js"></script>
   <script src="Java scripts/batch_file_processing.js"></script>
   <style>
     body { font-family: sans-serif; margin: 20px; }
@@ -457,9 +457,16 @@
       const currentRuLines = window.generateCurrentFileContentAsLines ? window.generateCurrentFileContentAsLines() : window.fullRusLines;
       const ruContent = currentRuLines.join('\n');
       const result = window.checkMapStructureMatch(jpContent, ruContent);
+      let displayPercent = result.percent;
+
+      // Если структура идеальна (100%), но есть другие ошибки (длина строки и т.д.),
+      // снижаем процент, чтобы показать, что файл не идеален.
+      if (displayPercent === 100 && hasAnyErrors) {
+        displayPercent = 99;
+      }
 
       lampDiv.style.display = '';
-      document.getElementById('matchPercent').textContent = result.percent + '%';
+      document.getElementById('matchPercent').textContent = displayPercent + '%';
       let structuralErrorCount = result.grouped ? result.grouped.reduce((acc, ev) => acc + ev.pages.reduce((a, p) => a + (p.errors ? p.errors.length : 0), 0), 0) : 0;
       if (structuralErrorCount > 0) {
           hasAnyErrors = true;
@@ -1383,7 +1390,19 @@
           const oldText = textBlocks[i].text;
           // ---
           textBlocks[i].text = textarea.value;
-          updateAll();
+          updateAll(); // Эта функция обновляет фон самого поля ввода
+
+          // --- НАЧАЛО ИСПРАВЛЕНИЯ ---
+          // Вызываем ОБЕ функции обновления:
+          // 1. updateMatchLamp - для пересчёта всех ошибок и обновления лампочки/процентов.
+          if (typeof window.updateMatchLamp === 'function') {
+            window.updateMatchLamp();
+          }
+          // 2. updateRedIndices - для применения стилей к кнопке сохранения и полям на основе новых ошибок.
+          if (typeof updateRedIndices === 'function') {
+            updateRedIndices();
+          }
+          // --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
           // --- АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ ИМЕНИ ПЕРСОНАЖА ---
           // Проверяем, есть ли тег <∾∾C[6]...∾∾C[0]> и японское имя над блоком
@@ -1594,7 +1613,13 @@
             block.isDeleted = true;
           }
 
-            renderTextBlocks();
+          // Сначала полностью пересчитываем все ошибки
+          if (typeof window.updateMatchLamp === 'function') {
+            window.updateMatchLamp();
+          }
+          
+          // И только потом перерисовываем редактор
+          renderTextBlocks();
           restoreEditorBlockPosition(); 
         };
         
@@ -1604,28 +1629,6 @@
 
       // после полной отрисовки — пересчитаем красные строки и включим/выключим стрелки
       updateRedIndices();
-      // --- Повторно блокируем saveBtn, если есть красные строки (на случай, если updateRedIndices не вызвался) --- 
-      const saveBtn = document.getElementById('saveBtn');
-      if (saveBtn) {
-        if (window.restoreModeEnabled) {
-          saveBtn.disabled = false;
-          saveBtn.style.background = '#cdf';
-          saveBtn.style.color = '#333';
-          saveBtn.title = 'Структура восстановлена. Можно сохранить файл.';
-        } else {
-          // Кнопка всегда активна, при ошибках показываем только визуальное предупреждение
-          saveBtn.disabled = false;
-          if (redIndices.length > 0) {
-            saveBtn.style.background = '#ffd6d6';
-            saveBtn.style.color = '#a00';
-            saveBtn.title = 'Есть неисправленные строки! Нажмите один раз для предупреждения, второй раз для сохранения.';
-          } else {
-            saveBtn.style.background = '';
-            saveBtn.style.color = '';
-            saveBtn.title = '';
-          }
-        }
-      }
     }
 
     // === Функция экранирования первых трёх управляющих последовательностей ===
@@ -1651,7 +1654,165 @@
     // === Счётчик предупреждений для кнопки сохранения ===
     if (typeof window.saveWarnCounter === 'undefined') window.saveWarnCounter = 0;
 
+    // === НОВАЯ ЕДИНАЯ ФУНКЦИЯ СБОРКИ ФАЙЛА (ДЛЯ ПРЕДПРОСМОТРА И СОХРАНЕНИЯ) ===
+    window.generateFinalFileLines = function() {
+      // Если включен режим восстановления, просто возвращаем уже готовые строки
+      if (window.restoreModeEnabled) {
+        return window.fullRusLines.slice();
+      }
+
+      // Если данных нет, возвращаем пустой массив
+      if (!originalLines || !textBlocks) {
+        return [];
+      }
+
+      let exportLines = [];
+      let newLines = [...originalLines];
+      const blockMap = new Map();
+      textBlocks.forEach(block => {
+        if (block.idx !== undefined) {
+          blockMap.set(block.idx, block);
+        }
+      });
+
+      const originalIdxToPosMap = new Map();
+
+      // 1. Обновляем Display Name
+      let displayNameLine = `Display Name = "${mapDisplayName}"`;
+      let foundDisplayName = false;
+      for (let i = 0; i < newLines.length; i++) {
+        if (/^\s*Display Name\s*=/.test(newLines[i])) {
+          newLines[i] = displayNameLine;
+          foundDisplayName = true;
+          break;
+        }
+      }
+      if (!foundDisplayName) {
+        newLines.unshift(displayNameLine);
+      }
+      
+      // 2. Собираем итоговый файл, проходя по оригинальным строкам
+      for (let i = 0; i < newLines.length; i++) {
+        const originalLine = newLines[i];
+        const block = blockMap.get(i);
+        
+        if (block) {
+          if (block.isDeleted) {
+            continue;
+          }
+          const indentMatch = originalLine.match(/^\s*/);
+          const indent = indentMatch ? indentMatch[0] : '';
+          let formattedLine = originalLine;
+
+          switch (block.type) {
+            case 'ShowText':
+              formattedLine = originalLine.replace(/\[(.*)\]/, `["${formatShowTextContent(block.text)}"]`);
+              break;
+            case 'ShowTextAttributes':
+              let attrText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+              const attrHasQuotes = /\["(.*)"\]/.test(originalLine);
+              if (attrHasQuotes) { formattedLine = originalLine.replace(/\["(.*)"\]/, `["${attrText}"]`); } 
+              else { formattedLine = originalLine.replace(/\[(.*)\]/, `[${attrText}]`); }
+              break;
+            case 'Script':
+              let scriptText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+              let escapedScriptText = scriptText.replace(/(?<!\\)"/g, '\\"');
+              formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedScriptText}"]`);
+              break;
+            case 'ScriptMore':
+              let scriptMoreText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+              let escapedScriptMoreText = scriptMoreText.replace(/(?<!\\)"/g, '\\"');
+              formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedScriptMoreText}"]`);
+              break;
+            case 'Label':
+              let labelText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+              const labelHasQuotes = /\["(.*)"\]/.test(originalLine);
+              if (labelHasQuotes) { formattedLine = originalLine.replace(/\["(.*)"\]/, `["${labelText}"]`); } 
+              else { formattedLine = originalLine.replace(/\[(.*)\]/, `[${labelText}]`); }
+              break;
+            case 'JumpToLabel':
+              let jumpText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+              const jumpHasQuotes = /\["(.*)"\]/.test(originalLine);
+              if (jumpHasQuotes) { formattedLine = originalLine.replace(/\["(.*)"\]/, `["${jumpText}"]`); } 
+              else { formattedLine = originalLine.replace(/\[(.*)\]/, `[${jumpText}]`); }
+              break;
+            case 'Name':
+              let nameText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+              const nameHasQuotes = /\["(.*)"\]/.test(originalLine);
+              if (nameHasQuotes) { formattedLine = originalLine.replace(/\["(.*)"\]/, `["${nameText}"]`); } 
+              else { formattedLine = originalLine.replace(/\[(.*)\]/, `[${nameText}]`); }
+              break;
+            case 'ShowChoices':
+              let choicesText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+              const choices = choicesText.split(/\s*\|\s*/);
+              const quotedChoices = choices.map(choice => `"${choice.trim()}"`).join(' | ');
+              formattedLine = originalLine.replace(/\[\[(.*?)\],\s*(\d+)\]/, `[[${quotedChoices}], $2]`);
+              break;
+            case 'When':
+              let whenText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+              const whenHasQuotes = /\[(\d+),\s*"(.*)"\]/.test(originalLine);
+              if (whenHasQuotes) { formattedLine = originalLine.replace(/\[(\d+),\s*"(.*)"\]/, `[$1, "${whenText}"]`); } 
+              else { formattedLine = originalLine.replace(/\[(\d+),\s*(.*)\]/, `[$1, ${whenText}]`); }
+              break;
+            default:
+              formattedLine = originalLine;
+              break;
+          }
+          exportLines.push(indent + formattedLine.trimStart());
+          originalIdxToPosMap.set(block.idx, exportLines.length - 1);
+        } else {
+          exportLines.push(originalLine);
+        }
+      }
+      
+      // 3. Вставляем новые строки (сгенерированные редактором)
+      const generatedBlocksByAnchor = new Map();
+      textBlocks.forEach(block => {
+        if (block.idx === undefined && !block.isDeleted) {
+          if (block.text.includes('ТРЕБУЕТСЯ ПЕРЕВОД')) return;
+          let anchorIdx = -1;
+          for (let j = textBlocks.indexOf(block) - 1; j >= 0; j--) {
+            if (textBlocks[j].idx !== undefined) {
+              anchorIdx = textBlocks[j].idx;
+              break;
+            }
+          }
+          if (!generatedBlocksByAnchor.has(anchorIdx)) {
+            generatedBlocksByAnchor.set(anchorIdx, []);
+          }
+          generatedBlocksByAnchor.get(anchorIdx).push(block);
+        }
+      });
+
+      const sortedAnchors = Array.from(generatedBlocksByAnchor.keys()).sort((a, b) => b - a);
+      sortedAnchors.forEach(anchorIdx => {
+        const blocksToInsert = generatedBlocksByAnchor.get(anchorIdx);
+        const anchorPosition = (anchorIdx === -1) ? -1 : originalIdxToPosMap.get(anchorIdx);
+        if (anchorPosition !== undefined) {
+          const linesToInsert = blocksToInsert.map(block => {
+            let parentIndent = '    ';
+            if (anchorIdx !== -1) {
+              const parentOriginalLine = newLines[anchorIdx];
+              if (parentOriginalLine) {
+                const indentMatch = parentOriginalLine.match(/^\s*/);
+                parentIndent = indentMatch ? indentMatch[0] : '    ';
+              }
+            }
+            const marker = block.isManualContinuation ? ' #+' : '';
+            if (block.type === 'ShowTextAttributes') {
+              return `${parentIndent}ShowTextAttributes([${block.text}])${marker}`;
+            } else {
+              return `${parentIndent}ShowText(["${formatShowTextContent(block.text)}"])${marker}`;
+            }
+          });
+          exportLines.splice(anchorPosition + 1, 0, ...linesToInsert);
+        }
+      });
+      return exportLines;
+    }
+
     document.getElementById('saveBtn').onclick = function() {
+      // Проверка на наличие ошибок перед сохранением
       if ((window.redIndices && window.redIndices.length > 0) && !window.restoreModeEnabled) {
         window.saveWarnCounter = (window.saveWarnCounter || 0) + 1;
         if (window.saveWarnCounter % 2 === 1) {
@@ -1659,218 +1820,11 @@
           return;
         }
       }
-
-      document.querySelectorAll('textarea[data-block]').forEach(ta => {
-        const i = +ta.dataset.block;
-        if(textBlocks[i]) textBlocks[i].text = ta.value;
-      });
       
-      let exportLines;
+      // Получаем строки файла с помощью новой единой функции
+      const exportLines = generateFinalFileLines();
 
-      if (window.restoreModeEnabled) {
-        exportLines = window.fullRusLines.slice();
-      } else {
-        exportLines = [];
-        let newLines = [...originalLines];
-        const blockMap = new Map();
-        textBlocks.forEach(block => {
-          if (block.idx !== undefined) {
-            blockMap.set(block.idx, block);
-          }
-        });
-
-        // >>> НАЧАЛО ИЗМЕНЕНИЯ: Создаём карту для отслеживания позиций <<<
-        // Эта карта будет хранить, на какой строке в итоговом файле оказался каждый оригинальный блок.
-        // Ключ: originalIdx, Значение: позиция в exportLines.
-        const originalIdxToPosMap = new Map();
-        // >>> КОНЕЦ ИЗМЕНЕНИЯ <<<
-
-        // 1. Обновляем Display Name
-        let displayNameLine = `Display Name = "${mapDisplayName}"`;
-        let foundDisplayName = false;
-        for (let i = 0; i < newLines.length; i++) {
-          if (/^\s*Display Name\s*=/.test(newLines[i])) {
-            newLines[i] = displayNameLine;
-            foundDisplayName = true;
-            break;
-          }
-        }
-        if (!foundDisplayName) {
-          newLines.unshift(displayNameLine);
-        }
-        
-        // 2. Собираем итоговый файл, проходя по оригинальным строкам
-        for (let i = 0; i < newLines.length; i++) {
-          const originalLine = newLines[i];
-          const block = blockMap.get(i);
-          
-          if (block) {
-            if (block.isDeleted) {
-              continue;
-            }
-            const indentMatch = originalLine.match(/^\s*/);
-            const indent = indentMatch ? indentMatch[0] : '';
-            let formattedLine = originalLine; // Default fallback
-
-            switch (block.type) {
-              case 'ShowText':
-                formattedLine = originalLine.replace(/\[(.*)\]/, `["${formatShowTextContent(block.text)}"]`);
-                break;
-              case 'ShowTextAttributes':
-                // ShowTextAttributes не требует экранирования кавычек, но заменяем ∾ на \
-                let attrText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
-                // Определяем, были ли кавычки в оригинале
-                const attrHasQuotes = /\["(.*)"\]/.test(originalLine);
-                if (attrHasQuotes) {
-                  formattedLine = originalLine.replace(/\["(.*)"\]/, `["${attrText}"]`);
-                } else {
-                  formattedLine = originalLine.replace(/\[(.*)\]/, `[${attrText}]`);
-                }
-                break;
-              case 'Script':
-                let scriptText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
-                let escapedScriptText = scriptText.replace(/(?<!\\)"/g, '\\"');
-                formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedScriptText}"]`);
-                break;
-              case 'ScriptMore':
-                let scriptMoreText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
-                let escapedScriptMoreText = scriptMoreText.replace(/(?<!\\)"/g, '\\"');
-                formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedScriptMoreText}"]`);
-                break;
-              case 'Label':
-                // Label имеет специальный формат: [имя_метки]
-                // Сохраняем оригинальное форматирование с кавычками, заменяем только содержимое
-                let labelText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
-                // Определяем, были ли кавычки в оригинале
-                const labelHasQuotes = /\["(.*)"\]/.test(originalLine);
-                if (labelHasQuotes) {
-                  formattedLine = originalLine.replace(/\["(.*)"\]/, `["${labelText}"]`);
-                } else {
-                  formattedLine = originalLine.replace(/\[(.*)\]/, `[${labelText}]`);
-                }
-                break;
-
-
-              case 'JumpToLabel':
-                // JumpToLabel имеет специальный формат: [имя_метки]
-                // Сохраняем оригинальное форматирование с кавычками, заменяем только содержимое
-                let jumpText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
-                // Определяем, были ли кавычки в оригинале
-                const jumpHasQuotes = /\["(.*)"\]/.test(originalLine);
-                if (jumpHasQuotes) {
-                  formattedLine = originalLine.replace(/\["(.*)"\]/, `["${jumpText}"]`);
-                } else {
-                  formattedLine = originalLine.replace(/\[(.*)\]/, `[${jumpText}]`);
-                }
-                break;
-              case 'Name':
-                // Name имеет специальный формат: [имя_персонажа]
-                // Сохраняем оригинальное форматирование с кавычками, заменяем только содержимое
-                let nameText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
-                // Определяем, были ли кавычки в оригинале
-                const nameHasQuotes = /\["(.*)"\]/.test(originalLine);
-                if (nameHasQuotes) {
-                  formattedLine = originalLine.replace(/\["(.*)"\]/, `["${nameText}"]`);
-                } else {
-                  formattedLine = originalLine.replace(/\[(.*)\]/, `[${nameText}]`);
-                }
-                break;
-              case 'ShowChoices':
-                // ShowChoices имеет формат: [[текст1, текст2, ...], номер_выбора]
-                // Заменяем содержимое массива выборов, сохраняя структуру
-                let choicesText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
-                // Разбиваем варианты выбора и добавляем кавычки к каждому
-                const choices = choicesText.split(/\s*\|\s*/);
-                const quotedChoices = choices.map(choice => `"${choice.trim()}"`).join(' | ');
-                // Заменяем содержимое массива выборов
-                formattedLine = originalLine.replace(/\[\[(.*?)\],\s*(\d+)\]/, `[[${quotedChoices}], $2]`);
-                break;
-              case 'When':
-                // When имеет формат: [номер_выбора, "текст_условия"]
-                // Заменяем текст условия, сохраняя номер выбора
-                let whenText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
-                // Определяем, были ли кавычки в оригинале
-                const whenHasQuotes = /\[(\d+),\s*"(.*)"\]/.test(originalLine);
-                if (whenHasQuotes) {
-                  formattedLine = originalLine.replace(/\[(\d+),\s*"(.*)"\]/, `[$1, "${whenText}"]`);
-                } else {
-                  formattedLine = originalLine.replace(/\[(\d+),\s*(.*)\]/, `[$1, ${whenText}]`);
-                }
-                break;
-              default:
-                // Для ВСЕХ остальных типов (MoveRoute, PlaySE и т.д.)
-                // мы НЕ ДЕЛАЕМ НИЧЕГО. Это сохранит их оригинальную структуру.
-                formattedLine = originalLine;
-                break;
-            }
-            exportLines.push(indent + formattedLine.trimStart());
-            
-            // >>> НАЧАЛО ИЗМЕНЕНИЯ: Заполняем карту позиций <<<
-            // Мы только что добавили строку, соответствующую block.idx. Запомним её позицию.
-            originalIdxToPosMap.set(block.idx, exportLines.length - 1);
-            // >>> КОНЕЦ ИЗМЕНЕНИЯ <<<
-
-          } else {
-            exportLines.push(originalLine);
-          }
-        }
-        
-        // 3. Вставляем новые строки - ФИНАЛЬНЫЙ ИСПРАВЛЕННЫЙ АЛГОРИТМ
-        const generatedBlocksByAnchor = new Map();
-
-        // Шаг 1: Группируем все новые блоки по их "якорю" (предыдущему реальному блоку)
-        textBlocks.forEach(block => {
-          if (block.idx === undefined && !block.isDeleted) {
-                if (block.text.includes('ТРЕБУЕТСЯ ПЕРЕВОД')) {
-              return;
-            }
-                let anchorIdx = -1;
-            for (let j = textBlocks.indexOf(block) - 1; j >= 0; j--) {
-              if (textBlocks[j].idx !== undefined) {
-                        anchorIdx = textBlocks[j].idx;
-                        break;
-                    }
-                }
-                if (!generatedBlocksByAnchor.has(anchorIdx)) {
-                    generatedBlocksByAnchor.set(anchorIdx, []);
-                }
-                generatedBlocksByAnchor.get(anchorIdx).push(block);
-            }
-        });
-
-        // Шаг 2: Вставляем сгруппированные блоки, идя СНИЗУ ВВЕРХ
-        const sortedAnchors = Array.from(generatedBlocksByAnchor.keys()).sort((a, b) => b - a);
-
-        sortedAnchors.forEach(anchorIdx => {
-            const blocksToInsert = generatedBlocksByAnchor.get(anchorIdx);
-            const anchorPosition = (anchorIdx === -1) ? -1 : originalIdxToPosMap.get(anchorIdx);
-
-            if (anchorPosition !== undefined) {
-                const linesToInsert = blocksToInsert.map(block => {
-                    let parentIndent = '    ';
-                    if (anchorIdx !== -1) {
-                        const parentOriginalLine = newLines[anchorIdx];
-                        if (parentOriginalLine) {
-                            const indentMatch = parentOriginalLine.match(/^\s*/);
-                            parentIndent = indentMatch ? indentMatch[0] : '    ';
-                        }
-                    }
-                    
-                    // Определяем, нужно ли ставить метку #+
-                    const marker = block.isManualContinuation ? ' #+' : '';
-
-                    if (block.type === 'ShowTextAttributes') {
-                        return `${parentIndent}ShowTextAttributes([${block.text}])${marker}`;
-            } else {
-                        return `${parentIndent}ShowText(["${formatShowTextContent(block.text)}"])${marker}`;
-            }
-                });
-                
-                exportLines.splice(anchorPosition + 1, 0, ...linesToInsert);
-          }
-        });
-      }
-
+      // Логика скачивания файла (осталась без изменений)
       let saveName = loadedFileName ? loadedFileName.replace(/(\.txt)?$/, '_edited.txt') : 'Map001_edited.txt';
       const blob = new Blob([exportLines.join('\n')], {type: 'text/plain'});
       const a = document.createElement('a');
@@ -2107,7 +2061,14 @@
       }
 
       alert(`Исправлено ${fixedCount} длинных диалогов.`);
-      renderTextBlocks(); // Перерисовываем редактор, чтобы увидеть изменения
+      
+      // Сначала обновляем состояние лампочки и ошибок
+      if (typeof window.updateMatchLamp === 'function') {
+        window.updateMatchLamp();
+      }
+
+      // Затем перерисовываем редактор, чтобы увидеть изменения
+      renderTextBlocks();
     }
 
     // === ОПТИМИЗИРОВАННЫЙ ОБРАБОТЧИК для кнопки "Разделить Строки" ===
@@ -2125,7 +2086,15 @@
       }
 
       if (hasSplitted) {
-        renderTextBlocks(); // Перерисовываем редактор один раз в самом конце.
+        // --- НАЧАЛО ИСПРАВЛЕНИЯ ---
+        // Сначала полностью пересчитываем ВСЕ ошибки (включая длину строк).
+        if (typeof window.updateMatchLamp === 'function') {
+          window.updateMatchLamp();
+        }
+        // --- КОНЕЦ ИСПРАВЛЕНИЯ ---
+
+        // И только потом перерисовываем редактор.
+        renderTextBlocks();
       } else {
         alert('Нет строк для разделения (все строки короче 50 символов).');
       }
