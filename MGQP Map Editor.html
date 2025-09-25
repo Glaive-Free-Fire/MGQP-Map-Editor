@@ -453,7 +453,9 @@
       }
 
       const jpContent = window.fullJapLines.join('\n');
-      const ruContent = window.fullRusLines.join('\n');
+      // Генерируем АКТУАЛЬНОЕ содержимое русского файла на лету
+      const currentRuLines = window.generateCurrentFileContentAsLines ? window.generateCurrentFileContentAsLines() : window.fullRusLines;
+      const ruContent = currentRuLines.join('\n');
       const result = window.checkMapStructureMatch(jpContent, ruContent);
 
       lampDiv.style.display = '';
@@ -1077,31 +1079,31 @@
       japBlocks.forEach((japBlock, japIndex) => {
         const matchedRusIndex = japaneseBlockMapping[japIndex];
 
-        if (matchedRusIndex !== -1) {
+          if (matchedRusIndex !== -1) {
           // Найден сопоставленный блок
           // Сначала добавляем все "осиротевшие" русские блоки между этим и предыдущим совпадением
-          for (let i = lastMatchedRusIndex + 1; i < matchedRusIndex; i++) {
-            if (textBlocks[i] && !rusBlocksUsed.has(i)) {
-              finalTextBlocks.push(textBlocks[i]);
-              rusBlocksUsed.add(i);
-            }
-          }
-          // Теперь добавляем сам сопоставленный блок
-          const rusBlock = textBlocks[matchedRusIndex];
+              for (let i = lastMatchedRusIndex + 1; i < matchedRusIndex; i++) {
+                  if (textBlocks[i] && !rusBlocksUsed.has(i)) {
+                      finalTextBlocks.push(textBlocks[i]);
+                      rusBlocksUsed.add(i);
+                  }
+              }
+              // Теперь добавляем сам сопоставленный блок
+              const rusBlock = textBlocks[matchedRusIndex];
           rusBlock.japaneseLink = { type: japBlock.type, text: japBlock.text };
-          finalTextBlocks.push(rusBlock);
-          rusBlocksUsed.add(matchedRusIndex);
+              finalTextBlocks.push(rusBlock);
+              rusBlocksUsed.add(matchedRusIndex);
           lastMatchedRusIndex = matchedRusIndex;
-        } else {
-          // Сопоставление не найдено, создаем плейсхолдер "ТРЕБУЕТСЯ ПЕРЕВОД"
-          let placeholderText = 'ТРЕБУЕТСЯ ПЕРЕВОД';
-          if (japBlock.blockType === 'ShowText' && japBlock.type === 'name') {
-            const nameMatch = japBlock.text.match(/^【(.*?)】/);
-            if (nameMatch && nameMatch[1]) {
-              placeholderText = `∾\n<∾∾C[6]${nameMatch[1]}∾∾C[0]>ТРЕБУЕТСЯ ПЕРЕВОД`;
-            }
-          }
-          finalTextBlocks.push({
+          } else {
+              // Сопоставление не найдено, создаем плейсхолдер "ТРЕБУЕТСЯ ПЕРЕВОД"
+              let placeholderText = 'ТРЕБУЕТСЯ ПЕРЕВОД';
+              if (japBlock.blockType === 'ShowText' && japBlock.type === 'name') {
+                  const nameMatch = japBlock.text.match(/^【(.*?)】/);
+                  if (nameMatch && nameMatch[1]) {
+                      placeholderText = `∾\n<∾∾C[6]${nameMatch[1]}∾∾C[0]>ТРЕБУЕТСЯ ПЕРЕВОД`;
+                  }
+              }
+              finalTextBlocks.push({
             idx: undefined, japIdx: japBlock.originalIdx, text: placeholderText,
             type: japBlock.blockType || 'ShowText', generated: true,
             commonEventId: japBlock.commonEventId, japaneseLink: { type: japBlock.type, text: japBlock.text }
@@ -1111,9 +1113,9 @@
 
       // Добавляем все оставшиеся русские блоки из конца файла
       for (let i = lastMatchedRusIndex + 1; i < textBlocks.length; i++) {
-        if (textBlocks[i] && !rusBlocksUsed.has(i)) {
-          finalTextBlocks.push(textBlocks[i]);
-        }
+          if (textBlocks[i] && !rusBlocksUsed.has(i)) {
+              finalTextBlocks.push(textBlocks[i]);
+          }
       }
 
       window.textBlocks = textBlocks = finalTextBlocks;
@@ -2577,6 +2579,11 @@
             textBlocks[i].isDeleted = true;
           }
         });
+
+        // --- Полный пересчет ошибок после изменения состояния ---
+        if (typeof window.updateMatchLamp === 'function') {
+          window.updateMatchLamp();
+        }
 
         // Перерисовываем редактор, чтобы удаленные строки исчезли.
         renderTextBlocks();
