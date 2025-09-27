@@ -86,6 +86,42 @@
     return (currentRuLines || []).join('\n');
   }
 
+  // Вспомогательная функция для слияния японских строк с именами в русский формат
+  function processAndMergeJpLines(jpEventLines) {
+    const resultLines = [];
+    let j = 0;
+    while (j < jpEventLines.length) {
+      const currentLine = jpEventLines[j];
+      const nextLine = (j + 1 < jpEventLines.length) ? jpEventLines[j + 1] : null;
+
+      // Ищем пару: ShowText(["【Имя】"]) + ShowText(["Текст"])
+      const nameMatch = currentLine.match(/^\s*ShowText\(\["【(.+?)】"\]\)/);
+      const textMatch = nextLine ? nextLine.match(/^\s*ShowText\(\["([\s\S]*?)"\]\)/) : null;
+
+      if (nameMatch && textMatch) {
+        const name = nameMatch[1];
+        const text = textMatch[1];
+        const indent = currentLine.match(/^(\s*)/) ? currentLine.match(/^(\s*)/)[1] : '';
+        
+        // Собираем строку в русском формате: \n<\\C[6]Имя\\C[0]>Текст
+        let mergedContent = `\\n<\\C[6]${name}\\C[0]>${text}`;
+        
+        // Экранируем кавычки и обратные слеши для вставки в команду ShowText(["..."])
+        mergedContent = mergedContent.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        
+        const mergedLine = `${indent}ShowText(["${mergedContent}"])`;
+        resultLines.push(mergedLine);
+        
+        j += 2; // Пропускаем обе обработанные японские строки
+      } else {
+        // Если пара не найдена, просто добавляем текущую строку
+        resultLines.push(currentLine);
+        j += 1;
+      }
+    }
+    return resultLines;
+  }
+
   /**
    * Создаёт содержимое исправленного файла, заменяя только те CommonEvent,
    * в которых были обнаружены структурные ошибки.
@@ -134,8 +170,11 @@
 
       if (mismatchedEventIds.has(eventNum)) {
         if (jpEvent) {
-          newFileLines.push(...jpEvent.header, ...jpEvent.lines, '');
-          console.log(`Заменён CommonEvent ${eventNum} на эталонную японскую версию.`);
+          // --- НАЧАЛО ИЗМЕНЕНИЯ ---
+          // Обрабатываем и сливаем строки с именами перед вставкой
+          const processedJpLines = processAndMergeJpLines(jpEvent.lines);
+          newFileLines.push(...jpEvent.header, ...processedJpLines, '');
+          // --- КОНЕЦ ИЗМЕНЕНИЯ ---
         }
       } else {
         if (ruEvent) {
@@ -1145,7 +1184,7 @@
     const restoreBtn = document.getElementById('restoreStructBtn');
     const fixScriptBtn = document.getElementById('fixScriptBtn');
     const fixIndentBtn = document.getElementById('fixIndentBtn');
-    const fixNameTagsBtn = document.getElementById('fixNameTagsBtn'); // Новая кнопка
+    const fixNameTagsBtn = document.getElementById('fixNameTagsBtn');
     const clearOrphanedBtn = document.getElementById('clearOrphanedBtn');
     const memorizeOrphanedBtn = document.getElementById('memorizeOrphanedBtn');
     
@@ -1155,7 +1194,7 @@
     const hasStructureErrors = window.hasStructureErrors();
     const hasScriptErrors = window.hasScriptErrors();
     const hasIndentErrors = window.hasIndentErrors();
-    const hasTagsErrors = window.hasNameTagErrors(); // Новая проверка
+    const hasTagsErrors = window.hasNameTagErrors();
     
     // Считаем количество "строк-огрызков"
     let orphanedCount = 0;
@@ -1168,16 +1207,21 @@
       });
     }
 
-    // Взаимоисключающие кнопки: при наличии огрызков не показываем восстановление
-    const showOrphaned = orphanedCount > 0;
-    restoreBtn.style.display = (hasStructureErrors && !showOrphaned) ? '' : 'none';
-    fixScriptBtn.style.display = hasScriptErrors ? '' : 'none';
-    fixIndentBtn.style.display = hasIndentErrors ? '' : 'none';
-    fixNameTagsBtn.style.display = hasTagsErrors ? '' : 'none'; // Новая строка
-    
-    // Показываем ОБЕ кнопки, если есть "огрызки"
+    // --- НАЧАЛО ИЗМЕНЕНИЯ: Новая логика отображения ---
+    // Показываем кнопки для "сирот" только если есть сироты И НЕТ структурных ошибок
+    const showOrphaned = (orphanedCount > 0 && !hasStructureErrors);
+
     clearOrphanedBtn.style.display = showOrphaned ? '' : 'none';
     memorizeOrphanedBtn.style.display = showOrphaned ? '' : 'none';
+    
+    // Кнопка "Безопасно исправить" теперь показывается только при наличии структурных ошибок
+    restoreBtn.style.display = hasStructureErrors ? '' : 'none';
+    // --- КОНЕЦ ИЗМЕНЕНИЯ ---
+    
+    // Остальные кнопки работают как раньше
+    fixScriptBtn.style.display = hasScriptErrors ? '' : 'none';
+    fixIndentBtn.style.display = hasIndentErrors ? '' : 'none';
+    fixNameTagsBtn.style.display = hasTagsErrors ? '' : 'none';
 
     if (orphanedCount > 0) {
       clearOrphanedBtn.title = `Удалить ${orphanedCount} строк без сопоставления с японским файлом`;
