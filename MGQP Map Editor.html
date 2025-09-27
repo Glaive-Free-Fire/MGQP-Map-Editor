@@ -272,15 +272,19 @@
     // НАЧАЛО ЗАМЕНЫ: Новая объединенная функция для вывода всех ошибок
     // =================================================================================
     window.updateMatchLamp = function() {
-      window.allErrorIndices.clear(); // <<< ДОБАВЬТЕ ЭТУ СТРОКУ
+      window.allErrorIndices.clear();
       const lampDiv = document.getElementById('matchLampContainer');
       const diffsDiv = document.getElementById('previewDiffs');
       let statHtml = '';
       let hasAnyErrors = false;
       let hasLongDialogueError = false;
 
+      // --- НАЧАЛО ИЗМЕНЕНИЯ: Сначала проверяем на наличие структурных ошибок ---
+      const hasStructuralErrors = (window.fullJapLines && window.fullJapLines.length > 0) ? window.hasStructureErrors() : false;
+      // --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
       const redLineErrors = [];
-      // --- Новая предварительная проверка синтаксиса ---
+      // Проверка синтаксиса
       if (window.fullRusLines && window.fullRusLines.length > 0) {
         const syntaxErrors = checkForSyntaxErrors(window.fullRusLines);
         redLineErrors.push(...syntaxErrors);
@@ -388,13 +392,9 @@
                   });
                   window.allErrorIndices.add(i); // << ДОБАВИТЬ
               }
-              // Проверяем на "лишние" строки, которые нуждаются в #+
-              if (block.type === 'ShowText' && window.japBlocks && window.japBlocks.length > 0 &&
-                  !window.isNameBlock(block.text) && // Это не строка с именем
-                  !block.japaneseLink &&             // У неё НЕТ пары в японском файле
-                  !block.generated &&                // Это не сгенерированный плейсхолдер
-                  !block.manualPlus)                 // И у неё еще нет метки #+
-              {
+              // --- НАЧАЛО ИЗМЕНЕНИЯ: Показываем рекомендацию только если НЕТ структурных ошибок ---
+              if (!hasStructuralErrors && block.type === 'ShowText' && window.japBlocks && window.japBlocks.length > 0 &&
+                  !window.isNameBlock(block.text) && !block.japaneseLink && !block.generated && !block.manualPlus) {
                   redLineErrors.push({
                       label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[продолжение]',
                       type: 'Рекомендация',
@@ -402,6 +402,7 @@
                   });
                   window.allErrorIndices.add(i);
               }
+              // --- КОНЕЦ ИЗМЕНЕНИЯ ---
               if (window.isNameBlock(block.text)) {
                   let precedingStructuralBlock = null;
                   for (let j = i - 1; j >= 0; j--) {
