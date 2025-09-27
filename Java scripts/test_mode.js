@@ -396,7 +396,7 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
     return events;
   }
 
-  // 2) Умный и безопасный компаратор (исправленный: проверяем отступы у всех ShowText, включая #+)
+  // 2) Умный и безопасный компаратор
   function compareEvents(jpEvents, ruEvents) {
     let grouped = [];
     for (const [eid, jpEv] of Object.entries(jpEvents)) {
@@ -408,21 +408,15 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
         const ruPage = (ruEv.pages[p] || []);
         let issues = [];
         let i = 0, j = 0;
-
-        // Эталонный отступ текущего диалогового блока
         let expectedIndent = null;
-
         while (i < jpPage.length || j < ruPage.length) {
           const jpLine = jpPage[i];
           const ruLine = ruPage[j];
           const jpCmd = jpLine?.command;
           const ruCmd = ruLine?.command;
-
-          // Проверяем отступ на каждой RU-строке ShowText, включая продолжения
           if (ruCmd === 'ShowText' && ruLine) {
             const isContinuation = ruLine.raw.trim().endsWith('#+');
             const isRuNameBlock = ruLine.raw.includes('<\\C[6]');
-            // Начало диалога: не продолжение или явно строка имени
             if (!isContinuation || isRuNameBlock) {
               expectedIndent = (jpLine?.raw.match(/^(\s*)/) || ['', ''])[1];
             }
@@ -432,53 +426,41 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
                 const already = issues.some(e => e.ruLineNum === ruLine.lineNum && e.msg.includes('отступ'));
                 if (!already) {
                   issues.push({
-                    line: ruLine.lineNum + 1,
-                    msg: `Неправильный отступ в блоке диалога.`,
-                    jp: `(Эталонный отступ: "${expectedIndent.replace(/\s/g, '␣')}")`,
-                    ru: ruLine.raw,
-                    jpLineNum: jpLine?.lineNum,
-                    ruLineNum: ruLine.lineNum,
-                    isFixableIndent: true,
-                    correctIndent: expectedIndent
+                    line: ruLine.lineNum + 1, msg: `Неправильный отступ в блоке диалога.`,
+                    jp: `(Эталонный отступ: "${expectedIndent.replace(/\s/g, '␣')}")`, ru: ruLine.raw,
+                    jpLineNum: jpLine?.lineNum, ruLineNum: ruLine.lineNum, isFixableIndent: true, correctIndent: expectedIndent
                   });
                 }
               }
             }
           } else {
-            // Вышли из диалогового блока
             expectedIndent = null;
           }
-
-          // Для структурного сравнения пропускаем только RU-продолжения (#+)
           if (ruPage[j] && ruPage[j].raw.trim().endsWith('#+')) { j++; continue; }
-
-          // Учет JP: Имя + Диалог (2 строки) против одной RU-строки
           if (jpCmd === 'ShowText' || ruCmd === 'ShowText') {
             const isJpNameLine = jpLine?.raw.includes('["【');
             if (isJpNameLine && (jpPage[i + 1]?.command === 'ShowText') && !jpPage[i + 1]?.raw.includes('["【')) {
-              if (ruCmd === 'ShowText') {
-                i += 2; // JP: имя + диалог
-                j += 1; // RU: одна объединенная строка
-                continue;
-              }
+              if (ruCmd === 'ShowText') { i += 2; j += 1; continue; }
             }
-            // Допустим «лишние» RU ShowText
             if (ruCmd === 'ShowText' && !jpLine) { j++; continue; }
           }
-
-          // Строгая проверка команд
           if (!jpLine || !ruLine || jpCmd !== ruCmd) {
+            // --- НАЧАЛО ИЗМЕНЕНИЯ ---
+            // Собираем контекст: строки до и после ошибки
             issues.push({
               line: ruLine?.lineNum + 1 || jpLine?.lineNum + 1,
               msg: `Нарушение структуры: ожидалась команда <b>${jpCmd || '—'}</b>, а найдена <b>${ruCmd || '—'}</b>`,
               jp: jpLine?.raw || '',
               ru: ruLine?.raw || '',
               jpLineNum: jpLine?.lineNum,
-              ruLineNum: ruLine?.lineNum
+              ruLineNum: ruLine?.lineNum,
+              // Добавляем контекст
+              jpContext: { before: jpPage[i - 1]?.raw, after: jpPage[i + 1]?.raw },
+              ruContext: { before: ruPage[j - 1]?.raw, after: ruPage[j + 1]?.raw }
             });
+            // --- КОНЕЦ ИЗМЕНЕНИЯ ---
             break;
           }
-
           i++; j++;
         }
         eventGroup.pages.push({ page: p, ok: issues.length === 0, errors: issues });
