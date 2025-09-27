@@ -488,9 +488,36 @@
                           if (err.jpLineNum !== undefined) { linePointers.push(`JP: ${err.jpLineNum + 1}`); }
                           if (err.ruLineNum !== undefined) { linePointers.push(`RU: ${err.ruLineNum + 1}`); }
                           const lineInfo = linePointers.length > 0 ? `<span style="color:#555; background:#eee; padding: 2px 5px; border-radius:3px; font-size:12px; margin-right:8px;">${linePointers.join(' | ')}</span>` : '';
+                          
                           statHtml += `<div style='color:#b00; margin-left:12px; margin-bottom:8px;'>${branchEndInfo}${lineInfo}<b>Строка ${err.line}:</b> ${err.msg}<br>`;
-                          if (err.jp || err.ru) {
-                              statHtml += `<div style='font-size:13px; margin-top:2px;'><span style='color:#444;'>JP:</span> <pre style='display:inline; background:#f7f7f7; border-radius:4px; padding:2px 6px;'>${(err.jp||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre><br><span style='color:#444;'>RU:</span> <pre style='display:inline; background:#f7f7f7; border-radius:4px; padding:2px 6px;'>${(err.ru||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre></div>`;
+                          
+                          // --- НАЧАЛО ИЗМЕНЕНИЯ: Отображение контекста ошибки ---
+                          const escapeHtml = (text) => (text || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+                          // Функция для создания блока контекста
+                          const createContextBlock = (lang, context, errorLine) => {
+                            if (!context) return '';
+                            let blockHtml = `<div style='font-size:13px; margin-top:4px; background:#f7f7f7; border-radius:4px; padding:4px 8px; border: 1px solid #ddd;'><span style='color:#444; font-weight:bold;'>${lang} Context:</span><pre style='margin:0; padding:0; display:block;'>`;
+                            if (context.before) {
+                                blockHtml += `<span style='opacity:0.6;'>${escapeHtml(context.before)}</span>\n`;
+                            }
+                            blockHtml += `<strong style='color:#b00; background-color: #ffe0e0;'>${escapeHtml(errorLine)}</strong>\n`;
+                            if (context.after) {
+                                blockHtml += `<span style='opacity:0.6;'>${escapeHtml(context.after)}</span>`;
+                            }
+                            blockHtml += `</pre></div>`;
+                            return blockHtml;
+                          };
+
+                          if (err.jpContext || err.ruContext) {
+                            statHtml += createContextBlock('JP', err.jpContext, err.jp);
+                            statHtml += createContextBlock('RU', err.ruContext, err.ru);
+                          } 
+                          // --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
+                          // Старый блок отображения оставляем на случай, если контекста нет
+                          else if (err.jp || err.ru) {
+                              statHtml += `<div style='font-size:13px; margin-top:2px;'><span style='color:#444;'>JP:</span> <pre style='display:inline; background:#f7f7f7; border-radius:4px; padding:2px 6px;'>${escapeHtml(err.jp)}</pre><br><span style='color:#444;'>RU:</span> <pre style='display:inline; background:#f7f7f7; border-radius:4px; padding:2px 6px;'>${escapeHtml(err.ru)}</pre></div>`;
                           }
                           statHtml += `</div>`;
                       });
