@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <title>MGQP Map Editor v1.4.60</title>
+  <title>MGQP Map Editor v1.4.70</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="Java scripts/main_script.js"></script>
   <script src="Java scripts/restore-mode.js"></script>
@@ -13,6 +13,27 @@
     textarea { width: 100%; height: 60px; box-sizing: border-box; }
     .block { margin-bottom: 20px; padding: 10px; border: 1px solid #ddd; border-radius: 6px; }
     label { font-weight: bold; }
+      /* Контейнер для textarea и линейки */
+      .field-wrapper { position: relative; }
+      /* Стили для "линейки" под полем ввода */
+      .limit-ruler {
+        position: relative;
+        height: 5px;
+        background-color: #f0f0f0;
+        border-top: 1px solid #ccc;
+        border-bottom-left-radius: 3px;
+        border-bottom-right-radius: 3px;
+        margin-top: -1px;
+        display: none;
+      }
+      /* Красная отметка позиции 50-го символа */
+      .limit-marker {
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 2px;
+        background-color: rgba(255, 0, 0, 0.6);
+      }
     .control-panel {
       position: fixed;
       top: 20px;
@@ -338,10 +359,15 @@
               if (block.isDeleted) return;
               if (block.type === 'ShowText' || block.type === undefined) {
                   const info = window.getGameTextInfo(block.text);
-                  const visibleText = info.rawGameText
-                      .replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/g, '').replace(/∾∾C\[\d+\]/g, '')
-                      .replace(/C\[\d+\]/g, '').replace(/∾/g, '').replace(/∿/g, '').trim();
-                  const len = visibleText.length;
+                  const len = (window.getVisibleTextMetrics ? window.getVisibleTextMetrics(block.text).length : (function(){
+                    const v = info.rawGameText
+                      .replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/g, '')
+                      .replace(/∾∾[A-Z](\[\d+\])?/g, '')
+                      .replace(/∾/g, '')
+                      .replace(/∿/g, '')
+                      .trim();
+                    return v.length;
+                  })());
                   if (len > 50) {
                       redLineErrors.push({
                           label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[продолжение]',
@@ -384,14 +410,18 @@
                       }
                   }
               }
-              if (block.type !== 'Name' && block.type !== 'Comment' && block.type !== 'JumpToLabel' && block.type !== 'Label' && /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.text)) {
-                  redLineErrors.push({
-                      label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[продолжение]',
-                      type: 'Ошибка строки',
-                      reason: 'Обнаружен японский текст'
-                  });
-                  window.allErrorIndices.add(i); // << ДОБАВИТЬ
+              // Запускаем проверку на японский текст, ТОЛЬКО если у блока нет маркера-игнора
+              if (!block.hasIgnoreMarker) {
+                if (block.type !== 'Name' && block.type !== 'Comment' && block.type !== 'JumpToLabel' && block.type !== 'Label' && /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.text)) {
+                    redLineErrors.push({
+                        label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[продолжение]',
+                        type: 'Ошибка строки',
+                        reason: 'Обнаружен японский текст'
+                    });
+                    window.allErrorIndices.add(i);
+                }
               }
+              // <<< КОНЕЦ ИЗМЕНЕНИЯ >>>
               // --- НАЧАЛО ИЗМЕНЕНИЯ: Показываем рекомендацию только если НЕТ структурных ошибок ---
               if (!hasStructuralErrors && block.type === 'ShowText' && window.japBlocks && window.japBlocks.length > 0 &&
                   !window.isNameBlock(block.text) && !block.japaneseLink && !block.generated && !block.manualPlus) {
@@ -692,7 +722,7 @@
 
       const tempBlocks = [];
       let currentEventId = null;
-      const textCmdRegex = /^\s*ShowText\(\["([\s\S]*?)"\]\)/;
+      const textCmdRegex = /^\s*ShowText\(\["([\s\S]*?)"\]\)(.*)/;
       const showChoicesRegex = /^\s*ShowChoices\(\[\[(.*)\],\s*(\d+)\]\)/;
       const whenRegex = /^\s*When\(\[(\d+),\s*"(.*)"\]\)/;
       const otherRegex = /^\s*(\w+)\(\[(.*)\]\)/;
@@ -707,7 +737,10 @@
         
         let match;
         if ((match = line.match(textCmdRegex))) {
-          tempBlocks.push({ text: match[1], type: 'ShowText', originalIdx: idx, line: line, commonEventId: currentEventId });
+          const textContent = match[1];
+          const trailingContent = match[2] || '';
+          const hasIgnoreMarker = trailingContent.trim().startsWith('##');
+          tempBlocks.push({ text: textContent, type: 'ShowText', originalIdx: idx, line: line, commonEventId: currentEventId, hasIgnoreMarker: hasIgnoreMarker });
         } else if ((match = line.match(showChoicesRegex))) {
           let choicesText = match[1];
           const choices = choicesText.split(/\s*\|\s*/).map(c => c.replace(/^"|"$/g, ''));
@@ -748,10 +781,16 @@
           const name = affinityMatch[1];
           const variable = affinityMatch[2].replace(/\\/g, '∾∾');
           const newText = `∾\n<∾∾C[6]${name}∾∾C[0]>(Уровень симпатии: ${variable})`;
-          textBlocks.push({ idx: currentBlock.originalIdx, text: newText, type: 'ShowText', generated: /#\+/.test(currentBlock.line), manualPlus: /#\+/.test(currentBlock.line) && currentBlock.originalIdx !== undefined, commonEventId: currentBlock.commonEventId });
+          textBlocks.push({ idx: currentBlock.originalIdx, text: newText, type: 'ShowText', generated: /#\+/.test(currentBlock.line), manualPlus: /#\+/.test(currentBlock.line) && currentBlock.originalIdx !== undefined, commonEventId: currentBlock.commonEventId, hasIgnoreMarker: currentBlock.hasIgnoreMarker }); // <<< ИЗМЕНЕНИЕ
         } else if (currentBlock.type === 'ShowText' && window.isNameBlock(rawText)) {
           let combinedText = currentBlock.text;
-          if (
+          
+          const specialTemplateRegex = /^\\n<\\C\[\d+\].*\\C\[0\]>\((Уровень симпатии:|Найдено мастеров:).*?\)$/;
+          if (specialTemplateRegex.test(rawText.trim()) && i + 1 < tempBlocks.length && tempBlocks[i + 1].type === 'ShowText') {
+              combinedText += '\n' + tempBlocks[i + 1].text;
+              i++;
+          }
+          else if (
             i + 1 < tempBlocks.length &&
             tempBlocks[i + 1].type === 'ShowText' &&
             !window.isNameBlock(tempBlocks[i + 1].text.replace(/^"(.*)"$/, '$1'))
@@ -763,10 +802,10 @@
             .replace(/^"(.*)"$/, '$1')
             .replace(/\\n/g, '\n')
             .replace(/\\/g, '∾');
-          textBlocks.push({ idx: currentBlock.originalIdx, text: finalText, type: 'ShowText', generated: /#\+/.test(currentBlock.line), manualPlus: /#\+/.test(currentBlock.line) && currentBlock.originalIdx !== undefined, commonEventId: currentBlock.commonEventId });
+          textBlocks.push({ idx: currentBlock.originalIdx, text: finalText, type: 'ShowText', generated: /#\+/.test(currentBlock.line), manualPlus: /#\+/.test(currentBlock.line) && currentBlock.originalIdx !== undefined, commonEventId: currentBlock.commonEventId, hasIgnoreMarker: currentBlock.hasIgnoreMarker }); // <<< ИЗМЕНЕНИЕ
         } else {
           const text = currentBlock.text.replace(/^"(.*)"$/, '$1').replace(/\\n/g, '\n').replace(/\\/g, '∾');
-          const newBlock = { idx: currentBlock.originalIdx, text: (currentBlock.type === 'ShowChoices') ? currentBlock.text : text, type: currentBlock.type, generated: /#\+/.test(currentBlock.line), manualPlus: /#\+/.test(currentBlock.line) && currentBlock.originalIdx !== undefined, choices: currentBlock.choices, defaultChoice: currentBlock.defaultChoice, choiceIndex: currentBlock.choiceIndex, commonEventId: currentBlock.commonEventId };
+          const newBlock = { idx: currentBlock.originalIdx, text: (currentBlock.type === 'ShowChoices') ? currentBlock.text : text, type: currentBlock.type, generated: /#\+/.test(currentBlock.line), manualPlus: /#\+/.test(currentBlock.line) && currentBlock.originalIdx !== undefined, choices: currentBlock.choices, defaultChoice: currentBlock.defaultChoice, choiceIndex: currentBlock.choiceIndex, commonEventId: currentBlock.commonEventId, hasIgnoreMarker: currentBlock.hasIgnoreMarker }; // <<< ИЗМЕНЕНИЕ
           
           if (newBlock.generated && textBlocks.length > 0) {
             for (let j = textBlocks.length - 1; j >= 0; j--) {
@@ -803,9 +842,8 @@
         let match;
         if ((match = line.match(textCmdRegex))) {
           const textContent = match[1];
-          if (textContent.trim() !== '') {
-            tempBlocks.push({ text: textContent, type: 'ShowText', originalIdx: idx, commonEventId: currentEventId });
-          }
+          // <<< ИЗМЕНЕНИЕ: Убираем проверку, чтобы парсить ВСЕ ShowText, включая пустые >>>
+          tempBlocks.push({ text: textContent, type: 'ShowText', originalIdx: idx, commonEventId: currentEventId });
         } else if ((match = line.match(displayNameRegex))) {
           window.japDisplayName = match[1];
         } else if ((match = line.match(showChoicesRegex))) {
@@ -1212,8 +1250,13 @@
       
       textBlocks.forEach((block, i) => {
 
-        // --- ДОБАВИТЬ ЭТУ СТРОКУ ---
         if (block.isDeleted) return; // Пропускаем удаленные блоки
+
+        // <<< НАЧАЛО ИЗМЕНЕНИЯ: Пропускаем рендеринг пустых ShowText >>>
+        if (block.type === 'ShowText' && block.text.trim() === '') {
+          return;
+        }
+        // <<< КОНЕЦ ИЗМЕНЕНИЯ >>>
         
 
         // Показываем только текстовые типы данных
@@ -1274,6 +1317,12 @@
           div.appendChild(pre);
         }
 
+        // --- НАЧАЛО ПРАВИЛЬНОГО БЛОКА ---
+        // 1. Контейнер для поля и линейки
+        const fieldWrapper = document.createElement('div');
+        fieldWrapper.className = 'field-wrapper';
+
+        // 2. Поле ввода
         const textarea = document.createElement('textarea');
         textarea.value = block.text;
         // вешаем слушатели, чтобы активировать кнопку при выделении
@@ -1282,12 +1331,26 @@
         textarea.addEventListener('mouseup', updateWrapBtn);
         textarea.addEventListener('blur',    updateWrapBtn);
         textarea.setAttribute('data-block', i);
-        div.appendChild(textarea);
+        fieldWrapper.appendChild(textarea);
 
-        // --- Сохраняем ссылку на textarea для дубликат-логики ---
+        // 3. Линейка и маркер
+        const limitRuler = document.createElement('div');
+        limitRuler.className = 'limit-ruler';
+        const limitMarker = document.createElement('div');
+        limitMarker.className = 'limit-marker';
+        limitRuler.appendChild(limitMarker);
+        fieldWrapper.appendChild(limitRuler);
+
+        // 4. Добавляем контейнер в DOM
+        div.appendChild(fieldWrapper);
+
+        // 5. Сохраняем ссылки
         block.dom = block.dom || {};
         block.dom.rusInput = textarea;
+        block.dom.limitRuler = limitRuler;
+        block.dom.limitMarker = limitMarker;
 
+        // 6. Счётчик и кнопки под контейнером
         const counter = document.createElement('div');
         counter.style.fontSize = '12px';
         counter.style.color = '#888';
@@ -1297,9 +1360,9 @@
         const plusBtn = document.createElement('button');
         const minusBtn = document.createElement('button');
         
-        div.appendChild(document.createElement('br'));
         div.appendChild(plusBtn);
         div.appendChild(minusBtn);
+        // --- КОНЕЦ ПРАВИЛЬНОГО БЛОКА ---
         
         // --- Расширенная обработка дубликатов японского текста ---
         if (block.type === 'ShowText' && block.japaneseLink && block.japaneseLink.text) {
@@ -1647,7 +1710,7 @@
           }
           
           // И только потом перерисовываем редактор
-          renderTextBlocks();
+            renderTextBlocks();
           restoreEditorBlockPosition(); 
         };
         
@@ -1695,147 +1758,147 @@
       }
 
       let exportLines = [];
-      let newLines = [...originalLines];
-      const blockMap = new Map();
-      textBlocks.forEach(block => {
-        if (block.idx !== undefined) {
-          blockMap.set(block.idx, block);
-        }
-      });
-
-      const originalIdxToPosMap = new Map();
-
-      // 1. Обновляем Display Name
-      let displayNameLine = `Display Name = "${mapDisplayName}"`;
-      let foundDisplayName = false;
-      for (let i = 0; i < newLines.length; i++) {
-        if (/^\s*Display Name\s*=/.test(newLines[i])) {
-          newLines[i] = displayNameLine;
-          foundDisplayName = true;
-          break;
-        }
-      }
-      if (!foundDisplayName) {
-        newLines.unshift(displayNameLine);
-      }
-      
-      // 2. Собираем итоговый файл, проходя по оригинальным строкам
-      for (let i = 0; i < newLines.length; i++) {
-        const originalLine = newLines[i];
-        const block = blockMap.get(i);
-        
-        if (block) {
-          if (block.isDeleted) {
-            continue;
+        let newLines = [...originalLines];
+        const blockMap = new Map();
+        textBlocks.forEach(block => {
+          if (block.idx !== undefined) {
+            blockMap.set(block.idx, block);
           }
-          const indentMatch = originalLine.match(/^\s*/);
-          const indent = indentMatch ? indentMatch[0] : '';
+        });
+
+        const originalIdxToPosMap = new Map();
+
+        // 1. Обновляем Display Name
+        let displayNameLine = `Display Name = "${mapDisplayName}"`;
+        let foundDisplayName = false;
+        for (let i = 0; i < newLines.length; i++) {
+          if (/^\s*Display Name\s*=/.test(newLines[i])) {
+            newLines[i] = displayNameLine;
+            foundDisplayName = true;
+            break;
+          }
+        }
+        if (!foundDisplayName) {
+          newLines.unshift(displayNameLine);
+        }
+        
+        // 2. Собираем итоговый файл, проходя по оригинальным строкам
+        for (let i = 0; i < newLines.length; i++) {
+          const originalLine = newLines[i];
+          const block = blockMap.get(i);
+          
+          if (block) {
+            if (block.isDeleted) {
+              continue;
+            }
+            const indentMatch = originalLine.match(/^\s*/);
+            const indent = indentMatch ? indentMatch[0] : '';
           let formattedLine = originalLine;
 
-          switch (block.type) {
-            case 'ShowText':
-              formattedLine = originalLine.replace(/\[(.*)\]/, `["${formatShowTextContent(block.text)}"]`);
-              break;
-            case 'ShowTextAttributes':
-              let attrText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
-              const attrHasQuotes = /\["(.*)"\]/.test(originalLine);
+            switch (block.type) {
+              case 'ShowText':
+                formattedLine = originalLine.replace(/\[(.*)\]/, `["${formatShowTextContent(block.text)}"]`);
+                break;
+              case 'ShowTextAttributes':
+                let attrText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+                const attrHasQuotes = /\["(.*)"\]/.test(originalLine);
               if (attrHasQuotes) { formattedLine = originalLine.replace(/\["(.*)"\]/, `["${attrText}"]`); } 
               else { formattedLine = originalLine.replace(/\[(.*)\]/, `[${attrText}]`); }
-              break;
-            case 'Script':
-              let scriptText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
-              let escapedScriptText = scriptText.replace(/(?<!\\)"/g, '\\"');
-              formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedScriptText}"]`);
-              break;
-            case 'ScriptMore':
-              let scriptMoreText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
-              let escapedScriptMoreText = scriptMoreText.replace(/(?<!\\)"/g, '\\"');
-              formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedScriptMoreText}"]`);
-              break;
-            case 'Label':
-              let labelText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
-              const labelHasQuotes = /\["(.*)"\]/.test(originalLine);
+                break;
+              case 'Script':
+                let scriptText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+                let escapedScriptText = scriptText.replace(/(?<!\\)"/g, '\\"');
+                formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedScriptText}"]`);
+                break;
+              case 'ScriptMore':
+                let scriptMoreText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+                let escapedScriptMoreText = scriptMoreText.replace(/(?<!\\)"/g, '\\"');
+                formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedScriptMoreText}"]`);
+                break;
+              case 'Label':
+                let labelText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+                const labelHasQuotes = /\["(.*)"\]/.test(originalLine);
               if (labelHasQuotes) { formattedLine = originalLine.replace(/\["(.*)"\]/, `["${labelText}"]`); } 
               else { formattedLine = originalLine.replace(/\[(.*)\]/, `[${labelText}]`); }
-              break;
-            case 'JumpToLabel':
-              let jumpText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
-              const jumpHasQuotes = /\["(.*)"\]/.test(originalLine);
+                break;
+              case 'JumpToLabel':
+                let jumpText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+                const jumpHasQuotes = /\["(.*)"\]/.test(originalLine);
               if (jumpHasQuotes) { formattedLine = originalLine.replace(/\["(.*)"\]/, `["${jumpText}"]`); } 
               else { formattedLine = originalLine.replace(/\[(.*)\]/, `[${jumpText}]`); }
-              break;
-            case 'Name':
-              let nameText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
-              const nameHasQuotes = /\["(.*)"\]/.test(originalLine);
+                break;
+              case 'Name':
+                let nameText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+                const nameHasQuotes = /\["(.*)"\]/.test(originalLine);
               if (nameHasQuotes) { formattedLine = originalLine.replace(/\["(.*)"\]/, `["${nameText}"]`); } 
               else { formattedLine = originalLine.replace(/\[(.*)\]/, `[${nameText}]`); }
-              break;
-            case 'ShowChoices':
-              let choicesText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
-              const choices = choicesText.split(/\s*\|\s*/);
-              const quotedChoices = choices.map(choice => `"${choice.trim()}"`).join(' | ');
-              formattedLine = originalLine.replace(/\[\[(.*?)\],\s*(\d+)\]/, `[[${quotedChoices}], $2]`);
-              break;
-            case 'When':
-              let whenText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
-              const whenHasQuotes = /\[(\d+),\s*"(.*)"\]/.test(originalLine);
+                break;
+              case 'ShowChoices':
+                let choicesText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+                const choices = choicesText.split(/\s*\|\s*/);
+                const quotedChoices = choices.map(choice => `"${choice.trim()}"`).join(', ');
+                formattedLine = originalLine.replace(/\[\[(.*?)\],\s*(\d+)\]/, `[[${quotedChoices}], $2]`);
+                break;
+              case 'When':
+                let whenText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+                const whenHasQuotes = /\[(\d+),\s*"(.*)"\]/.test(originalLine);
               if (whenHasQuotes) { formattedLine = originalLine.replace(/\[(\d+),\s*"(.*)"\]/, `[$1, "${whenText}"]`); } 
               else { formattedLine = originalLine.replace(/\[(\d+),\s*(.*)\]/, `[$1, ${whenText}]`); }
-              break;
-            default:
-              formattedLine = originalLine;
-              break;
+                break;
+              default:
+                formattedLine = originalLine;
+                break;
+            }
+            exportLines.push(indent + formattedLine.trimStart());
+            originalIdxToPosMap.set(block.idx, exportLines.length - 1);
+          } else {
+            exportLines.push(originalLine);
           }
-          exportLines.push(indent + formattedLine.trimStart());
-          originalIdxToPosMap.set(block.idx, exportLines.length - 1);
-        } else {
-          exportLines.push(originalLine);
         }
-      }
-      
+        
       // 3. Вставляем новые строки (сгенерированные редактором)
-      const generatedBlocksByAnchor = new Map();
-      textBlocks.forEach(block => {
-        if (block.idx === undefined && !block.isDeleted) {
+        const generatedBlocksByAnchor = new Map();
+        textBlocks.forEach(block => {
+          if (block.idx === undefined && !block.isDeleted) {
           if (block.text.includes('ТРЕБУЕТСЯ ПЕРЕВОД')) return;
-          let anchorIdx = -1;
-          for (let j = textBlocks.indexOf(block) - 1; j >= 0; j--) {
-            if (textBlocks[j].idx !== undefined) {
-              anchorIdx = textBlocks[j].idx;
-              break;
+                let anchorIdx = -1;
+            for (let j = textBlocks.indexOf(block) - 1; j >= 0; j--) {
+              if (textBlocks[j].idx !== undefined) {
+                        anchorIdx = textBlocks[j].idx;
+                        break;
+                    }
+                }
+                if (!generatedBlocksByAnchor.has(anchorIdx)) {
+                    generatedBlocksByAnchor.set(anchorIdx, []);
+                }
+                generatedBlocksByAnchor.get(anchorIdx).push(block);
             }
-          }
-          if (!generatedBlocksByAnchor.has(anchorIdx)) {
-            generatedBlocksByAnchor.set(anchorIdx, []);
-          }
-          generatedBlocksByAnchor.get(anchorIdx).push(block);
-        }
-      });
+        });
 
-      const sortedAnchors = Array.from(generatedBlocksByAnchor.keys()).sort((a, b) => b - a);
-      sortedAnchors.forEach(anchorIdx => {
-        const blocksToInsert = generatedBlocksByAnchor.get(anchorIdx);
-        const anchorPosition = (anchorIdx === -1) ? -1 : originalIdxToPosMap.get(anchorIdx);
-        if (anchorPosition !== undefined) {
-          const linesToInsert = blocksToInsert.map(block => {
-            let parentIndent = '    ';
-            if (anchorIdx !== -1) {
-              const parentOriginalLine = newLines[anchorIdx];
-              if (parentOriginalLine) {
-                const indentMatch = parentOriginalLine.match(/^\s*/);
-                parentIndent = indentMatch ? indentMatch[0] : '    ';
-              }
-            }
-            const marker = block.isManualContinuation ? ' #+' : '';
-            if (block.type === 'ShowTextAttributes') {
-              return `${parentIndent}ShowTextAttributes([${block.text}])${marker}`;
+        const sortedAnchors = Array.from(generatedBlocksByAnchor.keys()).sort((a, b) => b - a);
+        sortedAnchors.forEach(anchorIdx => {
+            const blocksToInsert = generatedBlocksByAnchor.get(anchorIdx);
+            const anchorPosition = (anchorIdx === -1) ? -1 : originalIdxToPosMap.get(anchorIdx);
+            if (anchorPosition !== undefined) {
+                const linesToInsert = blocksToInsert.map(block => {
+                    let parentIndent = '    ';
+                    if (anchorIdx !== -1) {
+                        const parentOriginalLine = newLines[anchorIdx];
+                        if (parentOriginalLine) {
+                            const indentMatch = parentOriginalLine.match(/^\s*/);
+                            parentIndent = indentMatch ? indentMatch[0] : '    ';
+                        }
+                    }
+                    const marker = block.isManualContinuation ? ' #+' : '';
+                    if (block.type === 'ShowTextAttributes') {
+                        return `${parentIndent}ShowTextAttributes([${block.text}])${marker}`;
             } else {
-              return `${parentIndent}ShowText(["${formatShowTextContent(block.text)}"])${marker}`;
+                        return `${parentIndent}ShowText(["${formatShowTextContent(block.text)}"])${marker}`;
             }
-          });
-          exportLines.splice(anchorPosition + 1, 0, ...linesToInsert);
-        }
-      });
+                });
+                exportLines.splice(anchorPosition + 1, 0, ...linesToInsert);
+          }
+        });
       return exportLines;
     }
 
@@ -2129,6 +2192,31 @@
     };
 
     // Собирает актуальный список индексов красных textarea
+    // Возвращает css-left для маркера на позиции 50 видимых символов
+    function calculateLimitLinePosition(textarea, text, prefixText) {
+      const style = window.getComputedStyle(textarea);
+      const paddingLeft = parseFloat(style.paddingLeft);
+      const font = style.font;
+
+      const span = document.createElement('span');
+      span.style.font = font;
+      span.style.visibility = 'hidden';
+      span.style.position = 'absolute';
+      span.style.whiteSpace = 'pre';
+      document.body.appendChild(span);
+
+      // ширина префикса (тег имени)
+      span.textContent = prefixText || '';
+      const prefixWidth = span.offsetWidth;
+
+      // ширина первых 50 символов диалога
+      const textToMeasure = (text || '').substring(0, 50);
+      span.textContent = textToMeasure;
+      const textWidth = span.offsetWidth;
+
+      document.body.removeChild(span);
+      return (paddingLeft + prefixWidth + textWidth) + 'px';
+    }
     function updateRedIndices() {
       // Теперь мы не ищем ошибки заново, а просто берем их из глобального списка,
       // который заполнила функция updateMatchLamp.
@@ -2138,11 +2226,33 @@
       textBlocks.forEach((block, i) => {
         if (block.isDeleted) return;
         const ta = block.dom?.rusInput;
+        const ruler = block.dom?.limitRuler;
+        const marker = block.dom?.limitMarker;
         if (!ta) return;
-        if (redIndices.includes(i)) {
-          ta.style.backgroundColor = '#ffd6d6';
+        const hasError = redIndices.includes(i);
+        ta.style.backgroundColor = hasError ? '#ffd6d6' : '';
+
+        // Управляем линейкой только для ShowText
+        if (ruler && marker && (block.type === 'ShowText' || block.type === undefined)) {
+          const info = window.getGameTextInfo(block.text);
+          const metrics = window.getVisibleTextMetrics ? window.getVisibleTextMetrics(block.text) : (function(){
+            const t = info.rawGameText
+              .replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/g, '')
+              .replace(/∾∾[A-Z](\[\d+\])?/g, '')
+              .replace(/∾/g, '')
+              .replace(/∿/g, '')
+              .trim();
+            return { text: t, length: t.length };
+          })();
+          const visibleText = metrics.text;
+          if (hasError && visibleText.length > 50) {
+            marker.style.left = calculateLimitLinePosition(ta, visibleText, info.fullPrefix);
+            ruler.style.display = 'block';
         } else {
-          ta.style.backgroundColor = '';
+            ruler.style.display = 'none';
+          }
+        } else if (ruler) {
+          ruler.style.display = 'none';
         }
       });
       
@@ -2335,7 +2445,7 @@
             });
           }
           // --- Ошибка: наличие японского текста (исключаем блоки типа Name, Comment, JumpToLabel и Label) ---
-          if (block.type !== 'Name' && block.type !== 'Comment' && block.type !== 'JumpToLabel' && block.type !== 'Label' && /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.text)) {
+          if (!block.hasIgnoreMarker && block.type !== 'Name' && block.type !== 'Comment' && block.type !== 'JumpToLabel' && block.type !== 'Label' && /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.text)) {
             errors.push({
               idx: block.idx,
               label: block.idx !== undefined ? `строка ${block.idx+1}` : '[продолжение]',
