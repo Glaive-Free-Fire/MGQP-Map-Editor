@@ -1,4 +1,4 @@
-# MGQP Map Editor v1.4.60
+# MGQP Map Editor v1.4.70
 
 **A modern web-based tool for editing and batch-fixing RPG Maker XP map/event files, with advanced support for translation workflows (RU/JP), structure validation, and mass error correction.**
 
@@ -48,6 +48,9 @@
 - **Comprehensive Logging:** Detailed diagnostic logging for troubleshooting complex file structure issues.
 - **Type-Aware Block Matching:** Advanced matching algorithm that considers block types for more accurate Russian-Japanese correspondence.
 - **CommonEvent Boundary Respect:** Strict adherence to CommonEvent boundaries prevents cross-contamination of blocks between different events.
+- **Japanese Text Ignore Marker:** New `##` marker support allows ignoring Japanese text in specific lines from error detection.
+- **Empty ShowText Handling:** Improved processing of empty ShowText blocks with proper matching and interface hiding.
+- **Special Template Support:** Enhanced support for special text patterns like "Уровень симпатии" and "Найдено мастеров".
 
 ---
 
@@ -67,6 +70,7 @@
    - Use the "-" button to remove blocks (soft deletion preserves structure).
    - Use the **Split Lines** button to automatically split all long text blocks in the file at once.
    - **NEW:** Related blocks (JumpToLabel/Label, Script/ScriptMore) are automatically synchronized when you edit one of them.
+   - **NEW:** Use `##` marker at the end of ShowText lines to ignore Japanese text detection for that line.
 
 3. **Undo/Redo:**
    - Use the ↺ and ↻ buttons or Ctrl+Z / Ctrl+Y to undo/redo changes.
@@ -146,6 +150,58 @@
 - **Enhanced Diagnostics:** Comprehensive logging system provides detailed insights for troubleshooting complex issues.
 - **Type-Aware Matching:** Advanced algorithm considers block types for more accurate Russian-Japanese correspondence.
 - **Boundary Respect:** Strict adherence to CommonEvent boundaries prevents cross-contamination between different events.
+- **Japanese Text Ignore Marker:** Use `##` at the end of ShowText lines to exclude them from Japanese text error detection.
+- **Empty ShowText Processing:** Empty ShowText blocks are properly matched with Japanese counterparts but hidden from the editor interface.
+- **Special Template Recognition:** Automatic detection and handling of special text patterns for improved translation workflow.
+
+---
+
+## Changelog (v1.4.70)
+
+### New Features
+- **Japanese Text Ignore Marker (`##`):** Added support for `##` marker at the end of ShowText lines to exclude them from Japanese text error detection.
+  - Lines marked with `##` will not trigger "Japanese text detected" errors in both editor and batch processing modes.
+  - Marker is parsed during text extraction and preserved throughout the processing pipeline.
+  - Fully supported in both main editor and batch processing workflows.
+
+- **Empty ShowText Handling:** Comprehensive improvement of empty ShowText block processing.
+  - Japanese parser now correctly processes all ShowText blocks, including empty ones and those containing only whitespace.
+  - Empty ShowText blocks are properly matched with their Japanese counterparts, eliminating false "additional line" errors.
+  - Empty ShowText blocks are automatically hidden from the editor interface to reduce clutter.
+  - Maintains structural integrity while improving user experience.
+
+- **Enhanced Special Template Support:** Extended support for special text patterns.
+  - Added recognition for "Найдено мастеров" template in addition to existing "Уровень симпатии" support.
+  - Both templates are automatically detected and properly combined with subsequent dialogue lines.
+  - Improved template matching logic for more reliable detection.
+
+### Improvements
+- **Robust Flag Propagation:** Fixed critical issue where `hasIgnoreMarker` flag was lost during text block processing.
+  - Updated both main editor and batch processing pipelines to properly preserve the `##` marker flag.
+  - Ensured consistent behavior across all processing stages from parsing to error detection.
+
+- **Enhanced Batch Processing:** Improved line-level error detection in batch mode.
+  - Added comprehensive error checking including long dialogues, character limits, and Japanese text detection.
+  - Integrated new `checkForLineLevelErrors` function for consistent error reporting.
+  - Better alignment between editor and batch processing error detection logic.
+
+- **Improved Parser Accuracy:** Enhanced text parsing for better structure recognition.
+  - Removed unnecessary filtering of empty ShowText blocks in Japanese parser.
+  - Improved special template detection with more robust regex patterns.
+  - Better handling of edge cases in text block combination logic.
+
+### Bug Fixes
+- **Fixed Japanese Text Detection:** Resolved issue where `##` marker was not properly excluding lines from Japanese text error detection.
+- **Fixed Empty ShowText Matching:** Eliminated false positive errors for empty ShowText blocks that should match Japanese counterparts.
+- **Fixed Flag Transmission:** Corrected critical bug where `hasIgnoreMarker` flag was not passed through the processing pipeline.
+- **Fixed Template Recognition:** Improved reliability of special template pattern detection and combination logic.
+- **Fixed Batch Processing Errors:** Resolved inconsistencies between editor and batch processing error detection.
+
+### Technical Improvements
+- **Unified Processing Pipeline:** Standardized text block processing across all components.
+- **Enhanced Error Detection Chain:** Improved error detection flow from parsing to final validation.
+- **Optimized Flag Handling:** Streamlined flag propagation through the entire processing chain.
+- **Better Code Organization:** Improved code structure for better maintainability and debugging.
 
 ---
 
@@ -269,6 +325,9 @@
 - **NEW:** The system now preserves all structural commands during file matching - no more lost separators!
 - **NEW:** Type-aware matching ensures more accurate Russian-Japanese correspondence.
 - **NEW:** CommonEvent boundaries are strictly respected, preventing cross-contamination.
+- **NEW:** Use `##` marker at the end of ShowText lines to ignore Japanese text detection for specific lines.
+- **NEW:** Empty ShowText blocks are automatically handled - they match properly but stay hidden from the interface.
+- **NEW:** Special templates like "Уровень симпатии" and "Найдено мастеров" are automatically recognized and processed.
 
 ---
 
@@ -278,4 +337,4 @@ MIT License
 
 ---
 
-If you have any questions or encounter issues, please open an issue on GitHub or contact the maintainer. 
+If you have any questions or encounter issues, please open an issue on GitHub or contact the maintainer.
