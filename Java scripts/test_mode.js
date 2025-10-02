@@ -439,6 +439,30 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
           if (ruPage[j] && ruPage[j].raw.trim().endsWith('#+')) { j++; continue; }
           if (jpCmd === 'ShowText' || ruCmd === 'ShowText') {
             const isJpNameLine = jpLine?.raw.includes('["【');
+            
+            // <<< НАЧАЛО ИСПРАВЛЕНИЯ: Проверка на оба специальных шаблона >>>
+            let isRuSpecialTemplateLine = false;
+            if (ruLine) {
+                const ruRawTrimmed = ruLine.raw.trim();
+                // Проверяем наличие одной из двух ключевых фраз
+                const hasSympathy = ruRawTrimmed.includes('(Уровень симпатии:');
+                const hasMasters = ruRawTrimmed.includes('(Найдено мастеров:');
+                
+                if (ruRawTrimmed.startsWith('ShowText') && (hasSympathy || hasMasters) && ruRawTrimmed.endsWith(')"])')) {
+                    isRuSpecialTemplateLine = true;
+                }
+            }
+
+            // Условие срабатывает, только если ОБА файла имеют пару ShowText для обработки
+            if (isJpNameLine && jpPage[i + 1]?.command === 'ShowText' && isRuSpecialTemplateLine && ruPage[j + 1]?.command === 'ShowText') {
+                // Это наш особый случай: 2 строки в JP (Имя, Диалог) соответствуют 2 строкам в RU (Симпатия, Диалог)
+                i += 2; // Пропускаем пару в JP
+                j += 2; // Пропускаем пару в RU
+                continue;
+            }
+            // <<< КОНЕЦ ИСПРАВЛЕНИЯ >>>
+
+            // Стандартное правило для обычных имен (2 строки в JP к 1 в RU)
             if (isJpNameLine && (jpPage[i + 1]?.command === 'ShowText') && !jpPage[i + 1]?.raw.includes('["【')) {
               if (ruCmd === 'ShowText') { i += 2; j += 1; continue; }
             }

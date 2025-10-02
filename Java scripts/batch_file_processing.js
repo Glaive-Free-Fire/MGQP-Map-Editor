@@ -331,11 +331,13 @@ async function batchCheckAllFiles() {
     fileDiv.style.color = '#222';
     fileDiv.textContent = fileName;
     
-    let ruText, jpText;
+    // <<< НАЧАЛО ИЗМЕНЕНИЯ >>>
+    let ruLines, jpText;
     try {
-      ruText = await getFileText(ruFiles[fileName]);
+      ruLines = await readFileAsLines(ruFiles[fileName]); // Читаем в виде массива строк
       jpText = await getFileText(jpFiles[fileName]);
     } catch (e) {
+      // (обработка ошибок чтения остаётся без изменений)
       fileDiv.textContent += ' — ошибка чтения файлов';
       fileDiv.style.background = '#fff0f0';
       fileDiv.style.border = '1.5px solid #e66';
@@ -347,65 +349,57 @@ async function batchCheckAllFiles() {
       continue;
     }
     
-    // --- Используем window.checkMapStructureMatch ---
-    let result;
-    if (window.checkMapStructureMatch) {
-      result = window.checkMapStructureMatch(jpText, ruText);
-    } else {
-      fileDiv.textContent += ' — функция проверки структуры не найдена';
-      fileDiv.style.background = '#fff0f0';
-      fileDiv.style.border = '1.5px solid #e66';
-      fileDiv.style.color = '#b00';
-      isError = true;
-      hasErrors = true;
-      results.push({fileDiv, isError, isOkFile, fileName});
-      batchResults.push({isError, isOkFile, fileName});
-      continue;
-    }
+    // 1. Проверяем ошибки на уровне строк с помощью новой функции
+    const lineLevelErrors = window.checkForLineLevelErrors(ruLines);
+
+    // 2. Проверяем ошибки структуры, как и раньше
+    const ruText = ruLines.join('\n');
+    const structResult = window.checkMapStructureMatch(jpText, ruText);
     
-    // --- Выводим процент совпадения и ошибки ---
-    const percent = result.percent;
-    const errorCount = result.grouped ? result.grouped.reduce((acc, ev) => acc + ev.pages.reduce((a, p) => a + (p.errors ? p.errors.length : 0), 0), 0) : (result.errors ? result.errors.length : 0);
+    const structErrorCount = structResult.grouped ? structResult.grouped.reduce((acc, ev) => acc + ev.pages.reduce((a, p) => a + (p.errors ? p.errors.length : 0), 0), 0) : 0;
+    const totalErrorCount = structErrorCount + lineLevelErrors.length;
+
     const summary = document.createElement('div');
     summary.style.marginTop = '6px';
     summary.style.fontWeight = 'bold';
-    summary.style.color = percent === 100 ? '#226922' : '#b00';
-    summary.textContent = percent === 100 ? 'Ошибок нет, 100% совпадение структуры данных' : `Обнаружено ${errorCount} ошибок, ${percent}% совпадения структуры данных`;
+    summary.style.color = totalErrorCount === 0 ? '#226922' : '#b00';
+    summary.textContent = totalErrorCount === 0 ? 'Ошибок нет, 100% совпадение' : `Обнаружено ${totalErrorCount} ошибок`;
     fileDiv.appendChild(summary);
     
-    // --- Подробная статистика ---
-    if (result.grouped && result.grouped.length > 0) {
-      let statHtml = '';
-      result.grouped.forEach(ev => {
+    let statHtml = '';
+    // Отображаем ошибки на уровне строк
+    if (lineLevelErrors.length > 0) {
+      statHtml += `<div style='color:#b00; font-weight:bold; margin:10px 0 2px 0;'>Ошибки в строках:</div>`;
+      lineLevelErrors.forEach(err => {
+        statHtml += `<div style='color:#b00; margin-left:12px; margin-bottom:8px;'><b>${err.label}</b> (${err.type}): ${err.reason}</div>`;
+      });
+    }
+
+    // Отображаем структурные ошибки
+    if (structResult.grouped) {
+      structResult.grouped.forEach(ev => {
         ev.pages.forEach(page => {
-          if (page.ok) {
-            if (!showOnlyErrorLines) {
-              statHtml += `<div style='color:#228B22; font-weight:bold; margin:6px 0 2px 0;'>CommonEvent ${ev.eid} (${ev.name}), Page ${page.page}: OK</div>`;
+          if (!page.ok) {
+            if (!showOnlyErrorLines || page.errors.length > 0) {
+              statHtml += `<div style='color:#b00; font-weight:bold; margin:10px 0 2px 0;'>CommonEvent ${ev.eid} (${ev.name}), Page ${page.page}</div>`;
+              page.errors.forEach(err => {
+                statHtml += `<div style='color:#b00; margin-left:12px; margin-bottom:8px;'><b>Строка ${err.line}:</b> ${err.msg}</div>`;
+              });
             }
-          } else {
-            statHtml += `<div style='color:#b00; font-weight:bold; margin:10px 0 2px 0;'>CommonEvent ${ev.eid} (${ev.name}), Page ${page.page}</div>`;
-            page.errors.forEach(err => {
-              statHtml += `<div style='color:#b00; margin-left:12px; margin-bottom:8px;'><b>Строка ${err.line}:</b> ${err.msg}<br>`;
-              if (err.jp || err.ru) {
-                statHtml += `<div style='font-size:13px; margin-top:2px;'><span style='color:#444;'>JP:</span> <pre style='display:inline; background:#f7f7f7; border-radius:4px; padding:2px 6px;'>${(err.jp||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre><br><span style='color:#444;'>RU:</span> <pre style='display:inline; background:#f7f7f7; border-radius:4px; padding:2px 6px;'>${(err.ru||'').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre></div>`;
-              }
-              statHtml += `</div>`;
-            });
           }
         });
       });
-      if (percent === 100 || statHtml === '') {
-        if (!showOnlyErrorLines) {
-          statHtml += '<span style="color:#393">Структура CommonEvent полностью совпадает.</span>';
-        }
-      }
-      const statDiv = document.createElement('div');
-      statDiv.innerHTML = statHtml;
-      fileDiv.appendChild(statDiv);
     }
     
-    isError = errorCount > 0 || percent < 100;
-    isOkFile = percent === 100 && errorCount === 0;
+    if (statHtml) {
+        const statDiv = document.createElement('div');
+        statDiv.innerHTML = statHtml;
+        fileDiv.appendChild(statDiv);
+    }
+    
+    isError = totalErrorCount > 0;
+    isOkFile = totalErrorCount === 0;
+    // <<< КОНЕЦ ИЗМЕНЕНИЯ >>>
     
     if (isError) {
       hasErrors = true;
