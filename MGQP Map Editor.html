@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <title>MGQP Map Editor v1.4.70</title>
+  <title>MGQP Map Editor v1.4.71</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="Java scripts/main_script.js"></script>
   <script src="Java scripts/restore-mode.js"></script>
@@ -412,15 +412,45 @@
               }
               // Запускаем проверку на японский текст, ТОЛЬКО если у блока нет маркера-игнора
               if (!block.hasIgnoreMarker) {
-                if (block.type !== 'Name' && block.type !== 'Comment' && block.type !== 'JumpToLabel' && block.type !== 'Label' && /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.text)) {
+                const isJapanesePresent = /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.text);
+                if (isJapanesePresent) {
+                  let isAnError = true;
+
+                  // Исключаем типы, которые не проверяем на JP
+                  const excludedTypes = ['Name', 'Comment', 'JumpToLabel', 'Label'];
+                  if (excludedTypes.includes(block.type)) {
+                    isAnError = false;
+                  }
+
+                  // Для Script и ScriptMore допускаем кодоподобные строки
+                  if (block.type === 'Script' || block.type === 'ScriptMore') {
+                    const isCodeLikeRegex = /[=\/~_()\[\]\.\+\-]|\b(if|else|for|while|return|function|var|let|const|script)\b|e\./i;
+                    if (isCodeLikeRegex.test(block.text)) {
+                      isAnError = false;
+                    }
+                  }
+
+                  if (isAnError) {
                     redLineErrors.push({
                         label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[продолжение]',
                         type: 'Ошибка строки',
                         reason: 'Обнаружен японский текст'
                     });
                     window.allErrorIndices.add(i);
+                  }
                 }
               }
+              // <<< НАЧАЛО ИЗМЕНЕНИЯ: Проверка на сломанные коды форматирования >>>
+              const brokenCodeRegex = /∾∾[IC]\[\d+\].*?(?<!∾)∾C\[0\]/;
+              if (block.type === 'ShowText' && brokenCodeRegex.test(block.text)) {
+                  redLineErrors.push({
+                      label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[продолжение]',
+                      type: 'Ошибка кода',
+                      reason: 'Неправильно экранирован закрывающий тег. Вероятно, вместо `∾∾C[0]` используется `∾C[0]`.'
+                  });
+                  window.allErrorIndices.add(i);
+              }
+              // <<< КОНЕЦ ИЗМЕНЕНИЯ >>>
               // <<< КОНЕЦ ИЗМЕНЕНИЯ >>>
               // --- НАЧАЛО ИЗМЕНЕНИЯ: Показываем рекомендацию только если НЕТ структурных ошибок ---
               if (!hasStructuralErrors && block.type === 'ShowText' && window.japBlocks && window.japBlocks.length > 0 &&
@@ -1384,28 +1414,30 @@
                 dupBtn.style.marginLeft = '8px';
                 div.appendChild(dupBtn);
 
-                // Функция для получения текста ТОЛЬКО из одного блока
+                // <<< НАЧАЛО ИЗМЕНЕНИЯ: Функция теперь читает данные из `block.text`, а не из DOM >>>
                 const collectText = start => {
-                  const block = textBlocks[start];
-                  if (!block || !block.dom?.rusInput) {
+                  if (!textBlocks[start]) {
                     return '';
                   }
-                  return block.dom.rusInput.value;
+                  let fullText = textBlocks[start].text;
+                  let end = start + 1;
+                  while (
+                    end < textBlocks.length &&
+                    textBlocks[end].type === 'ShowText' &&
+                    (!textBlocks[end].japaneseLink || !textBlocks[end].japaneseLink.text.trim())
+                  ) {
+                    fullText += '\n' + textBlocks[end].text;
+                    end++;
+                  }
+                  return fullText;
                 };
+                // <<< КОНЕЦ ИЗМЕНЕНИЯ >>>
 
-                // Функция для получения счётчика символов блока
+                // <<< НАЧАЛО ИЗМЕНЕНИЯ: Счётчик теперь считает символы в полном тексте диалога >>>
                 const getCharCount = blockIdx => {
-                  const block = textBlocks[blockIdx];
-                  if (!block || !block.dom?.rusInput) return 0;
-
-                  const text = block.dom.rusInput.value;
-                  if (block.type === 'ShowText' || block.type === undefined) {
+                  const text = collectText(blockIdx);
+                  if (textBlocks[blockIdx].type === 'ShowText' || textBlocks[blockIdx].type === undefined) {
                     const info = getGameTextInfo(text);
-
-                    // 1) Убираем «полные» теги <∾∾C[...]>…∾∾C[...]>
-                    // 2) Убираем оставшиеся коды ∾∾C[...]
-                    // 3) Убираем остаточные C[...] (на случай, если «∾» уже срезаны)
-                    // 4) Убираем одиночные символы-разделители ∾
                     const visibleText = info.rawGameText
                       .replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/g, '')
                       .replace(/∾∾C\[\d+\]/g, '')
@@ -1413,13 +1445,12 @@
                       .replace(/∾/g, '')
                       .replace(/∿/g, '')
                       .trim();
-
                     return visibleText.length;
                   } else {
-                    // Для других типов блоков просто убираем «∾»
                     return text.replace(/∾/g, '').length;
                   }
                 };
+                // <<< КОНЕЦ ИЗМЕНЕНИЯ >>>
 
                 // Получаем счётчики символов
                 const origCount = getCharCount(origIdx);
@@ -1432,8 +1463,8 @@
                   const newOrigCount = getCharCount(origIdx);
                   const newCurrCount = getCharCount(i);
                   
-                  // Зеленая, если текст совпадает или счётчики символов равны
-                  if (currText === origText || newCurrCount === newOrigCount) {
+                  // Зеленая, только если текст полностью совпадает
+                  if (currText === origText) {
                     dupBtn.style.backgroundColor = '#8f8';
                   } else {
                     dupBtn.style.backgroundColor = '#f88';
