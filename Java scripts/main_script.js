@@ -250,13 +250,34 @@ window.checkForLineLevelErrors = function(ruLines) {
           reason: `Превышен лимит символов: ${metrics.length} > 50`
         });
       }
-      if (!block.hasIgnoreMarker && /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.text)) {
+      const isJapanesePresent = /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.text);
+      if (!block.hasIgnoreMarker && isJapanesePresent) {
+        let isAnError = true;
+        // Для Script и ScriptMore допускаем кодоподобные строки (на будущее)
+        if (block.type === 'Script' || block.type === 'ScriptMore') {
+          const isCodeLikeRegex = /[=\/~_()\[\]\.\+\-]|\b(if|else|for|while|return|function|var|let|const|script)\b|e\./i;
+          if (isCodeLikeRegex.test(block.text)) {
+            isAnError = false;
+          }
+        }
+        if (isAnError) {
+          errors.push({
+            label: `строка ${block.idx + 1}`,
+            type: 'Ошибка строки',
+            reason: 'Обнаружен японский текст'
+          });
+        }
+      }
+      // <<< НАЧАЛО ИЗМЕНЕНИЯ: Проверка на сломанные коды форматирования >>>
+      const brokenCodeRegex = /∾∾[IC]\[\d+\].*?(?<!∾)∾C\[0\]/;
+      if (brokenCodeRegex.test(block.text)) {
         errors.push({
           label: `строка ${block.idx + 1}`,
-          type: 'Ошибка строки',
-          reason: 'Обнаружен японский текст'
+          type: 'Ошибка кода',
+          reason: 'Неправильно экранирован закрывающий тег. Вероятно, вместо `∾∾C[0]` используется `∾C[0]`.'
         });
       }
+      // <<< КОНЕЦ ИЗМЕНЕНИЯ >>>
     }
   });
 
