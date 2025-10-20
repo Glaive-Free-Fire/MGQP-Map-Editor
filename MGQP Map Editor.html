@@ -2111,34 +2111,42 @@
 
     // === НОВАЯ ФУНКЦИЯ ДЛЯ ИСПРАВЛЕНИЯ ДЛИННЫХ ДИАЛОГОВ ===
     function fixLongDialogues() {
-      // 1. Находим все группы проблемных диалогов
       const longDialogueGroups = [];
       const checkedIndices = new Set();
 
+      // ШАГ 1: Используем ИСПРАВЛЕННУЮ логику для поиска ВСЕХ длинных диалогов
       textBlocks.forEach((block, i) => {
-        if (checkedIndices.has(i) || block.isDeleted) return;
+        if (checkedIndices.has(i) || block.isDeleted || block.type !== 'ShowText') {
+          return;
+        }
 
-        // Ищем начало диалога - блок с именем персонажа
-        if (block.type === 'ShowText' && window.isNameBlock(block.text)) {
-          let dialogueBlockIndices = [];
-          let lineCount = 0;
-          let counterIndex = i;
+        let dialogueBlockIndices = [];
+        let lineCount = 0;
+        let counterIndex = i;
 
-          // Считаем все последующие строки этого диалога
-          while (counterIndex < textBlocks.length && textBlocks[counterIndex].type === 'ShowText') {
-            if (counterIndex > i && window.isNameBlock(textBlocks[counterIndex].text)) {
-              break; // Наткнулись на начало следующего диалога
+        while (counterIndex < textBlocks.length) {
+          const currentDialogueBlock = textBlocks[counterIndex];
+
+          // Условие прерывания последовательности (идентично детектору ошибок)
+          if (counterIndex > i) {
+            const prevBlock = textBlocks[counterIndex - 1];
+            if (
+              currentDialogueBlock.type !== 'ShowText' ||
+              window.isNameBlock(currentDialogueBlock.text) ||
+              (currentDialogueBlock.idx !== undefined && prevBlock.idx !== undefined && (currentDialogueBlock.idx - prevBlock.idx > 1))
+            ) {
+              break;
             }
-            dialogueBlockIndices.push(counterIndex);
-            checkedIndices.add(counterIndex);
-            lineCount++;
-            counterIndex++;
           }
 
-          // Если диалог слишком длинный, запоминаем его
-          if (lineCount >= 5) {
-            longDialogueGroups.push(dialogueBlockIndices);
-          }
+          dialogueBlockIndices.push(counterIndex);
+          checkedIndices.add(counterIndex);
+          lineCount++;
+          counterIndex++;
+        }
+
+        if (lineCount >= 5) {
+          longDialogueGroups.push(dialogueBlockIndices);
         }
       });
 
@@ -2147,49 +2155,46 @@
         return;
       }
 
-      pushUndo(); // Сохраняем состояние для возможной отмены
+      pushUndo();
       let fixedCount = 0;
 
-      // 2. Обрабатываем найденные группы в ОБРАТНОМ ПОРЯДКЕ
-      // Это важно, чтобы вставка элементов не сбивала индексы для следующих групп
+      // ШАГ 2: Обрабатываем найденные группы в обратном порядке
       for (let i = longDialogueGroups.length - 1; i >= 0; i--) {
         const groupIndices = longDialogueGroups[i];
-        const startIndex = groupIndices[0]; // Индекс строки с именем
 
-        // 3. Ищем родительский ShowTextAttributes
-        let parentAttrText = '"",0,0,2'; // Значение по умолчанию
-        for (let j = startIndex - 1; j >= 0; j--) {
-          if (textBlocks[j].type === 'ShowTextAttributes') {
-            parentAttrText = textBlocks[j].text;
-            break;
+        // ШАГ 3: Вставляем атрибуты после КАЖДОЙ 4-й строки
+        for (let j = 3; j < groupIndices.length; j += 4) {
+          const insertionPointIndexInGroup = j;
+          const insertionPoint = groupIndices[insertionPointIndexInGroup] + 1;
+          const startIndex = groupIndices[0];
+
+          let parentAttrText = '"",0,0,2';
+          for (let k = startIndex - 1; k >= 0; k--) {
+            if (textBlocks[k].type === 'ShowTextAttributes') {
+              parentAttrText = textBlocks[k].text;
+              break;
+            }
           }
+
+          const newAttributesBlock = {
+            type: 'ShowTextAttributes',
+            text: parentAttrText,
+            idx: undefined,
+            generated: true,
+            isManualContinuation: true
+          };
+
+          textBlocks.splice(insertionPoint, 0, newAttributesBlock);
+          fixedCount++;
         }
-
-        // 4. Вставляем копию после 4-й строки диалога
-        // Индекс 4-й строки в массиве groupIndices - это 3 (счет с нуля)
-        // Её реальный индекс в textBlocks - это groupIndices[3]
-        const insertionPoint = groupIndices[3] + 1;
-
-        const newAttributesBlock = {
-          type: 'ShowTextAttributes',
-          text: parentAttrText,
-          idx: undefined,
-          generated: true,
-          isManualContinuation: true // Чтобы в файле появился маркер #+
-        };
-        
-        textBlocks.splice(insertionPoint, 0, newAttributesBlock);
-        fixedCount++;
       }
 
-      alert(`Исправлено ${fixedCount} длинных диалогов.`);
+      alert(`Исправлено ${fixedCount} проблемных мест в длинных диалогах.`);
       
-      // Сначала обновляем состояние лампочки и ошибок
       if (typeof window.updateMatchLamp === 'function') {
         window.updateMatchLamp();
       }
-
-      // Затем перерисовываем редактор, чтобы увидеть изменения
+      
       renderTextBlocks();
     }
 
