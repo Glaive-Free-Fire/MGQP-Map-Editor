@@ -314,7 +314,7 @@
           let checkedIndices_long = new Set();
           window.textBlocks.forEach((block, i) => {
               if (checkedIndices_long.has(i) || block.isDeleted) return;
-              if (block.type === 'ShowText' && window.isNameBlock(block.text)) {
+              if (block.type === 'ShowText') {
                   let lineCount = 0;
                   let blockIndices = [];
                   let counterIndex = i;
@@ -331,7 +331,7 @@
                       if (
                           currentBlock.type !== 'ShowText' ||
                           window.isNameBlock(currentBlock.text) ||
-                          (currentBlock.idx !== undefined && prevBlock.idx !== undefined && (currentBlock.idx - prevBlock.idx > 2))
+                          (currentBlock.idx !== undefined && prevBlock.idx !== undefined && (currentBlock.idx - prevBlock.idx > 1))
                       ) {
                           break;
                       }
