@@ -293,6 +293,7 @@
     // НАЧАЛО ЗАМЕНЫ: Новая объединенная функция для вывода всех ошибок
     // =================================================================================
     window.updateMatchLamp = function() {
+      console.log("--- updateMatchLamp Start ---");
       window.allErrorIndices.clear();
       const lampDiv = document.getElementById('matchLampContainer');
       const diffsDiv = document.getElementById('previewDiffs');
@@ -311,49 +312,59 @@
         redLineErrors.push(...syntaxErrors);
       }
       if (window.textBlocks && window.textBlocks.length > 0) {
+          // === НАЧАЛО ИСПРАВЛЕНИЯ (v7.3): 'isDeleted' - это 'continue', а не 'break' ===
           let checkedIndices_long = new Set();
           window.textBlocks.forEach((block, i) => {
-              if (checkedIndices_long.has(i) || block.isDeleted) return;
-              if (block.type === 'ShowText') {
-                  let lineCount = 0;
-                  let blockIndices = [];
-                  let counterIndex = i;
-                  while (counterIndex < textBlocks.length) {
-                      const currentBlock = textBlocks[counterIndex];
-                      if (counterIndex === i) {
-                          lineCount++;
-                          blockIndices.push(counterIndex);
-                          checkedIndices_long.add(counterIndex);
-                          counterIndex++;
-                          continue;
-                      }
-                      const prevBlock = textBlocks[counterIndex - 1];
-                      if (
-                          currentBlock.type !== 'ShowText' ||
-                          window.isNameBlock(currentBlock.text) ||
-                          (currentBlock.idx !== undefined && prevBlock.idx !== undefined && (currentBlock.idx - prevBlock.idx > 1))
-                      ) {
-                          break;
-                      }
-                      lineCount++;
-                      blockIndices.push(counterIndex);
-                      checkedIndices_long.add(counterIndex);
+              // Мы можем начать считать только с ShowText
+              if (checkedIndices_long.has(i) || block.isDeleted || block.type !== 'ShowText') {
+                return; // Пропускаем уже проверенные, удаленные или не-текстовые блоки
+              }
+              
+              let lineCount = 0;
+              let blockIndices = [];
+              let counterIndex = i;
+              
+              while (counterIndex < textBlocks.length) {
+                  const currentBlock = textBlocks[counterIndex];
+
+                  // --- Условие ПРОПУСКА (Continue) ---
+                  if (currentBlock.isDeleted) {
+                      // Пропускаем удаленные блоки, но помечаем их как проверенные
+                      checkedIndices_long.add(counterIndex); 
                       counterIndex++;
+                      continue; // <--- ЭТО БЫЛО 'break', ТЕПЕРЬ 'continue'
                   }
-                  if (lineCount >= 5) {
-                      hasLongDialogueError = true;
-                      
-                      blockIndices.forEach(errorIndex => {
-                          const errorBlock = textBlocks[errorIndex];
-                          redLineErrors.push({
-                              label: errorBlock.idx !== undefined ? `строка ${errorBlock.idx + 1}` : '[продолжение]',
-                              type: 'Ошибка компоновки',
-                              reason: `Часть слишком длинного диалога (${lineCount} строк). Требуется вставка ShowTextAttributes.`
-                          });
+
+                  // --- Условия ОСТАНОВКИ (Break) ---
+                  if (
+                    currentBlock.type !== 'ShowText' || // 1. Это не ShowText
+                    (counterIndex > i && window.isNameBlock(currentBlock.text)) // 2. Это ShowText, но с именем (начало нового диалога)
+                  ) {
+                      break;
+                  }
+                  
+                  // --- Условие ПОДСЧЕТА ---
+                  // (Сюда попадают: 1. Первый блок (i) 2. Последующие ShowText без имени)
+                  lineCount++;
+                  blockIndices.push(counterIndex);
+                  checkedIndices_long.add(counterIndex);
+                  counterIndex++;
+              }
+              
+              if (lineCount >= 5) {
+                  hasLongDialogueError = true;
+                  
+                  blockIndices.forEach(errorIndex => {
+                      const errorBlock = textBlocks[errorIndex];
+                      redLineErrors.push({
+                          label: errorBlock.idx !== undefined ? `строка ${errorBlock.idx + 1}` : '[продолжение]',
+                          type: 'Ошибка компоновки',
+                          reason: `Часть слишком длинного диалога (${lineCount} строк). Требуется вставка ShowTextAttributes.`
                       });
-                  }
+                  });
               }
           });
+          // === КОНЕЦ ИСПРАВЛЕНИЯ (v7.3) ===
 
           window.textBlocks.forEach((block, i) => {
               if (block.isDeleted) return;
@@ -484,6 +495,72 @@
                       window.allErrorIndices.add(i); // << ДОБАВИТЬ
                   }
               }
+
+              // <<< НАЧАЛО НОВОЙ ПРОВЕРКИ: ShowTextAttributes -> ShowText (без имени) >>>
+              if (block.type === 'ShowTextAttributes') {
+                  const isMarkedSTA = !!block.manualPlus;
+                  if (isMarkedSTA) {
+                      let nextRelevantBlock = null;
+                      let nextRelevantBlockIndex = -1;
+                      // Ищем следующий ShowText
+                      for (let j = i + 1; j < textBlocks.length; j++) {
+                          if (textBlocks[j].isDeleted) continue;
+                          if (textBlocks[j].type === 'ShowText') { nextRelevantBlock = textBlocks[j]; nextRelevantBlockIndex = j; break; }
+                          if (textBlocks[j].type !== 'ShowText' && textBlocks[j].type !== 'ShowTextAttributes' && textBlocks[j].type !== undefined) { break; }
+                      }
+                      if (nextRelevantBlock && !window.isNameBlock(nextRelevantBlock.text)) {
+                          // Правило 2: Исключаем "размышления" (исправленная логика v4)
+                          let isNarrationBlock = false;
+                          let k = i - 1;
+                          while (k >= 0) {
+                              const prev = textBlocks[k];
+                              if (prev.isDeleted) { k--; continue; }
+                              // Нашли ShowText с именем — это диалог
+                              if (prev.type === 'ShowText' && window.isNameBlock(prev.text)) {
+                                  isNarrationBlock = false;
+                                  break;
+                              }
+                              // Нашли STA — проверяем его
+                              if (prev.type === 'ShowTextAttributes') {
+                                  isNarrationBlock = /^\[?"",\s*0/.test(prev.text || '');
+                                  break;
+                              }
+                              // Любая другая команда — считаем размышлением
+                              if (prev.type !== 'ShowText' && prev.type !== 'ShowTextAttributes') {
+                                  isNarrationBlock = true;
+                                  break;
+                              }
+                              // Иначе продолжаем идти назад (ShowText без имени)
+                              k--;
+                          }
+                          if (k < 0) {
+                              // Дошли до начала — проверяем первый блок
+                              if (textBlocks[0]) {
+                                  const startBlock = textBlocks[0];
+                                  if (startBlock.type === 'ShowText' && !window.isNameBlock(startBlock.text)) {
+                                      isNarrationBlock = true;
+                                  } else if (startBlock.type === 'ShowTextAttributes' && /^\[?"",\s*0/.test(startBlock.text || '')) {
+                                      isNarrationBlock = true;
+                                  }
+                              } else {
+                                  isNarrationBlock = true;
+                              }
+                          }
+                          if (!isNarrationBlock) {
+                              redLineErrors.push({
+                                  label: nextRelevantBlock.idx !== undefined ? `строка ${nextRelevantBlock.idx + 1}` : '[продолжение]',
+                                  type: 'Ошибка компоновки',
+                                  reason: 'Эта строка должна содержать тег имени (\\n<\\C[6]Имя\\C[0]>), так как она идет после отмеченной (#+) ShowTextAttributes.'
+                              });
+                              window.allErrorIndices.add(nextRelevantBlockIndex);
+                          }
+                      } else if (nextRelevantBlock) {
+                      } else {
+                      }
+                  } else {
+                  }
+              }
+              // <<< КОНЕЦ НОВОЙ ПРОВЕРКИ >>>
           });
       }
 
@@ -501,10 +578,17 @@
           statHtml += '</ul><hr style="margin:12px 0;">';
       }
 
+      // --- НАЧАЛО ИЗМЕНЕНИЯ: Защита от одновременного нажатия кнопок ---
+      // Проверяем, есть ли ошибки тегов (функция из restore-mode.js)
+      const hasTagsErrors = (typeof window.hasNameTagErrors === 'function') ? window.hasNameTagErrors() : false;
+      
       const fixBtn = document.getElementById('fixLongDialoguesBtn');
       if (fixBtn) {
-        fixBtn.style.display = hasLongDialogueError ? '' : 'none';
+        // Показываем кнопку, только если есть ошибки диалогов И НЕТ ошибок тегов
+        const shouldShow = hasLongDialogueError && !hasTagsErrors;
+        fixBtn.style.display = shouldShow ? '' : 'none';
       }
+      // --- КОНЕЦ ИЗМЕНЕНИЯ ---
       
       if (!window.fullRusLines || !window.fullJapLines || window.fullRusLines.length === 0 || window.fullJapLines.length === 0) {
         lampDiv.style.display = 'none';
@@ -755,7 +839,8 @@
       const textCmdRegex = /^\s*ShowText\(\["([\s\S]*?)"\]\)(.*)/;
       const showChoicesRegex = /^\s*ShowChoices\(\[\[(.*)\],\s*(\d+)\]\)/;
       const whenRegex = /^\s*When\(\[(\d+),\s*"(.*)"\]\)/;
-      const otherRegex = /^\s*(\w+)\(\[(.*)\]\)/;
+      // Изменено: нежадный захват содержимого и хвоста (#+)
+      const otherRegex = /^\s*(\w+)\(\[([\s\S]*?)\]\)(.*)/;
       const nameValueRegex = /^\s*(\w+)\s*=\s*"(.*)"$/;
 
       originalLines.forEach((line, idx) => {
@@ -770,7 +855,7 @@
           const textContent = match[1];
           const trailingContent = match[2] || '';
           const hasIgnoreMarker = trailingContent.trim().startsWith('##');
-          tempBlocks.push({ text: textContent, type: 'ShowText', originalIdx: idx, line: line, commonEventId: currentEventId, hasIgnoreMarker: hasIgnoreMarker });
+          tempBlocks.push({ text: textContent, type: 'ShowText', originalIdx: idx, line: line, commonEventId: currentEventId, hasIgnoreMarker: hasIgnoreMarker, trailingContent: trailingContent });
         } else if ((match = line.match(showChoicesRegex))) {
           let choicesText = match[1];
           const choices = choicesText.split(/\s*\|\s*/).map(c => c.replace(/^"|"$/g, ''));
@@ -780,9 +865,10 @@
         } else if ((match = line.match(otherRegex))) {
           const commandType = match[1];
           const commandText = match[2];
+          const trailingContent = match[3] || '';
           const translatableCommands = ['Script', 'ScriptMore', 'Label', 'JumpToLabel', 'Name', 'ShowTextAttributes'];
           if (translatableCommands.includes(commandType)) {
-             tempBlocks.push({ text: commandText, type: commandType, originalIdx: idx, line: line, commonEventId: currentEventId });
+             tempBlocks.push({ text: commandText, type: commandType, originalIdx: idx, line: line, commonEventId: currentEventId, trailingContent: trailingContent });
           }
         } else if ((match = line.match(nameValueRegex))) {
           const commandType = match[1];
@@ -800,10 +886,11 @@
       for (let i = 0; i < tempBlocks.length; i++) {
         const currentBlock = tempBlocks[i];
         const rawText = currentBlock.text.replace(/^"(.*)"$/, '$1');
+        const hasPlus = /#\+/.test(currentBlock.trailingContent || '');
         let affinityMatch = rawText.match(affinityRegex);
 
         if (currentBlock.type === 'ShowTextAttributes') {
-          textBlocks.push({ text: currentBlock.text, type: 'ShowTextAttributes', originalIdx: currentBlock.originalIdx, idx: currentBlock.originalIdx, line: currentBlock.line, generated: /#\+/.test(currentBlock.line), manualPlus: /#\+/.test(currentBlock.line) && currentBlock.originalIdx !== undefined, commonEventId: currentBlock.commonEventId });
+          textBlocks.push({ text: currentBlock.text, type: 'ShowTextAttributes', originalIdx: currentBlock.originalIdx, idx: currentBlock.originalIdx, line: currentBlock.line, generated: hasPlus, manualPlus: hasPlus && currentBlock.originalIdx !== undefined, commonEventId: currentBlock.commonEventId });
           continue;
         }
 
@@ -811,7 +898,7 @@
           const name = affinityMatch[1];
           const variable = affinityMatch[2].replace(/\\/g, '∾∾');
           const newText = `∾\n<∾∾C[6]${name}∾∾C[0]>(Уровень симпатии: ${variable})`;
-          textBlocks.push({ idx: currentBlock.originalIdx, text: newText, type: 'ShowText', generated: /#\+/.test(currentBlock.line), manualPlus: /#\+/.test(currentBlock.line) && currentBlock.originalIdx !== undefined, commonEventId: currentBlock.commonEventId, hasIgnoreMarker: currentBlock.hasIgnoreMarker }); // <<< ИЗМЕНЕНИЕ
+          textBlocks.push({ idx: currentBlock.originalIdx, text: newText, type: 'ShowText', generated: hasPlus, manualPlus: hasPlus && currentBlock.originalIdx !== undefined, commonEventId: currentBlock.commonEventId, hasIgnoreMarker: currentBlock.hasIgnoreMarker });
         } else if (currentBlock.type === 'ShowText' && window.isNameBlock(rawText)) {
           let combinedText = currentBlock.text;
           
@@ -832,10 +919,10 @@
             .replace(/^"(.*)"$/, '$1')
             .replace(/\\n/g, '\n')
             .replace(/\\/g, '∾');
-          textBlocks.push({ idx: currentBlock.originalIdx, text: finalText, type: 'ShowText', generated: /#\+/.test(currentBlock.line), manualPlus: /#\+/.test(currentBlock.line) && currentBlock.originalIdx !== undefined, commonEventId: currentBlock.commonEventId, hasIgnoreMarker: currentBlock.hasIgnoreMarker }); // <<< ИЗМЕНЕНИЕ
+          textBlocks.push({ idx: currentBlock.originalIdx, text: finalText, type: 'ShowText', generated: hasPlus, manualPlus: hasPlus && currentBlock.originalIdx !== undefined, commonEventId: currentBlock.commonEventId, hasIgnoreMarker: currentBlock.hasIgnoreMarker });
         } else {
           const text = currentBlock.text.replace(/^"(.*)"$/, '$1').replace(/\\n/g, '\n').replace(/\\/g, '∾');
-          const newBlock = { idx: currentBlock.originalIdx, text: (currentBlock.type === 'ShowChoices') ? currentBlock.text : text, type: currentBlock.type, generated: /#\+/.test(currentBlock.line), manualPlus: /#\+/.test(currentBlock.line) && currentBlock.originalIdx !== undefined, choices: currentBlock.choices, defaultChoice: currentBlock.defaultChoice, choiceIndex: currentBlock.choiceIndex, commonEventId: currentBlock.commonEventId, hasIgnoreMarker: currentBlock.hasIgnoreMarker }; // <<< ИЗМЕНЕНИЕ
+          const newBlock = { idx: currentBlock.originalIdx, text: (currentBlock.type === 'ShowChoices') ? currentBlock.text : text, type: currentBlock.type, generated: hasPlus, manualPlus: hasPlus && currentBlock.originalIdx !== undefined, choices: currentBlock.choices, defaultChoice: currentBlock.defaultChoice, choiceIndex: currentBlock.choiceIndex, commonEventId: currentBlock.commonEventId, hasIgnoreMarker: currentBlock.hasIgnoreMarker };
           
           if (newBlock.generated && textBlocks.length > 0) {
             for (let j = textBlocks.length - 1; j >= 0; j--) {
@@ -1920,7 +2007,7 @@
                             parentIndent = indentMatch ? indentMatch[0] : '    ';
                         }
                     }
-                    const marker = block.isManualContinuation ? ' #+' : '';
+                    const marker = block.manualPlus ? ' #+' : ''; // <<< ИСПРАВЛЕНО
                     if (block.type === 'ShowTextAttributes') {
                         return `${parentIndent}ShowTextAttributes([${block.text}])${marker}`;
             } else {
@@ -2099,22 +2186,23 @@
                 break;
               }
             }
-        textBlocks.splice(blockIndex + 1, 0, { type: 'ShowTextAttributes', text: attrText, idx: undefined, generated: true, isManualContinuation: true });
-        textBlocks.splice(blockIndex + 2, 0, { text: rest.trimStart(), type: 'ShowText', idx: undefined, generated: true, isManualContinuation: true });
+        textBlocks.splice(blockIndex + 1, 0, { type: 'ShowTextAttributes', text: attrText, idx: undefined, generated: true, manualPlus: true });
+        textBlocks.splice(blockIndex + 2, 0, { text: rest.trimStart(), type: 'ShowText', idx: undefined, generated: true, manualPlus: true });
       } else {
         // В противном случае просто вставляем новую строку
-        textBlocks.splice(blockIndex + 1, 0, { text: rest.trimStart(), type: 'ShowText', idx: undefined, generated: true, isManualContinuation: true });
+        textBlocks.splice(blockIndex + 1, 0, { text: rest.trimStart(), type: 'ShowText', idx: undefined, generated: true, manualPlus: true });
       }
 
       return true; // Возвращаем true, если было произведено разделение
     }
 
-    // === НОВАЯ ФУНКЦИЯ ДЛЯ ИСПРАВЛЕНИЯ ДЛИННЫХ ДИАЛОГОВ ===
+    // === НОВАЯ ФУНКЦИЯ ДЛЯ ИСПРАВЛЕНИЯ ДЛИННЫХ ДИАЛОГОВ (v7.4) ===
     function fixLongDialogues() {
       const longDialogueGroups = [];
       const checkedIndices = new Set();
 
       // ШАГ 1: Используем ИСПРАВЛЕННУЮ логику для поиска ВСЕХ длинных диалогов
+      // (Эта логика теперь идентична v7.3 в updateMatchLamp)
       textBlocks.forEach((block, i) => {
         if (checkedIndices.has(i) || block.isDeleted || block.type !== 'ShowText') {
           return;
@@ -2127,18 +2215,24 @@
         while (counterIndex < textBlocks.length) {
           const currentDialogueBlock = textBlocks[counterIndex];
 
-          // Условие прерывания последовательности (идентично детектору ошибок)
-          if (counterIndex > i) {
-            const prevBlock = textBlocks[counterIndex - 1];
-            if (
-              currentDialogueBlock.type !== 'ShowText' ||
-              window.isNameBlock(currentDialogueBlock.text) ||
-              (currentDialogueBlock.idx !== undefined && prevBlock.idx !== undefined && (currentDialogueBlock.idx - prevBlock.idx > 1))
-            ) {
-              break;
-            }
+          // --- Условие ПРОПУСКА (Continue) ---
+          if (currentDialogueBlock.isDeleted) {
+              checkedIndices.add(counterIndex); 
+              counterIndex++;
+              continue; // Пропускаем удаленные блоки (например, STA)
           }
 
+          // --- Условия ОСТАНОВКИ (Break) ---
+          if (
+            currentDialogueBlock.type !== 'ShowText' || // 1. Это не ShowText
+            (counterIndex > i && window.isNameBlock(currentDialogueBlock.text)) // 2. Это ShowText, но с именем (начало нового диалога)
+          ) {
+              break;
+          }
+          
+          // --- ОШИБОЧНАЯ ПРОВЕРКА ИНДЕКСА УДАЛЕНА ---
+
+          // --- Условие ПОДСЧЕТА ---
           dialogueBlockIndices.push(counterIndex);
           checkedIndices.add(counterIndex);
           lineCount++;
@@ -2151,7 +2245,7 @@
       });
 
       if (longDialogueGroups.length === 0) {
-        alert('Проблемных диалогов не найдено.');
+        alert('Проблемных диалогов не найдено.'); // Эта строка теперь будет срабатывать только если их ДЕЙСТВИТЕЛЬНО нет
         return;
       }
 
@@ -2169,7 +2263,9 @@
           const startIndex = groupIndices[0];
 
           let parentAttrText = '"",0,0,2';
-          for (let k = startIndex - 1; k >= 0; k--) {
+          // Ищем атрибуты *до* начала этой группы
+          let startBlockIndexInTextBlocks = groupIndices[0];
+          for (let k = startBlockIndexInTextBlocks - 1; k >= 0; k--) {
             if (textBlocks[k].type === 'ShowTextAttributes') {
               parentAttrText = textBlocks[k].text;
               break;
@@ -2181,7 +2277,7 @@
             text: parentAttrText,
             idx: undefined,
             generated: true,
-            isManualContinuation: true
+            manualPlus: true // <<< ИСПРАВЛЕНО
           };
 
           textBlocks.splice(insertionPoint, 0, newAttributesBlock);
