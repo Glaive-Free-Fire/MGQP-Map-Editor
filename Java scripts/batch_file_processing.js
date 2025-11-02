@@ -89,7 +89,7 @@ function showBatchTab() {
 function readFileAsLines(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = e => resolve(e.target.result.split('\n'));
+    reader.onload = e => resolve(e.target.result.replace(/\r/g, '').split('\n'));
     reader.onerror = reject;
     reader.readAsText(file, 'utf-8');
   });

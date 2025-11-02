@@ -153,24 +153,50 @@ document.addEventListener('DOMContentLoaded', function() {
  * @returns {object[]} - Массив объектов с описанием ошибок.
  */
 window.checkForLineLevelErrors = function(ruLines) {
-  // Эта функция является адаптированной версией парсера extractTexts
-  // и логики проверок из updateMatchLamp, созданной специально для пакетной обработки.
-  
   const errors = [];
   if (!ruLines || ruLines.length === 0) {
     return errors;
   }
 
-  // 1. Упрощенный парсинг строк в `textBlocks`
+  // =================================================================
+  // START: Full parser copied from `extractTexts` in the HTML file
+  // =================================================================
   const tempBlocks = [];
   const textCmdRegex = /^\s*ShowText\(\["([\s\S]*?)"\]\)(.*)/;
+  const showChoicesRegex = /^\s*ShowChoices\(\[\[(.*)\],\s*(\d+)\]\)/;
+  const whenRegex = /^\s*When\(\[(\d+),\s*"(.*)"\]\)/;
+  const otherRegex = /^\s*(\w+)\(\[([\s\S]*?)\]\)(.*)/;
+  const nameValueRegex = /^\s*(\w+)\s*=\s*"(.*)"$/;
+
   ruLines.forEach((line, idx) => {
+    if (/^\s*Display Name\s*=/.test(line)) return;
+    
     let match;
     if ((match = line.match(textCmdRegex))) {
       const textContent = match[1];
       const trailingContent = match[2] || '';
       const hasIgnoreMarker = trailingContent.trim().startsWith('##');
-      tempBlocks.push({ text: textContent, type: 'ShowText', originalIdx: idx, line: line, hasIgnoreMarker: hasIgnoreMarker });
+      tempBlocks.push({ text: textContent, type: 'ShowText', originalIdx: idx, line: line, hasIgnoreMarker: hasIgnoreMarker, trailingContent: trailingContent });
+    } else if ((match = line.match(showChoicesRegex))) {
+      let choicesText = match[1];
+      const choices = choicesText.split(/\s*\|\s*/).map(c => c.replace(/^"|"$/g, ''));
+      tempBlocks.push({ text: choices.join(' | '), type: 'ShowChoices', originalIdx: idx, choices: choices, defaultChoice: parseInt(match[2]), line: line });
+    } else if ((match = line.match(whenRegex))) {
+      tempBlocks.push({ text: match[2], type: 'When', originalIdx: idx, choiceIndex: parseInt(match[1]), line: line });
+    } else if ((match = line.match(otherRegex))) {
+      const commandType = match[1];
+      const commandText = match[2];
+      const trailingContent = match[3] || '';
+      const translatableCommands = ['Script', 'ScriptMore', 'Label', 'JumpToLabel', 'Name', 'ShowTextAttributes'];
+      if (translatableCommands.includes(commandType)) {
+         tempBlocks.push({ text: commandText, type: commandType, originalIdx: idx, line: line, trailingContent: trailingContent });
+      }
+    } else if ((match = line.match(nameValueRegex))) {
+      const commandType = match[1];
+      const commandText = match[2];
+      if (commandType === 'Name'){
+          tempBlocks.push({ text: commandText, type: commandType, originalIdx: idx, line: line });
+      }
     }
   });
 
@@ -178,7 +204,14 @@ window.checkForLineLevelErrors = function(ruLines) {
   for (let i = 0; i < tempBlocks.length; i++) {
     const currentBlock = tempBlocks[i];
     const rawText = currentBlock.text.replace(/^"(.*)"$/, '$1');
-    if (window.isNameBlock(rawText)) {
+    const hasPlus = /#\+/.test(currentBlock.trailingContent || '');
+
+    if (currentBlock.type === 'ShowTextAttributes') {
+      textBlocks.push({ text: currentBlock.text, type: 'ShowTextAttributes', originalIdx: currentBlock.originalIdx, idx: currentBlock.originalIdx, line: currentBlock.line, generated: hasPlus, manualPlus: hasPlus });
+      continue;
+    }
+
+    if (window.isNameBlock(rawText) && currentBlock.type === 'ShowText') {
       let combinedText = currentBlock.text;
       const specialTemplateRegex = /^\\n<\\C\[\d+\].*\\C\[0\]>\((Уровень симпатии:|Найдено мастеров:).*?\)$/;
       if (specialTemplateRegex.test(rawText.trim()) && i + 1 < tempBlocks.length && tempBlocks[i + 1].type === 'ShowText') {
@@ -189,58 +222,93 @@ window.checkForLineLevelErrors = function(ruLines) {
         i++;
       }
       const finalText = combinedText.replace(/^"(.*)"$/, '$1').replace(/\\n/g, '\n').replace(/\\/g, '∾');
-      textBlocks.push({ idx: currentBlock.originalIdx, text: finalText, type: 'ShowText', line: currentBlock.line, hasIgnoreMarker: currentBlock.hasIgnoreMarker }); // <<< ИЗМЕНЕНИЕ
+      textBlocks.push({ idx: currentBlock.originalIdx, text: finalText, type: 'ShowText', line: currentBlock.line, hasIgnoreMarker: currentBlock.hasIgnoreMarker, manualPlus: hasPlus });
     } else {
       const text = rawText.replace(/\\n/g, '\n').replace(/\\/g, '∾');
-      textBlocks.push({ idx: currentBlock.originalIdx, text: text, type: currentBlock.type, line: currentBlock.line, hasIgnoreMarker: currentBlock.hasIgnoreMarker }); // <<< ИЗМЕНЕНИЕ
+      textBlocks.push({ idx: currentBlock.originalIdx, text: text, type: currentBlock.type, line: currentBlock.line, hasIgnoreMarker: currentBlock.hasIgnoreMarker, manualPlus: hasPlus });
     }
   }
+  // =================================================================
+  // END: Full parser
+  // =================================================================
 
-  // 2. Запуск проверок по созданным `textBlocks`
+  // =================================================================
+  // START: All checks, now including the ShowTextAttributes check
+  // =================================================================
   let checkedIndices_long = new Set();
   textBlocks.forEach((block, i) => {
-    if (checkedIndices_long.has(i)) return;
 
-    // Проверка на длинные диалоги (>= 5 строк)
-    if (block.type === 'ShowText' && window.isNameBlock(block.text)) {
-      let lineCount = 0;
-      let blockIndices = []; // <<< ИЗМЕНЕНИЕ: Собираем индексы всех строк в диалоге
-      let counterIndex = i;
-      
-      while (counterIndex < textBlocks.length) {
-        const currentDialogueBlock = textBlocks[counterIndex];
-        
-        if (counterIndex > i) {
-            const prevBlock = textBlocks[counterIndex - 1];
-            if (
-                window.isNameBlock(currentDialogueBlock.text) ||
-                // <<< ГЛАВНОЕ ИСПРАВЛЕНИЕ: Проверяем разрыв > 1, а не > 2 >>>
-                (currentDialogueBlock.idx !== undefined && prevBlock.idx !== undefined && (currentDialogueBlock.idx - prevBlock.idx > 1))
-            ) {
-                break;
+    // --- Check for long dialogues ---
+    if (block.type === 'ShowText' && !checkedIndices_long.has(i)) {
+        let lineCount = 0;
+        let blockIndices = [];
+        let counterIndex = i;
+        while (counterIndex < textBlocks.length) {
+            const currentDialogueBlock = textBlocks[counterIndex];
+            if (counterIndex > i) {
+                const prevBlock = textBlocks[counterIndex - 1];
+                if ( currentDialogueBlock.type !== 'ShowText' || window.isNameBlock(currentDialogueBlock.text) || (currentDialogueBlock.idx !== undefined && prevBlock.idx !== undefined && (currentDialogueBlock.idx - prevBlock.idx > 1))) {
+                    break;
+                }
+            }
+            lineCount++;
+            blockIndices.push(counterIndex);
+            checkedIndices_long.add(counterIndex);
+            counterIndex++;
+        }
+        if (lineCount >= 5) {
+            blockIndices.forEach(errorIndex => {
+                const errorBlock = textBlocks[errorIndex];
+                errors.push({
+                    label: `строка ${errorBlock.idx + 1}`,
+                    type: 'Ошибка компоновки',
+                    reason: `Часть слишком длинного диалога (${lineCount} строк). Требуется вставка ShowTextAttributes.`
+                });
+            });
+        }
+    }
+
+    // --- Check for marked ShowTextAttributes without a following name tag ---
+    if (block.type === 'ShowTextAttributes' && block.manualPlus) {
+        let nextRelevantBlock = null;
+        let nextRelevantBlockIndex = -1;
+        for (let j = i + 1; j < textBlocks.length; j++) {
+            if (textBlocks[j].type === 'ShowText') { nextRelevantBlock = textBlocks[j]; nextRelevantBlockIndex = j; break; }
+            if (textBlocks[j].type !== 'ShowText' && textBlocks[j].type !== 'ShowTextAttributes') { break; }
+        }
+        if (nextRelevantBlock && !window.isNameBlock(nextRelevantBlock.text)) {
+            let isNarrationBlock = false;
+            let k = i - 1;
+            while (k >= 0) {
+                const prev = textBlocks[k];
+                if (prev.type === 'ShowText' && window.isNameBlock(prev.text)) {
+                    isNarrationBlock = false;
+                    break;
+                }
+                if (prev.type === 'ShowTextAttributes') {
+                    isNarrationBlock = /^"",\s*0/.test(prev.text || '');
+                    break;
+                }
+                if (prev.type !== 'ShowText' && prev.type !== 'ShowTextAttributes') {
+                    isNarrationBlock = true;
+                    break;
+                }
+                k--;
+            }
+            if (k < 0) {
+                isNarrationBlock = true;
+            }
+            if (!isNarrationBlock) {
+                errors.push({
+                    label: `строка ${nextRelevantBlock.idx + 1}`,
+                    type: 'Ошибка компоновки',
+                    reason: 'Эта строка должна содержать тег имени (\\n<\\C[6]Имя\\C[0]>), так как она идет после отмеченной (#+) ShowTextAttributes.'
+                });
             }
         }
-
-        lineCount++;
-        blockIndices.push(counterIndex); // <<< ИЗМЕНЕНИЕ: Добавляем индекс в список
-        checkedIndices_long.add(counterIndex);
-        counterIndex++;
-      }
-      
-      // <<< ИЗМЕНЕНИЕ: Добавляем ошибку для КАЖДОЙ строки, как в предпросмотре >>>
-      if (lineCount >= 5) {
-        blockIndices.forEach(errorIndex => {
-            const errorBlock = textBlocks[errorIndex];
-            errors.push({
-              label: `строка ${errorBlock.idx + 1}`,
-              type: 'Ошибка компоновки',
-              reason: `Часть слишком длинного диалога (${lineCount} строк). Требуется вставка ShowTextAttributes.`
-            });
-        });
-      }
     }
-    
-    // Другие проверки (лимит символов, японский текст и т.д.)
+
+    // --- Other checks (length, Japanese text, etc.) ---
     if (block.type === 'ShowText') {
       const metrics = window.getVisibleTextMetrics(block.text);
       if (metrics.length > 50) {
@@ -253,7 +321,6 @@ window.checkForLineLevelErrors = function(ruLines) {
       const isJapanesePresent = /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.text);
       if (!block.hasIgnoreMarker && isJapanesePresent) {
         let isAnError = true;
-        // Для Script и ScriptMore допускаем кодоподобные строки (на будущее)
         if (block.type === 'Script' || block.type === 'ScriptMore') {
           const isCodeLikeRegex = /[=\/~_()\[\]\.\+\-]|\b(if|else|for|while|return|function|var|let|const|script)\b|e\./i;
           if (isCodeLikeRegex.test(block.text)) {
@@ -268,7 +335,6 @@ window.checkForLineLevelErrors = function(ruLines) {
           });
         }
       }
-      // <<< НАЧАЛО ИЗМЕНЕНИЯ: Проверка на сломанные коды форматирования >>>
       const brokenCodeRegex = /∾∾[IC]\[\d+\].*?(?<!∾)∾C\[0\]/;
       if (brokenCodeRegex.test(block.text)) {
         errors.push({
@@ -277,9 +343,11 @@ window.checkForLineLevelErrors = function(ruLines) {
           reason: 'Неправильно экранирован закрывающий тег. Вероятно, вместо `∾∾C[0]` используется `∾C[0]`.'
         });
       }
-      // <<< КОНЕЦ ИЗМЕНЕНИЯ >>>
     }
   });
+  // =================================================================
+  // END: All checks
+  // =================================================================
 
   return errors;
-}; 
+};

@@ -1060,63 +1060,264 @@
     }
   };
 
+  // === Вспомогательная функция для поиска предыдущего видимого блока ===
+  function getPreviousVisibleBlock(textBlocks, startIndex) {
+    if (!textBlocks) return null;
+    let k = startIndex - 1;
+    while (k >= 0) {
+      if (textBlocks[k] && !textBlocks[k].isDeleted) return textBlocks[k];
+      k--;
+    }
+    return null;
+  }
+
   // === Функции для работы с тегами имён ===
-  // Функция для ПРОВЕРКИ наличия ошибок тегов
+
+  // Функция для ПРОВЕРКИ наличия ошибок тегов (ОБНОВЛЕНО v16)
   global.hasNameTagErrors = function() {
     if (!window.textBlocks) return false;
-    
-    // Теперь эта функция использует ТОЧНО ТАКУЮ ЖЕ логику, как и основной детектор ошибок.
-    return window.textBlocks.some(block => {
-      if (block.isDeleted || block.type !== 'ShowText') return false;
-      
-      const text = block.text;
-      const hasNameTag = /<∾∾C\[6\].*?∾∾C\[0\]>/.test(text);
-      const isMissingPrefix = !/^∾\n/.test(text);
-      
-      // Ошибка есть, только если есть тег И отсутствует правильный префикс.
-      return hasNameTag && isMissingPrefix;
-    });
+
+    for (let i = 0; i < textBlocks.length; i++) {
+      const block = textBlocks[i];
+      if (block.isDeleted) continue;
+
+      // --- Проверка на Ошибку 1: Тег есть, префикса ∾\n нет ---
+      if (block.type === 'ShowText') {
+        const text = block.text;
+        const hasNameTag = /<∾∾C\[6\].*?∾∾C\[0\]>/.test(text);
+        const isMissingPrefix = !/^∾\n/.test(text);
+        if (hasNameTag && isMissingPrefix) {
+          return true; // Нашли Ошибку 1
+        }
+      }
+
+      // --- Проверка на Ошибку 2 (Добавить тег) и Ошибку 3 (Удалить STA) ---
+      if (block.type === 'ShowTextAttributes' && block.manualPlus) {
+          
+          let nextRelevantBlock = null;
+          for (let j = i + 1; j < textBlocks.length; j++) {
+              if (textBlocks[j].isDeleted) continue;
+              if (textBlocks[j].type === 'ShowText') { nextRelevantBlock = textBlocks[j]; break; }
+              if (textBlocks[j].type !== 'ShowText' && textBlocks[j].type !== 'ShowTextAttributes' && textBlocks[j].type !== undefined) { break; }
+          }
+          
+          if (!nextRelevantBlock || window.isNameBlock(nextRelevantBlock.text)) {
+            continue; // STA стоит перед именем или в конце, ошибки нет
+          }
+
+          const prevBlock = getPreviousVisibleBlock(window.textBlocks, i);
+          if (!prevBlock) continue;
+
+          // --- Проверка на Ошибку 3 (Мусорный STA) v16 ---
+          // STA - мусор, ТОЛЬКО ЕСЛИ он между ДВУМЯ строками-продолжениями.
+          if (prevBlock.type === 'ShowText' && prevBlock.manualPlus && nextRelevantBlock.manualPlus) {
+            // prevBlock - продолжение (#+), nextBlock - тоже продолжение (#+)
+            return true; // Нашли Ошибку 3
+          }
+
+          // --- Проверка на Ошибку 1 (Фаза 1 Очистки) v16 ---
+          // STA стоит сразу после имени
+          if (prevBlock.type === 'ShowText' && window.isNameBlock(prevBlock.text)) {
+            return true; // Нашли Ошибку 1 (Фаза 1)
+          }
+
+          // --- Проверка на Ошибку 2 (Нет тега) v14 ---
+          // (Сюда попадают все остальные STA #+ перед ShowText-без-имени)
+          let isNarrationBlock = false;
+          let k = i - 1;
+          while (k >= 0) {
+              const prev = textBlocks[k];
+              if (prev.isDeleted) { k--; continue; }
+              
+              if (prev.type === 'ShowText') {
+                if (window.isNameBlock(prev.text)) {
+                  isNarrationBlock = false; 
+                  break; 
+                }
+              } else if (prev.type !== 'ShowTextAttributes') {
+                isNarrationBlock = true; 
+                break;
+              }
+              k--;
+          }
+          if (k < 0) {
+              if (textBlocks[0] && textBlocks[0].type === 'ShowText' && !window.isNameBlock(textBlocks[0].text)) {
+                  isNarrationBlock = true;
+              } else if (textBlocks[0] && textBlocks[0].type !== 'ShowText') {
+                  isNarrationBlock = true;
+              }
+          }
+          
+          if (!isNarrationBlock) {
+              return true; // Нашли Ошибку 2 (отсутствует тег)
+          }
+      }
+    } // Конец цикла for
+    return false; // Ошибок не найдено
   };
 
-  // Функция для ИСПРАВЛЕНИЯ ошибок тегов
+  // Функция для ИСПРАВЛЕНИЯ ошибок тегов (ОБНОВЛЕНО v16)
   global.autoFixNameTagErrors = function() {
     if (!window.textBlocks) return;
 
-    // ИСПРАВЛЕННАЯ ЛОГИКА ОТБОРА:
-    // Теперь мы ищем блоки, где есть тег, НО ОТСУТСТВУЕТ правильный префикс.
-    const blocksToFix = textBlocks.filter(block => {
-      if (block.isDeleted || block.type !== 'ShowText') return false;
-      
-      const text = block.text;
-      const hasNameTag = /<∾∾C\[6\].*?∾∾C\[0\]>/.test(text);
-      const isMissingPrefix = !/^∾\n/.test(text);
-      
-      return hasNameTag && isMissingPrefix;
-    });
+    if (typeof pushUndo === 'function') pushUndo();
+    
+    let blocksToFix_Prefix = [];
+    let blocksToFix_MissingTag = [];
+    let lastKnownNameTag = null;
+    let fixedCount = 0;
+    let failedCount = 0;
+    let preCleanedCount = 0; // Считает Ошибку 3 + Ошибку 1 (Фаза 1)
 
-    if (blocksToFix.length === 0) {
+    // === Шаг 1: Фаза Очистки (v16 - c 'isDeleted = true') ===
+    let blocksToPreClean = [];
+    for (let i = 0; i < window.textBlocks.length; i++) {
+      const block = window.textBlocks[i];
+      if (block.isDeleted) continue;
+
+      if (block.type === 'ShowTextAttributes' && block.manualPlus) {
+        
+        let nextRelevantBlock = null;
+        for (let j = i + 1; j < window.textBlocks.length; j++) {
+            if (window.textBlocks[j].isDeleted) continue;
+            if (window.textBlocks[j].type === 'ShowText') { nextRelevantBlock = window.textBlocks[j]; break; }
+            if (window.textBlocks[j].type !== 'ShowText' && window.textBlocks[j].type !== 'ShowTextAttributes' && window.textBlocks[j].type !== undefined) { break; }
+        }
+        
+        const prevBlock = getPreviousVisibleBlock(window.textBlocks, i);
+        if (prevBlock && prevBlock.type === 'ShowText') {
+
+          // Правило 1 (Фаза 1): STA #+ после имени
+          if (window.isNameBlock(prevBlock.text)) { 
+            blocksToPreClean.push(block); 
+            continue; 
+          }
+
+          // Правило 2 (Ошибка 3): STA #+ в середине предложения #+
+          if (prevBlock.manualPlus && nextRelevantBlock && nextRelevantBlock.manualPlus) {
+            blocksToPreClean.push(block);
+            continue; 
+          }
+        }
+      }
+    }
+    
+    if (blocksToPreClean.length > 0) {
+      blocksToPreClean.forEach(block => {
+        block.isDeleted = true; 
+        preCleanedCount++;
+      });
+    }
+    // === Конец Фазы Очистки ===
+
+
+    // === Шаг 2: Ищем ошибки (v14) на *полном*, но помеченном массиве ===
+    for (let i = 0; i < window.textBlocks.length; i++) {
+      const block = window.textBlocks[i];
+      if (block.isDeleted) continue; 
+
+      if (block.type === 'ShowText') {
+        const text = block.text;
+        const hasNameTag = /<∾∾C\[6\].*?∾∾C\[0\]>/.test(text);
+        if (hasNameTag) {
+          const nameMatch = text.match(/(<∾∾C\[6\].*?∾∾C\[0\]>)/);
+          if (nameMatch) lastKnownNameTag = nameMatch[1];
+          const isMissingPrefix = !/^∾\n/.test(text);
+          if (isMissingPrefix) {
+            blocksToFix_Prefix.push(block);
+          }
+        }
+      }
+      
+      if (block.type === 'ShowTextAttributes' && block.manualPlus) {
+          
+          let nextRelevantBlock = null;
+          for (let j = i + 1; j < window.textBlocks.length; j++) {
+              if (window.textBlocks[j].isDeleted) continue;
+              if (window.textBlocks[j].type === 'ShowText') { nextRelevantBlock = window.textBlocks[j]; break; }
+              if (window.textBlocks[j].type !== 'ShowText' && window.textBlocks[j].type !== 'ShowTextAttributes' && window.textBlocks[j].type !== undefined) { break; }
+          }
+          
+          if (!nextRelevantBlock || window.isNameBlock(nextRelevantBlock.text)) {
+            continue;
+          }
+
+          // (Ошибка 3 и Ошибка 1 (Фаза 1) уже обработаны и помечены isDeleted)
+          
+          // --- Проверка на Ошибку 2 (v14 - Исправленная логика) ---
+          let isNarrationBlock = false;
+          let k = i - 1;
+          while (k >= 0) {
+              const prev = textBlocks[k];
+              if (prev.isDeleted) { k--; continue; }
+              
+              if (prev.type === 'ShowText') {
+                if (window.isNameBlock(prev.text)) {
+                  isNarrationBlock = false; 
+                  break; 
+                }
+              } else if (prev.type !== 'ShowTextAttributes') {
+                isNarrationBlock = true; 
+                break;
+              }
+              k--;
+          }
+          if (k < 0) {
+              if (textBlocks[0] && textBlocks[0].type === 'ShowText' && !window.isNameBlock(textBlocks[0].text)) {
+                  isNarrationBlock = true;
+              } else if (textBlocks[0] && textBlocks[0].type !== 'ShowText') {
+                  isNarrationBlock = true;
+              }
+          }
+          
+          if (!isNarrationBlock) {
+               blocksToFix_MissingTag.push({
+                   block: nextRelevantBlock,
+                   nameTag: lastKnownNameTag 
+               }); // Нашли Ошибку 2
+          }
+      }
+    } // Конец Шага 2
+
+    // === Шаг 3: Применяем исправления ===
+    const totalFixes = blocksToFix_Prefix.length + blocksToFix_MissingTag.length;
+    
+    if (totalFixes === 0 && preCleanedCount === 0) {
       alert('Ошибок в тегах имён для исправления не найдено.');
+      if (typeof window.undoStack === 'object' && window.undoStack.length > 0) {
+        window.undoStack.pop();
+        if (typeof document.getElementById === 'function' && document.getElementById('undoBtn')) {
+           document.getElementById('undoBtn').disabled = window.undoStack.length === 0;
+        }
+      }
       return;
     }
     
-    const confirmed = confirm(`Найдено ${blocksToFix.length} строк с неправильными тегами имён. Исправить их автоматически? (Это действие можно отменить)`);
-    if (!confirmed) return;
+    // --- ПОТОМ Исправляем Ошибку 1 (Добавляем префикс ∾\n) ---
+    blocksToFix_Prefix.forEach(block => {
+      block.text = '∾\n' + block.text;
+      fixedCount++;
+    });
 
-    if (typeof pushUndo === 'function') pushUndo();
-    
-    let fixedCount = 0;
-    blocksToFix.forEach(block => {
-      const fixedText = '∾\n' + block.text;
-      
-      if (block.text !== fixedText) {
-        block.text = fixedText;
+    // --- В КОНЦЕ Исправляем Ошибку 2 (Добавляем полный тег имени) ---
+    blocksToFix_MissingTag.forEach(item => {
+      if (item.nameTag) {
+        item.block.text = `∾\n${item.nameTag}${item.block.text}`;
         fixedCount++;
+      } else {
+        failedCount++;
+        console.warn("Не удалось исправить тег имени для блока (не найден предыдущий тег):", item.block);
       }
     });
 
-    alert(`Исправлено ${fixedCount} ошибок в тегах имён.`);
+    let alertMsg = `Исправление завершено.\n`;
+    if (preCleanedCount > 0) alertMsg += `• Удалено "мусорных" ShowTextAttributes: ${preCleanedCount}\n`;
+    if (fixedCount > 0) alertMsg += `• Исправлено тегов имён: ${fixedCount}\n`;
+    if (failedCount > 0) alertMsg += `• Ошибок (не найден тег): ${failedCount}\n`;
     
-    // Перерисовываем редактор и обновляем все ошибки
+    alert(alertMsg);
+    
+    // --- Шаг 4: Перерисовываем редактор и обновляем все ошибки ---
     if (typeof renderTextBlocks === 'function') renderTextBlocks();
     if (typeof window.updateMatchLamp === 'function') window.updateMatchLamp();
     if (typeof updateRedIndices === 'function') updateRedIndices();
