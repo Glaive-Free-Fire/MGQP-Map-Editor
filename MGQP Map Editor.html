@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8">
-  <title>MGQP Map Editor v1.4.72</title>
+  <title>MGQP Map Editor v1.4.80</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="Java scripts/main_script.js"></script>
   <script src="Java scripts/restore-mode.js"></script>
@@ -128,6 +128,7 @@
     <button id="fixScriptBtn" class="control-btn" style="background:#fcd; display:none;">Исправить ошибки Script</button>
     <button id="fixIndentBtn" class="control-btn" style="background:#fde; display:none;">Исправить отступы</button>
     <button id="fixNameTagsBtn" class="control-btn" style="background:#cfc; display:none;">Исправить теги имён</button>
+    <button id="fixAffectionBtn" class="control-btn" style="background:#fcc; display:none;">Исправить Шаблоны Строк</button>
     <button id="clearOrphanedBtn" class="control-btn" style="background:#fdd; display:none;">Очистить строки</button>
     <button id="memorizeOrphanedBtn" class="control-btn" style="background:#dff; display:none;">Запомнить Доп. Строки</button>
     <button id="syncEditorBtn" class="control-btn" style="background:#ffc; display:none;">Обновить редактор</button>
@@ -509,43 +510,82 @@
                           if (textBlocks[j].type !== 'ShowText' && textBlocks[j].type !== 'ShowTextAttributes' && textBlocks[j].type !== undefined) { break; }
                       }
                       if (nextRelevantBlock && !window.isNameBlock(nextRelevantBlock.text)) {
-                          // Правило 2: Исключаем "размышления" (исправленная логика v4)
-                          let isNarrationBlock = false;
+                          // <<< ИЗМЕНЕНИЕ: УДАЛЕНО "УМНОЕ" ИСКЛЮЧЕНИЕ >>>
+                          // [ЗДЕСЬ БЫЛ БЛОК if (block.generated) { ... }]
+                          // [И if (shouldCheck) { ... }]
+                          //
+                          // **ПОЯСНЕНИЕ ДЛЯ РАЗРАБОТЧИКОВ:**
+                          // Причина удаления: Любой STA#+ (вручную или сгенерированный),
+                          // который обновляет окно диалога (например, с портретом персонажа),
+                          // ДОЛЖЕН сопровождаться ShowText с тегом имени, если это диалог.
+                          //
+                          // Старая логика ошибочно пропускала проверку для паттерна
+                          // [Сгенерированный STA#+] -> [ShowText#+], что приводило к
+                          // визуальному багу: исчезновению портрета персонажа при
+                          // обновлении окна диалога.
+                          //
+                          // Новая логика: Проверка выполняется ВСЕГДА.
+                          
+                          // --- Проверка на Ошибку 2 (v25 - Четкое определение родителя) ---
+                          let isNarrationBlock = true; // По умолчанию считаем, что это повествование
+
+                          // 1. Ищем ПОСЛЕДНИЙ ShowTextAttributes без #+ перед текущим STA#+
+                          let anchorStaIndex = -1;
                           let k = i - 1;
                           while (k >= 0) {
                               const prev = textBlocks[k];
                               if (prev.isDeleted) { k--; continue; }
-                              // Нашли ShowText с именем — это диалог
-                              if (prev.type === 'ShowText' && window.isNameBlock(prev.text)) {
-                                  isNarrationBlock = false;
-                                  break;
-                              }
-                              // Нашли STA — проверяем его
+
                               if (prev.type === 'ShowTextAttributes') {
-                                  isNarrationBlock = /^\[?"",\s*0/.test(prev.text || '');
-                                  break;
-                              }
-                              // Любая другая команда — считаем размышлением
-                              if (prev.type !== 'ShowText' && prev.type !== 'ShowTextAttributes') {
-                                  isNarrationBlock = true;
-                                  break;
-                              }
-                              // Иначе продолжаем идти назад (ShowText без имени)
-                              k--;
-                          }
-                          if (k < 0) {
-                              // Дошли до начала — проверяем первый блок
-                              if (textBlocks[0]) {
-                                  const startBlock = textBlocks[0];
-                                  if (startBlock.type === 'ShowText' && !window.isNameBlock(startBlock.text)) {
-                                      isNarrationBlock = true;
-                                  } else if (startBlock.type === 'ShowTextAttributes' && /^\[?"",\s*0/.test(startBlock.text || '')) {
-                                      isNarrationBlock = true;
+                                  if (!prev.manualPlus && !prev.generated) {
+                                      anchorStaIndex = k;
+                                      break;
                                   }
+                                  k--;
+                                  continue;
+                              }
+
+                              if (prev.type === 'ShowText') {
+                                  k--;
+                                  continue;
+                              }
+
+                              // Любая другая команда обрывает поиск якоря
+                              break;
+                          }
+                          
+                          // 2. Если якорь найден, ищем ПЕРВЫЙ ShowText после него (до текущего STA#+)
+                          let parentBlock = null;
+                          if (anchorStaIndex !== -1) {
+                              k = anchorStaIndex + 1;
+                              while (k < i) {
+                                  const candidate = textBlocks[k];
+                                  if (candidate.isDeleted) { k++; continue; }
+
+                                  if (candidate.type === 'ShowText') {
+                                      parentBlock = candidate;
+                                      break;
+                                  }
+
+                                  if (candidate.type === 'ShowTextAttributes' && candidate.manualPlus) {
+                                      k++;
+                                      continue;
+                                  }
+
+                                  // Другие команды — контекст оборван
+                                  break;
+                              }
+                          }
+
+                          if (parentBlock) {
+                              if (window.isNameBlock(parentBlock.text)) {
+                                  isNarrationBlock = false;
                               } else {
                                   isNarrationBlock = true;
                               }
                           }
+                          // (Если якорь не найден или нет родителя, оставляем повествование)
+
                           if (!isNarrationBlock) {
                               redLineErrors.push({
                                   label: nextRelevantBlock.idx !== undefined ? `строка ${nextRelevantBlock.idx + 1}` : '[продолжение]',
@@ -826,8 +866,10 @@
     window.extractTexts = function() {
       // --- Сначала парсим Display Name ---
       mapDisplayName = '';
-      for (let i = 0; i < originalLines.length; i++) {
-        const match = originalLines[i].match(/^\s*Display Name\s*=\s*"(.*)"/);
+      // Используем window.originalLines если доступен, иначе локальный originalLines
+      const linesToUse = window.originalLines || originalLines;
+      for (let i = 0; i < linesToUse.length; i++) {
+        const match = linesToUse[i].match(/^\s*Display Name\s*=\s*"(.*)"/);
         if (match) {
           mapDisplayName = match[1];
           break;
@@ -843,7 +885,7 @@
       const otherRegex = /^\s*(\w+)\(\[([\s\S]*?)\]\)(.*)/;
       const nameValueRegex = /^\s*(\w+)\s*=\s*"(.*)"$/;
 
-      originalLines.forEach((line, idx) => {
+      linesToUse.forEach((line, idx) => {
         const ceMatch = line.match(/^CommonEvent (\d+)/);
         if (ceMatch) {
           currentEventId = parseInt(ceMatch[1], 10);
@@ -902,8 +944,8 @@
         } else if (currentBlock.type === 'ShowText' && window.isNameBlock(rawText)) {
           let combinedText = currentBlock.text;
           
-          const specialTemplateRegex = /^\\n<\\C\[\d+\].*\\C\[0\]>\((Уровень симпатии:|Найдено мастеров:).*?\)$/;
-          if (specialTemplateRegex.test(rawText.trim()) && i + 1 < tempBlocks.length && tempBlocks[i + 1].type === 'ShowText') {
+          const specialTemplateRegex = /^\n<\\C\[\d+\].*\\C\[0\]>\((Уровень симпатии:|Найдено мастеров:|Привязанность:).*?\)$/;
+          if (specialTemplateRegex.test(rawText) && i + 1 < tempBlocks.length && tempBlocks[i + 1].type === 'ShowText') {
               combinedText += '\n' + tempBlocks[i + 1].text;
               i++;
           }
@@ -1005,10 +1047,30 @@
         let affinityMatch = rawText.match(affinityRegex);
         let nameAndDialogueMatch = rawText.match(nameAndDialogueRegex);
 
+        // === НАЧАЛО ИСПРАВЛЕНИЯ: Логика слияния шаблона в JP парсере ===
         if (affinityMatch) {
           const name = affinityMatch[1];
-          const restOfText = `（好感度：${affinityMatch[2]}）`;
-          japBlocks.push({ type: 'name', text: `【${name}】\n${restOfText}`, blockType: 'ShowText', commonEventId: currentBlock.commonEventId, originalIdx: currentBlock.originalIdx });
+          const templateText = `（好感度：${affinityMatch[2]}）`;
+          
+          // Проверяем, идет ли следом строка диалога
+          let dialoguePart = '';
+          if (i + 1 < tempBlocks.length && 
+              tempBlocks[i+1].type === 'ShowText' && 
+              !nameRegex.test(tempBlocks[i+1].text)) 
+          {
+            dialoguePart = tempBlocks[i+1].text;
+            i++; // <- Важно: мы "поглощаем" следующую строку
+          }
+          
+          // Собираем всё в один блок, как это делает русский парсер
+          japBlocks.push({ 
+            type: 'name', 
+            text: `【${name}】${templateText}\n${dialoguePart}`, // Новый объединенный текст
+            blockType: 'ShowText', 
+            commonEventId: currentBlock.commonEventId, 
+            originalIdx: currentBlock.originalIdx 
+          });
+        // === КОНЕЦ ИСПРАВЛЕНИЯ ===
         } else if (nameAndDialogueMatch) {
             const namePart = nameAndDialogueMatch[1];
             const dialoguePart = nameAndDialogueMatch[2];
@@ -1482,41 +1544,51 @@
         // --- КОНЕЦ ПРАВИЛЬНОГО БЛОКА ---
         
         // --- Расширенная обработка дубликатов японского текста ---
-        if (block.type === 'ShowText' && block.japaneseLink && block.japaneseLink.text) {
+        // Ищем дубликаты по japaneseLink (если есть) или по block.text (если нет японского файла)
+        if (block.type === 'ShowText') {
           try {
-            const currentJap = block.japaneseLink.text.trim();
-            // ищем индекс оригинала, без выхода из функции
-            const origIdx = textBlocks.findIndex((b, idx2) =>
-              idx2 < i &&
-              b.japaneseLink &&
-              b.japaneseLink.text.trim() === currentJap
-            );
-            // если оригинал не найден, просто пропускаем логику дубликата
+            let origIdx = -1;
+            
+            // Если есть японский файл, ищем по japaneseLink
+            if (block.japaneseLink && block.japaneseLink.text) {
+              const currentJap = block.japaneseLink.text.trim();
+              origIdx = textBlocks.findIndex((b, idx2) =>
+                idx2 < i &&
+                b.japaneseLink &&
+                b.japaneseLink.text &&
+                b.japaneseLink.text.trim() === currentJap
+              );
+            }
+            
+            // Если не нашли по japaneseLink или японского файла нет, ищем по block.text
+            if (origIdx === -1) {
+              const currentText = block.text.trim();
+              origIdx = textBlocks.findIndex((b, idx2) =>
+                idx2 < i &&
+                b.type === 'ShowText' &&
+                b.text &&
+                b.text.trim() === currentText &&
+                b.idx !== undefined // Только блоки из оригинального файла
+              );
+            }
+            
+            // Если оригинал найден, показываем кнопку "Дубликат"
             if (origIdx !== -1) {
               const rusInputEl = block.dom && block.dom.rusInput;
               if (rusInputEl) {
                 const dupBtn = document.createElement('button');
                 dupBtn.textContent = 'Дубликат';
-                dupBtn.title = `Повтор строки ${textBlocks[origIdx].idx + 1}`;
+                dupBtn.title = `Повтор строки ${textBlocks[origIdx].idx !== undefined ? textBlocks[origIdx].idx + 1 : '?'}`;
                 dupBtn.style.marginLeft = '8px';
                 div.appendChild(dupBtn);
 
-                // <<< НАЧАЛО ИЗМЕНЕНИЯ: Функция теперь читает данные из `block.text`, а не из DOM >>>
+                // <<< НАЧАЛО ИЗМЕНЕНИЯ: Функция копирует содержимое только из одного блока >>>
                 const collectText = start => {
                   if (!textBlocks[start]) {
                     return '';
                   }
-                  let fullText = textBlocks[start].text;
-                  let end = start + 1;
-                  while (
-                    end < textBlocks.length &&
-                    textBlocks[end].type === 'ShowText' &&
-                    (!textBlocks[end].japaneseLink || !textBlocks[end].japaneseLink.text.trim())
-                  ) {
-                    fullText += '\n' + textBlocks[end].text;
-                    end++;
-                  }
-                  return fullText;
+                  // Копируем содержимое только из одного блока, без захвата следующих строк
+                  return textBlocks[start].text;
                 };
                 // <<< КОНЕЦ ИЗМЕНЕНИЯ >>>
 
@@ -1870,15 +1942,19 @@
         return window.fullRusLines.slice();
       }
 
+      // Используем window.originalLines и window.textBlocks если доступны, иначе локальные
+      const linesToUse = window.originalLines || originalLines;
+      const blocksToUse = window.textBlocks || textBlocks;
+
       // Если данных нет, возвращаем пустой массив
-      if (!originalLines || !textBlocks) {
+      if (!linesToUse || !blocksToUse) {
         return [];
       }
 
       let exportLines = [];
-        let newLines = [...originalLines];
+        let newLines = [...linesToUse];
         const blockMap = new Map();
-        textBlocks.forEach(block => {
+        blocksToUse.forEach(block => {
           if (block.idx !== undefined) {
             blockMap.set(block.idx, block);
           }
@@ -1976,13 +2052,13 @@
         
       // 3. Вставляем новые строки (сгенерированные редактором)
         const generatedBlocksByAnchor = new Map();
-        textBlocks.forEach(block => {
+        blocksToUse.forEach(block => {
           if (block.idx === undefined && !block.isDeleted) {
           if (block.text.includes('ТРЕБУЕТСЯ ПЕРЕВОД')) return;
                 let anchorIdx = -1;
-            for (let j = textBlocks.indexOf(block) - 1; j >= 0; j--) {
-              if (textBlocks[j].idx !== undefined) {
-                        anchorIdx = textBlocks[j].idx;
+            for (let j = blocksToUse.indexOf(block) - 1; j >= 0; j--) {
+              if (blocksToUse[j].idx !== undefined) {
+                        anchorIdx = blocksToUse[j].idx;
                         break;
                     }
                 }
@@ -2158,26 +2234,66 @@
       if (rest.trim() === '') return true; // Разделили, но новой строки не будет
 
       // Теперь самая важная часть: определяем, нужно ли вставлять ShowTextAttributes
-      // 1. Находим начало текущего диалогового окна
+      // 1. Ищем якорь окна: последний ShowTextAttributes без #+
+      let anchorStaIndex = -1;
+      for (let j = blockIndex - 1; j >= 0; j--) {
+        const prev = textBlocks[j];
+        if (!prev || prev.isDeleted) continue;
+        if (prev.type === 'ShowTextAttributes' && !prev.manualPlus && !prev.generated) {
+          anchorStaIndex = j;
+          break;
+        }
+        if (prev.type !== 'ShowText' && prev.type !== 'ShowTextAttributes') {
+          break;
+        }
+      }
+
+      // 2. Находим фактическое начало окна (первая ShowText после якоря)
       let windowStartIndex = blockIndex;
-      while (windowStartIndex > 0 && textBlocks[windowStartIndex - 1].idx === undefined && textBlocks[windowStartIndex - 1].type === 'ShowText') {
-              windowStartIndex--;
-          }
+      if (anchorStaIndex !== -1) {
+        windowStartIndex = anchorStaIndex + 1;
+        while (windowStartIndex < textBlocks.length && textBlocks[windowStartIndex].isDeleted) {
+          windowStartIndex++;
+        }
+        if (windowStartIndex >= textBlocks.length || textBlocks[windowStartIndex].type !== 'ShowText') {
+          windowStartIndex = blockIndex; // fallback
+        }
+      }
 
-      // 2. Считаем, сколько строк УЖЕ есть в этом окне
+      // 3. Считаем количество ShowText в текущем окне до следующего якоря/имени
       let linesInWindow = 0;
-          let counterIndex = windowStartIndex;
-          while (counterIndex < textBlocks.length && textBlocks[counterIndex].type === 'ShowText') {
-              // Прерываем подсчет, если следующий блок - это НАЧАЛО нового, другого диалога
-        if (textBlocks[counterIndex].idx !== undefined && counterIndex > windowStartIndex && window.isNameBlock(textBlocks[counterIndex].text)) {
-              break;
-            }
-        linesInWindow++;
-              counterIndex++;
-          }
+      let counterIndex = windowStartIndex;
+      while (counterIndex < textBlocks.length) {
+        const current = textBlocks[counterIndex];
+        if (current.isDeleted) {
+          counterIndex++;
+          continue;
+        }
 
-      // 3. Если текущая строка - 4-я, перед 5-й нужно вставить ShowTextAttributes
-      if (linesInWindow === 4) {
+        if (current.type === 'ShowText') {
+          if (counterIndex > windowStartIndex && current.idx !== undefined && window.isNameBlock(current.text)) {
+            break; // начался новый диалог
+          }
+          linesInWindow++;
+          counterIndex++;
+          continue;
+        }
+
+        if (current.type === 'ShowTextAttributes') {
+          if (!current.manualPlus && !current.generated) {
+            break; // следующее окно
+          }
+          counterIndex++;
+          continue;
+        }
+
+        break;
+      }
+
+      const futureLines = linesInWindow + 1; // Добавим новую строку после разделения
+
+      // Если после разделения в окне будет >4 строк, перед новой строкой нужен ShowTextAttributes
+      if (futureLines > 4) {
         let attrText = '"",0,0,2'; // Атрибуты по умолчанию
         // Ищем предыдущие атрибуты, чтобы их скопировать
         for (let j = blockIndex; j >= 0; j--) {
@@ -2197,7 +2313,7 @@
     }
 
     // === НОВАЯ ФУНКЦИЯ ДЛЯ ИСПРАВЛЕНИЯ ДЛИННЫХ ДИАЛОГОВ (v7.4) ===
-    function fixLongDialogues() {
+    function fixLongDialogues(silent = false) {
       const longDialogueGroups = [];
       const checkedIndices = new Set();
 
@@ -2245,7 +2361,7 @@
       });
 
       if (longDialogueGroups.length === 0) {
-        alert('Проблемных диалогов не найдено.'); // Эта строка теперь будет срабатывать только если их ДЕЙСТВИТЕЛЬНО нет
+        if (!silent) alert('Проблемных диалогов не найдено.'); // Эта строка теперь будет срабатывать только если их ДЕЙСТВИТЕЛЬНО нет
         return;
       }
 
@@ -2261,6 +2377,77 @@
           const insertionPointIndexInGroup = j;
           const insertionPoint = groupIndices[insertionPointIndexInGroup] + 1;
           const startIndex = groupIndices[0];
+          
+          // <<< НАЧАЛО ИСПРАВЛЕНИЯ v24: Проверяем контекст >>>
+          let isNarration = true; // По умолчанию считаем, что это повествование
+          let lastKnownNameTag = null;
+
+          // 1. Ищем "якорь" — последний ShowTextAttributes (без #+)
+          let anchorStaIndex = -1;
+          let k = startIndex - 1;
+          while (k >= 0) {
+              const prev = textBlocks[k];
+              if (prev.isDeleted) { k--; continue; }
+
+              if (prev.type === 'ShowTextAttributes') {
+                  if (!prev.manualPlus && !prev.generated) {
+                      anchorStaIndex = k;
+                      break;
+                  }
+                  k--;
+                  continue;
+              }
+
+              if (prev.type === 'ShowText') {
+                  k--;
+                  continue;
+              }
+
+              break;
+          }
+
+          // 2. Ищем "родителя" — первый ShowText ПОСЛЕ якоря (и ДО начала нашей группы)
+          let parentBlock = null;
+          if (anchorStaIndex !== -1) {
+              k = anchorStaIndex + 1;
+              while (k < startIndex) {
+                  const candidate = textBlocks[k];
+                  if (candidate.isDeleted) { k++; continue; }
+
+                  if (candidate.type === 'ShowText') {
+                      parentBlock = candidate;
+                      break;
+                  }
+
+                  if (candidate.type === 'ShowTextAttributes' && candidate.manualPlus) {
+                      k++;
+                      continue;
+                  }
+
+                  break;
+              }
+          }
+
+          if (parentBlock) {
+              if (window.isNameBlock(parentBlock.text)) {
+                  isNarration = false;
+                  const nameMatch = parentBlock.text.match(/(<∾∾C\[6\].*?∾∾C\[0\]>)/);
+                  if (nameMatch) lastKnownNameTag = nameMatch[1];
+              } else {
+                  isNarration = true;
+              }
+          }
+
+          // Если это ДИАЛОГ, мы должны исправить следующую строку
+          if (!isNarration && lastKnownNameTag) {
+              // Блок, который будет СЛЕДУЮЩИМ (он еще не сдвинут)
+              const nextBlock = textBlocks[insertionPoint]; 
+              if (nextBlock && nextBlock.type === 'ShowText' && !window.isNameBlock(nextBlock.text)) {
+                  // Добавляем тег имени к блоку, который будет после STA #+
+                  nextBlock.text = `∾\n${lastKnownNameTag}${nextBlock.text}`;
+              }
+          }
+          // <<< КОНЕЦ ИСПРАВЛЕНИЯ v24 >>>
 
           let parentAttrText = '"",0,0,2';
           // Ищем атрибуты *до* начала этой группы
@@ -2285,13 +2472,18 @@
         }
       }
 
-      alert(`Исправлено ${fixedCount} проблемных мест в длинных диалогах.`);
+      if (!silent) alert(`Исправлено ${fixedCount} проблемных мест в длинных диалогах.`);
       
       if (typeof window.updateMatchLamp === 'function') {
         window.updateMatchLamp();
       }
       
       renderTextBlocks();
+      
+      // Повторная проверка на наличие других ошибок после исправлений
+      if (typeof window.updateFixButtonsVisibility === 'function') {
+        window.updateFixButtonsVisibility();
+      }
     }
 
     // === ОПТИМИЗИРОВАННЫЙ ОБРАБОТЧИК для кнопки "Разделить Строки" ===
@@ -2515,11 +2707,21 @@
     // === Обработчик кнопки исправления тегов имён ===
     document.getElementById('fixNameTagsBtn').onclick = function() {
       if (typeof window.autoFixNameTagErrors === 'function') {
-        window.autoFixNameTagErrors();
+        window.autoFixNameTagErrors(false);
       } else {
         alert("Функция исправления тегов имён недоступна!");
       }
     };
+
+    // === НОВЫЙ ОБРАБОТЧИК: Кнопка исправления шаблонов ===
+    document.getElementById('fixAffectionBtn').onclick = function() {
+      if (typeof window.fixAffectionTemplates === 'function') {
+        window.fixAffectionTemplates();
+      } else {
+        alert("Функция исправления шаблонов недоступна!");
+      }
+    };
+    // === КОНЕЦ НОВОГО ОБРАБОТЧИКА ===
 
     document.addEventListener('DOMContentLoaded', function() {
       // Перемещаем editor внутрь tabContentEditor только один раз
@@ -2532,7 +2734,7 @@
       // === ПРИВЯЗКА ОБРАБОТЧИКА К НОВОЙ КНОПКЕ ===
       const fixBtn = document.getElementById('fixLongDialoguesBtn');
       if (fixBtn) {
-        fixBtn.onclick = fixLongDialogues;
+        fixBtn.onclick = () => fixLongDialogues(false);
       }
     });
 
