@@ -1073,7 +1073,7 @@
 
   // === Функции для работы с тегами имён ===
 
-  // Функция для ПРОВЕРКИ наличия ошибок тегов (ОБНОВЛЕНО v16)
+  // Функция для ПРОВЕРКИ наличия ошибок тегов (ОБНОВЛЕНО v17)
   global.hasNameTagErrors = function() {
     if (!window.textBlocks) return false;
 
@@ -1112,7 +1112,11 @@
           // STA - мусор, ТОЛЬКО ЕСЛИ он между ДВУМЯ строками-продолжениями.
           if (prevBlock.type === 'ShowText' && prevBlock.manualPlus && nextRelevantBlock.manualPlus) {
             // prevBlock - продолжение (#+), nextBlock - тоже продолжение (#+)
-            return true; // Нашли Ошибку 3
+            
+            // <<< ИСПРАВЛЕНИЕ: Игнорируем, если STA был сгенерирован (generated: true) >>>
+            if (!block.generated) {
+                return true; // Нашли Ошибку 3
+            }
           }
 
           // --- Проверка на Ошибку 1 (Фаза 1 Очистки) v16 ---
@@ -1121,30 +1125,80 @@
             return true; // Нашли Ошибку 1 (Фаза 1)
           }
 
-          // --- Проверка на Ошибку 2 (Нет тега) v14 ---
-          // (Сюда попадают все остальные STA #+ перед ShowText-без-имени)
-          let isNarrationBlock = false;
+          // --- Проверка на Ошибку 2 (Нет тега) v17 ---
+          
+          // <<< ИЗМЕНЕНИЕ: УДАЛЕНО "УМНОЕ" ИСКЛЮЧЕНИЕ >>>
+          // [ЗДЕСЬ БЫЛ БЛОК if (block.generated) { ... continue; }]
+          //
+          // **ПОЯСНЕНИЕ ДЛЯ РАЗРАБОТЧИКОВ:**
+          // Причина удаления: Любой STA#+ (вручную или сгенерированный),
+          // который обновляет окно диалога (например, с портретом персонажа),
+          // ДОЛЖЕН сопровождаться ShowText с тегом имени, если это диалог.
+          //
+          // Старая логика ошибочно пропускала проверку для паттерна
+          // [Сгенерированный STA#+] -> [ShowText#+], что приводило к
+          // визуальному багу: исчезновению портрета персонажа при
+          // обновлении окна диалога.
+          //
+          // Новая логика: Проверка выполняется ВСЕГДА.
+          
+          // --- Теперь эта проверка выполняется ДЛЯ ВСЕХ STA#+ ---
+          
+          // --- Проверка на Ошибку 2 (v25 - Жесткое правило якоря STA) ---
+          let isNarrationBlock = true; // По умолчанию считаем, что это повествование
+
+          // 1. Ищем "якорь" - последний STA (без #+) строго перед текущим STA#+
+          let anchorStaIndex = -1;
           let k = i - 1;
           while (k >= 0) {
               const prev = textBlocks[k];
               if (prev.isDeleted) { k--; continue; }
-              
-              if (prev.type === 'ShowText') {
-                if (window.isNameBlock(prev.text)) {
-                  isNarrationBlock = false; 
-                  break; 
-                }
-              } else if (prev.type !== 'ShowTextAttributes') {
-                isNarrationBlock = true; 
-                break;
+
+              if (prev.type === 'ShowTextAttributes') {
+                  if (!prev.manualPlus && !prev.generated) {
+                      anchorStaIndex = k; // Нашли якорь
+                      break;
+                  }
+                  k--;
+                  continue;
               }
-              k--;
+
+              if (prev.type === 'ShowText') {
+                  k--;
+                  continue;
+              }
+
+              break; // Любая другая команда прерывает поиск
           }
-          if (k < 0) {
-              if (textBlocks[0] && textBlocks[0].type === 'ShowText' && !window.isNameBlock(textBlocks[0].text)) {
-                  isNarrationBlock = true;
-              } else if (textBlocks[0] && textBlocks[0].type !== 'ShowText') {
-                  isNarrationBlock = true;
+          
+          // 2. Ищем "родителя" - первый ShowText (без #+) ПОСЛЕ найденного якоря
+          let parentBlock = null;
+          if (anchorStaIndex !== -1) {
+              k = anchorStaIndex + 1;
+              while (k < i) { // Ищем между якорем и нашей STA#+
+                  const block = textBlocks[k];
+                  if (block.isDeleted) { k++; continue; }
+
+                  if (block.type === 'ShowText' && !block.manualPlus && !block.generated) {
+                      parentBlock = block;
+                      break;
+                  }
+                  
+                  if (block.type === 'ShowTextAttributes' && block.manualPlus) {
+                       k++;
+                       continue;
+                  }
+                  
+                  break;
+              }
+          }
+          // (Если якорь не найден — считаем повествованием)
+
+          if (parentBlock) {
+              if (window.isNameBlock(parentBlock.text)) {
+                  isNarrationBlock = false; // Это диалог
+              } else {
+                  isNarrationBlock = true; // Это повествование
               }
           }
           
@@ -1156,8 +1210,8 @@
     return false; // Ошибок не найдено
   };
 
-  // Функция для ИСПРАВЛЕНИЯ ошибок тегов (ОБНОВЛЕНО v16)
-  global.autoFixNameTagErrors = function() {
+  // Функция для ИСПРАВЛЕНИЯ ошибок тегов (ОБНОВЛЕНО v17)
+  global.autoFixNameTagErrors = function(silent = false) {
     if (!window.textBlocks) return;
 
     if (typeof pushUndo === 'function') pushUndo();
@@ -1195,8 +1249,11 @@
 
           // Правило 2 (Ошибка 3): STA #+ в середине предложения #+
           if (prevBlock.manualPlus && nextRelevantBlock && nextRelevantBlock.manualPlus) {
-            blocksToPreClean.push(block);
-            continue; 
+            // <<< ИСПРАВЛЕНИЕ: Игнорируем, если STA был сгенерирован (generated: true) >>>
+            if (!block.generated) {
+                blocksToPreClean.push(block);
+                continue; 
+            }
           }
         }
       }
@@ -1211,7 +1268,7 @@
     // === Конец Фазы Очистки ===
 
 
-    // === Шаг 2: Ищем ошибки (v14) на *полном*, но помеченном массиве ===
+    // === Шаг 2: Ищем ошибки (v17) на *полном*, но помеченном массиве ===
     for (let i = 0; i < window.textBlocks.length; i++) {
       const block = window.textBlocks[i];
       if (block.isDeleted) continue; 
@@ -1244,36 +1301,79 @@
 
           // (Ошибка 3 и Ошибка 1 (Фаза 1) уже обработаны и помечены isDeleted)
           
-          // --- Проверка на Ошибку 2 (v14 - Исправленная логика) ---
-          let isNarrationBlock = false;
+          // <<< ИЗМЕНЕНИЕ: УДАЛЕНО "УМНОЕ" ИСКЛЮЧЕНИЕ >>>
+          // [ЗДЕСЬ БЫЛ БЛОК if (block.generated) { ... }]
+          // [И if (!shouldCheck) { continue; }]
+          //
+          // **ПОЯСНЕНИЕ ДЛЯ РАЗРАБОТЧИКОВ:**
+          // Причина удаления: см. комментарий в hasNameTagErrors.
+          // Нам нужно, чтобы фиксер (эта функция) находил те же
+          // ошибки, что и детектор (hasNameTagErrors), и исправлял их.
+          
+          // --- Проверка на Ошибку 2 (v25 - Жесткое правило якоря STA) ---
+          let isNarrationBlock = true; // По умолчанию считаем, что это повествование
+          let foundNameTag = null; 
+
+          // 1. Ищем "якорь" - последний STA (без #+)
+          let anchorStaIndex = -1;
           let k = i - 1;
           while (k >= 0) {
               const prev = textBlocks[k];
               if (prev.isDeleted) { k--; continue; }
-              
+
+              if (prev.type === 'ShowTextAttributes') {
+                  if (!prev.manualPlus && !prev.generated) {
+                      anchorStaIndex = k; // Нашли якорь
+                      break;
+                  }
+                  k--;
+                  continue;
+              }
               if (prev.type === 'ShowText') {
-                if (window.isNameBlock(prev.text)) {
-                  isNarrationBlock = false; 
-                  break; 
-                }
-              } else if (prev.type !== 'ShowTextAttributes') {
-                isNarrationBlock = true; 
-                break;
+                  k--;
+                  continue;
               }
-              k--;
-          }
-          if (k < 0) {
-              if (textBlocks[0] && textBlocks[0].type === 'ShowText' && !window.isNameBlock(textBlocks[0].text)) {
-                  isNarrationBlock = true;
-              } else if (textBlocks[0] && textBlocks[0].type !== 'ShowText') {
-                  isNarrationBlock = true;
-              }
+              break;
           }
           
+          // 2. Ищем "родителя" - первый ShowText (без #+) ПОСЛЕ якоря
+          let parentBlock = null;
+          if (anchorStaIndex !== -1) {
+              k = anchorStaIndex + 1;
+              
+              while (k < i) { // Ищем между якорем и нашей STA#+
+                  const block = textBlocks[k];
+                  if (block.isDeleted) { k++; continue; }
+
+                  if (block.type === 'ShowText' && !block.manualPlus && !block.generated) {
+                      parentBlock = block;
+                      break;
+                  }
+                  
+                  if (block.type === 'ShowTextAttributes' && block.manualPlus) {
+                       k++;
+                       continue;
+                  }
+                  
+                  break;
+              }
+          }
+          // (Если якорь не найден - повествование)
+
+          if (parentBlock) {
+              if (window.isNameBlock(parentBlock.text)) {
+                  isNarrationBlock = false; // Это диалог
+                  const nameMatch = parentBlock.text.match(/(<∾∾C\[6\].*?∾∾C\[0\]>)/);
+                  if (nameMatch) foundNameTag = nameMatch[1];
+              } else {
+                  isNarrationBlock = true; // Это повествование
+              }
+          }
+
           if (!isNarrationBlock) {
                blocksToFix_MissingTag.push({
                    block: nextRelevantBlock,
-                   nameTag: lastKnownNameTag 
+                   nameTag: foundNameTag // Используем тег, найденный у "родителя"
                }); // Нашли Ошибку 2
           }
       }
@@ -1283,7 +1383,7 @@
     const totalFixes = blocksToFix_Prefix.length + blocksToFix_MissingTag.length;
     
     if (totalFixes === 0 && preCleanedCount === 0) {
-      alert('Ошибок в тегах имён для исправления не найдено.');
+      if (!silent) alert('Ошибок в тегах имён для исправления не найдено.');
       if (typeof window.undoStack === 'object' && window.undoStack.length > 0) {
         window.undoStack.pop();
         if (typeof document.getElementById === 'function' && document.getElementById('undoBtn')) {
@@ -1295,7 +1395,21 @@
     
     // --- ПОТОМ Исправляем Ошибку 1 (Добавляем префикс ∾\n) ---
     blocksToFix_Prefix.forEach(block => {
-      block.text = '∾\n' + block.text;
+      // ИСПРАВЛЕНО: Находим сам тег и ЗАМЕНЯЕМ все, что было до него,
+      // вместо простого добавления префикса.
+      
+      // Ищем начало тега и весь текст после него
+      const nameTagMatch = block.text.match(/(<∾∾C\[6\].*?∾∾C\[0\]>[\s\S]*)$/);
+      
+      if (nameTagMatch) {
+        // Нашли тег. Берем его и весь текст после него (match[1])
+        const tagAndRest = nameTagMatch[1]; 
+        // Собираем строку заново с ПРАВИЛЬНЫМ префиксом
+        block.text = '∾\n' + tagAndRest; 
+      } else {
+        // Запасной вариант, если тег не нашелся (хотя hasNameTag не должен был этого допустить)
+        block.text = '∾\n' + block.text.trim(); 
+      }
       fixedCount++;
     });
 
@@ -1315,7 +1429,7 @@
     if (fixedCount > 0) alertMsg += `• Исправлено тегов имён: ${fixedCount}\n`;
     if (failedCount > 0) alertMsg += `• Ошибок (не найден тег): ${failedCount}\n`;
     
-    alert(alertMsg);
+    if (!silent) alert(alertMsg);
     
     // --- Шаг 4: Перерисовываем редактор и обновляем все ошибки ---
     if (typeof renderTextBlocks === 'function') renderTextBlocks();
@@ -1386,16 +1500,54 @@
     const fixScriptBtn = document.getElementById('fixScriptBtn');
     const fixIndentBtn = document.getElementById('fixIndentBtn');
     const fixNameTagsBtn = document.getElementById('fixNameTagsBtn');
-    const clearOrphanedBtn = document.getElementById('clearOrphanedBtn');
-    const memorizeOrphanedBtn = document.getElementById('memorizeOrphanedBtn');
-    
-    if (!restoreBtn || !fixScriptBtn || !fixIndentBtn || !clearOrphanedBtn || !memorizeOrphanedBtn || !fixNameTagsBtn) return;
+      const fixAffectionBtn = document.getElementById('fixAffectionBtn'); // <<< ИЗМЕНЕНИЕ 1
+  const clearOrphanedBtn = document.getElementById('clearOrphanedBtn');
+  const memorizeOrphanedBtn = document.getElementById('memorizeOrphanedBtn');
+  
+  if (!restoreBtn || !fixScriptBtn || !fixIndentBtn || !clearOrphanedBtn || !memorizeOrphanedBtn || !fixNameTagsBtn || !fixAffectionBtn) return;
     
     // Определяем, какие типы ошибок присутствуют
     const hasStructureErrors = window.hasStructureErrors();
     const hasScriptErrors = window.hasScriptErrors();
     const hasIndentErrors = window.hasIndentErrors();
     const hasTagsErrors = window.hasNameTagErrors();
+
+      // <<< ИЗМЕНЕНИЕ 2: Новая, полная логика проверки шаблонов >>>
+  const templateRegex = /(<∾∾C\[6\].*?)(∾∾C\[0\]>)\s*\((Уровень симпатии:|Привязанность:)\s*(∾+)(V\[\d+\])\)([\s\S]*)$/;
+  let hasAffectionErrors = false;
+  if (window.textBlocks) {
+      for (let i = 0; i < window.textBlocks.length; i++) {
+        const block = window.textBlocks[i];
+        if (block.type !== 'ShowText' || block.isDeleted) continue;
+        
+        const match = block.text.match(templateRegex);
+        if (!match) continue; // Не шаблон
+
+        // Проверяем на ошибки ФОРМАТИРОВАНИЯ
+        if (match[3] === 'Уровень симпатии:' || match[4] !== '∾∾') {
+          hasAffectionErrors = true;
+          break; // Нашли ошибку, выходим
+        }
+        
+        // Проверяем на ошибки СЛИЯНИЯ
+        const dialoguePart = match[6];
+        if (dialoguePart.trim() === '') { // Блок не объединен
+          if ((i + 1) < window.textBlocks.length) {
+            const nextBlock = window.textBlocks[i+1];
+            if (nextBlock.type === 'ShowText' && 
+                !nextBlock.isDeleted && 
+                !window.isNameBlock(nextBlock.text) &&
+                !nextBlock.manualPlus && 
+                !nextBlock.generated) 
+            {
+              hasAffectionErrors = true; // Нашли блок для слияния
+              break; // Нашли ошибку, выходим
+            }
+          }
+        }
+      }
+  }
+  // <<< КОНЕЦ ИЗМЕНЕНИЯ 2 >>>
     
     // Считаем количество "строк-огрызков"
     let orphanedCount = 0;
@@ -1408,7 +1560,10 @@
       });
     }
 
-    // --- НАЧАЛО ИЗМЕНЕНИЯ: Новая логика отображения ---
+      // --- НАЧАЛО ИЗМЕНЕНИЯ: Новая логика отображения ---
+  fixNameTagsBtn.style.display = hasTagsErrors ? '' : 'none';
+  fixAffectionBtn.style.display = hasAffectionErrors ? '' : 'none'; // <<< ИЗМЕНЕНИЕ 3
+    
     // Показываем кнопки для "сирот" только если есть сироты И НЕТ структурных ошибок
     const showOrphaned = (orphanedCount > 0 && !hasStructureErrors);
 
@@ -1419,14 +1574,135 @@
     restoreBtn.style.display = hasStructureErrors ? '' : 'none';
     // --- КОНЕЦ ИЗМЕНЕНИЯ ---
     
-    // Остальные кнопки работают как раньше
-    fixScriptBtn.style.display = hasScriptErrors ? '' : 'none';
-    fixIndentBtn.style.display = hasIndentErrors ? '' : 'none';
-    fixNameTagsBtn.style.display = hasTagsErrors ? '' : 'none';
+      // Остальные кнопки работают как раньше
+  fixScriptBtn.style.display = hasScriptErrors ? '' : 'none';
+  fixIndentBtn.style.display = hasIndentErrors ? '' : 'none';
 
-    if (orphanedCount > 0) {
+  if (orphanedCount > 0) {
       clearOrphanedBtn.title = `Удалить ${orphanedCount} строк без сопоставления с японским файлом`;
       memorizeOrphanedBtn.title = `Пометить ${orphanedCount} строк как строки-продолжения, добавив в конец #+`;
+    }
+  };
+
+  /**
+   * Новая функция для исправления шаблонов "Привязанности".
+   * Находит блоки, меняет текст, исправляет `∾` И ОБЪЕДИНЯЕТ их со следующей строкой диалога.
+   */
+  global.fixAffectionTemplates = function() {
+    if (!window.textBlocks) return;
+
+    // <<< ИЗМЕНЕНИЕ 1: Regex теперь захватывает и диалог в конце ([\s\S]*)$ >>>
+    const templateRegex = /(<∾∾C\[6\].*?)(∾∾C\[0\]>)\s*\((Уровень симпатии:|Привязанность:)\s*(∾+)(V\[\d+\])\)([\s\S]*)$/;
+    let fixedCount = 0;
+
+    if (typeof pushUndo === 'function') pushUndo();
+
+    // <<< ИЗМЕНЕНИЕ 2: Полностью новый цикл исправления >>>
+    // Мы должны итерировать в обратном порядке, так как можем удалять элементы
+    for (let i = window.textBlocks.length - 1; i >= 0; i--) {
+      const block = window.textBlocks[i];
+      
+      if (block.type !== 'ShowText' || block.isDeleted) continue;
+
+      const match = block.text.match(templateRegex);
+      if (!match) continue; // Это не блок-шаблон
+
+      // --- Это блок-шаблон ---
+      const tagStart = match[1];
+      const tagEnd = match[2];
+      const oldText = match[3];
+      const slashes = match[4];
+      const variable = match[5];
+      let dialoguePart = match[6]; // Диалог, который УЖЕ в этом блоке
+      
+      let nextBlockToDelete = null;
+
+          // Проверяем, нужно ли слияние
+    let nextBlockJapLink = null; // Для сохранения японской связи следующего блока
+    if (dialoguePart.trim() === '') {
+      if ((i + 1) < window.textBlocks.length) {
+        const nextBlock = window.textBlocks[i+1];
+        if (nextBlock.type === 'ShowText' && 
+            !nextBlock.isDeleted && 
+            !window.isNameBlock(nextBlock.text) &&
+            !nextBlock.manualPlus && 
+            !nextBlock.generated) 
+        {
+          // Нашли блок для слияния
+          dialoguePart = nextBlock.text; // Берем его текст
+          nextBlockJapLink = nextBlock.japaneseLink; // Сохраняем японскую связь
+          nextBlockToDelete = nextBlock; // Помечаем на удаление
+        }
+      }
+    }
+    
+    // Определяем, нужно ли что-то делать с этим блоком
+    const needsFixing = (
+      oldText === 'Уровень симпатии:' || // 1. Текст "Уровень симпатии"
+      slashes !== '∾∾' ||                 // 2. Неправильное число ∾
+      nextBlockToDelete                   // 3. Есть блок для слияния
+    );
+
+    if (needsFixing) {
+      fixedCount++;
+      
+      // Сохраняем оригинальный префикс (∾\n), если он был
+      const prefixMatch = block.text.match(/^(∾\n)\s*/);
+      const prefix = prefixMatch ? prefixMatch[1] : '';
+      
+      // Если диалог был в этом же блоке, убираем \n
+      if (!nextBlockToDelete && dialoguePart.startsWith('\n')) {
+        dialoguePart = dialoguePart.substring(1);
+      }
+
+      // Собираем новую, исправленную и объединенную строку
+      block.text = `${prefix}${tagStart} (Привязанность: ∾∾${variable})${tagEnd}${dialoguePart}`;
+      
+      // Объединяем японские связи: если у следующего блока есть japaneseLink, объединяем его с текущим
+      if (nextBlockJapLink && nextBlockJapLink.text) {
+        // Если у текущего блока уже есть японская связь, объединяем тексты
+        if (block.japaneseLink && block.japaneseLink.text) {
+          // Объединяем японские тексты через перенос строки
+          block.japaneseLink.text = block.japaneseLink.text + '\n' + nextBlockJapLink.text;
+        } else {
+          // Если у текущего блока нет японской связи, просто копируем из следующего
+          block.japaneseLink = nextBlockJapLink;
+        }
+      }
+      
+      // Помечаем следующий блок как "удаленный"
+      if (nextBlockToDelete) {
+        nextBlockToDelete.isDeleted = true;
+        // Очищаем японскую связь у удаляемого блока, чтобы она не отображалась
+        nextBlockToDelete.japaneseLink = null;
+      }
+    }
+    } // Конец цикла for
+    // <<< КОНЕЦ ИЗМЕНЕНИЯ 2 >>>
+
+      if (fixedCount > 0) {
+    alert(`Исправлено и объединено ${fixedCount} шаблонов привязанности.`);
+    
+    // Если были загружены оба файла, нужно пересоздать японские связи
+    // так как объединение блоков могло изменить структуру
+    if (window.japBlocks && window.japBlocks.length > 0 && typeof linkAndRender === 'function') {
+      linkAndRender(); // Пересоздаем связи с японскими блоками
+    } else {
+      // Если японский файл не загружен, просто перерисовываем
+      if (typeof renderTextBlocks === 'function') renderTextBlocks();
+    }
+    
+    if (typeof window.updateMatchLamp === 'function') window.updateMatchLamp();
+    if (typeof updateRedIndices === 'function') updateRedIndices();
+  } else {
+      alert('Шаблоны для исправления или объединения не найдены.');
+      // Отменяем добавление в историю, если ничего не изменилось
+      if (typeof window.undoStack === 'object' && window.undoStack.length > 0) {
+        window.undoStack.pop();
+        if (typeof document.getElementById === 'function' && document.getElementById('undoBtn')) {
+           document.getElementById('undoBtn').disabled = window.undoStack.length === 0;
+        }
+      }
     }
   };
 })(window);

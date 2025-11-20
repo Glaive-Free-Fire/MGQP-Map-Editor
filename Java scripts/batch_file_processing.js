@@ -2,6 +2,52 @@ let ruFiles = {};
 let jpFiles = {};
 let batchResults = []; // Сохраняем результаты проверки для последующего исправления
 
+// Функции для управления панелью отчёта
+function clearBatchReport() {
+  const reportPanel = document.getElementById('batchReportPanel');
+  const reportContent = document.getElementById('batchReportContent');
+  if (reportContent) reportContent.innerHTML = '';
+  if (reportPanel) reportPanel.style.display = 'none';
+}
+
+function addBatchReportLine(text, type = 'info') {
+  const reportPanel = document.getElementById('batchReportPanel');
+  const reportContent = document.getElementById('batchReportContent');
+  if (!reportContent) return;
+  
+  // Показываем панель при первом добавлении строки
+  if (reportPanel && reportPanel.style.display === 'none') {
+    reportPanel.style.display = 'block';
+  }
+  
+  const line = document.createElement('div');
+  
+  // Для пустых строк делаем минимальную высоту, для остальных - отступ
+  if (text.trim() === '') {
+    line.style.height = '8px';
+  } else {
+    line.style.marginBottom = '4px';
+  }
+  
+  // Цвет в зависимости от типа сообщения
+  if (type === 'error') {
+    line.style.color = '#d00';
+    line.style.fontWeight = 'bold';
+  } else if (type === 'success') {
+    line.style.color = '#0a0';
+  } else if (type === 'warning') {
+    line.style.color = '#b60';
+  } else {
+    line.style.color = '#333';
+  }
+  
+  line.textContent = text;
+  reportContent.appendChild(line);
+  
+  // Автопрокрутка вниз
+  reportContent.scrollTop = reportContent.scrollHeight;
+}
+
 function handleFolderInput(event, type) {
   const files = event.target.files;
   for (let file of files) {
@@ -147,38 +193,81 @@ function createFixControls() {
   
   fixControls.appendChild(fixBtn);
   
+  // Создаем панель отчета внутри контейнера исправления
+  const reportPanel = document.createElement('div');
+  reportPanel.id = 'batchReportPanel';
+  reportPanel.style.display = 'none';
+  reportPanel.style.marginTop = '15px';
+  reportPanel.style.padding = '12px';
+  reportPanel.style.background = '#fff';
+  reportPanel.style.border = '1px solid #aaa';
+  reportPanel.style.borderRadius = '6px';
+  reportPanel.style.maxHeight = '300px';
+  reportPanel.style.overflowY = 'auto';
+  
+  const reportTitle = document.createElement('h4');
+  reportTitle.textContent = 'Отчет об исправлении файлов';
+  reportTitle.style.margin = '0 0 8px 0';
+  reportTitle.style.color = '#333';
+  reportTitle.style.fontSize = '14px';
+  
+  const reportContent = document.createElement('div');
+  reportContent.id = 'batchReportContent';
+  reportContent.style.fontFamily = 'monospace';
+  reportContent.style.fontSize = '12px';
+  reportContent.style.lineHeight = '1.6';
+  
+  reportPanel.appendChild(reportTitle);
+  reportPanel.appendChild(reportContent);
+  fixControls.appendChild(reportPanel);
+  
   // Добавляем элементы управления в начало контейнера (вверху)
   batchContent.insertBefore(fixControls, batchContent.firstChild);
 }
 
 // Функция для исправления всех файлов с ошибками
 async function batchFixAllFiles() {
+  // --- ЭТАП 0: Получаем ВСЕ файлы с ошибками (и структурными, И линейными) ---
   const filesWithErrors = batchResults.filter(result => result.isError);
   
   if (filesWithErrors.length === 0) {
-    alert('Нет файлов с ошибками для исправления!');
+    clearBatchReport();
+    addBatchReportLine('Нет файлов с ошибками для исправления!', 'warning');
     return;
   }
+  
+  // Очищаем панель отчета и начинаем новый отчет
+  clearBatchReport();
+  addBatchReportLine(`=== Начало пакетного исправления ===`);
+  addBatchReportLine(`Всего файлов для обработки: ${filesWithErrors.length}`);
   
   // Отключаем кнопку на время обработки
   const fixBtn = document.getElementById('batchFixBtn');
   const originalText = fixBtn.textContent;
-  fixBtn.textContent = 'Исправление...';
+  fixBtn.textContent = 'Исправление... (0%)';
   fixBtn.disabled = true;
   
   let fixedCount = 0;
   let errorCount = 0;
   const fixedFiles = []; // Массив для хранения исправленных файлов
+  const totalFiles = filesWithErrors.length;
   
   try {
-    for (const result of filesWithErrors) {
+    for (let i = 0; i < totalFiles; i++) {
+      const result = filesWithErrors[i];
+      const fileName = result.fileName;
+
+      // Обновляем счетчик на кнопке
+      fixBtn.textContent = `Исправление... (${Math.round((i / totalFiles) * 100)}%)`;
+
       try {
-        const fileName = result.fileName;
         const ruFile = ruFiles[fileName];
         const jpFile = jpFiles[fileName];
         
         if (!ruFile || !jpFile) {
           console.error(`Пропускаем ${fileName}: отсутствует один из файлов`);
+          addBatchReportLine(`✗ ${fileName}: отсутствует один из файлов`, 'error');
+          errorCount++;
           continue;
         }
         
@@ -186,17 +275,14 @@ async function batchFixAllFiles() {
         const ruLines = await readFileAsLines(ruFile);
         const jpLines = await readFileAsLines(jpFile);
         
-        // Проверяем структуру
-        const ruText = ruLines.join('\n');
-        const jpText = jpLines.join('\n');
-        const checkResult = window.checkMapStructureMatch(jpText, ruText);
-        
-        // Если есть ошибки, исправляем
-        if (checkResult.percent < 100 || (checkResult.grouped && checkResult.grouped.some(ev => 
-          ev.pages.some(page => !page.ok && page.errors && page.errors.length > 0)
-        ))) {
+        let currentFixedLines = ruLines.slice(); // Начинаем с оригинальных RU строк
+
+        // === ЭТАП 1: Исправляем СТРУКТУРНЫЕ ошибки (если они есть) ===
+        if (result.hasStructError) {
+          console.log(`[Этап 1] Исправление структуры для: ${fileName}`);
+          addBatchReportLine(`→ ${fileName}: исправление структуры...`, 'info');
+          const checkResult = window.checkMapStructureMatch(jpLines.join('\n'), ruLines.join('\n'));
           
-          // Собираем номера CommonEvent с ошибками
           let mismatchedNums = [];
           if (checkResult.grouped) {
             checkResult.grouped.forEach(ev => {
@@ -209,26 +295,110 @@ async function batchFixAllFiles() {
           }
           
           if (mismatchedNums.length > 0) {
-            // Убираем дубликаты номеров
             mismatchedNums = [...new Set(mismatchedNums)];
-            
-            // Выполняем восстановление структуры с новой функцией
-            const restoredLines = window.restoreRussianStructureWithMissing(ruLines, jpLines, mismatchedNums);
-            
-            // Добавляем исправленный файл в массив
-            const fixedFileName = fileName.replace('.txt', '_fixed.txt');
-            const fileContent = restoredLines.join('\n');
-            fixedFiles.push({
-              name: fixedFileName,
-              content: fileContent
-            });
-            
-            fixedCount++;
-            console.log(`Исправлен файл: ${fileName}`);
+            // Запускаем структурный фиксер
+            currentFixedLines = window.restoreRussianStructureWithMissing(currentFixedLines, jpLines, mismatchedNums);
           }
         }
+
+        // === ЭТАП 2: Исправляем ЛИНЕЙНЫЕ ошибки ===
+        // Загружаем строки (оригинальные или исправленные на этапе 1) 
+        // в "виртуальный редактор" для запуска линейных фиксеров.
+        console.log(`[Этап 2] Исправление линейных ошибок для: ${fileName}`);
+
+        // 2a. Устанавливаем глобальное состояние, которое используют парсеры
+        window.originalLines = currentFixedLines.slice(); // Парсеры читают из этого
+        window.fullRusLines = currentFixedLines.slice();   // Генератор файла читает из этого
+        window.fullJapLines = jpLines.slice();         // Необходимо для контекста (например, для поиска тегов)
+        window.textBlocks = []; // Очищаем от данных предыдущего файла
+        window.japBlocks = [];  // Очищаем от данных предыдущего файла
+
+        // 2b. Запускаем парсеры (они заполняют window.textBlocks и window.mapDisplayName)
+        // Эти функции взяты прямо из твоего HTML-файла
+        window.extractTexts(); 
+        window.extractJapaneseTexts(window.fullJapLines); // Это связывает блоки, что критично для autoFixNameTagErrors
+
+        // 2c. Запускаем фиксеры в цикле, пока они вносят изменения
+        addBatchReportLine(`  → ${fileName}: запуск цикла исправления...`, 'info');
+        let pass = 0;
+        const MAX_PASSES = 5; // Защита от бесконечного цикла
+
+        while (pass < MAX_PASSES) {
+          pass++;
+          let errorsFoundThisPass = {
+            longDialogues: false,
+            nameTags: false
+          };
+
+          // --- Проверка 1: Ищем ошибки длинных диалогов ---
+          // Для этого нам нужно сгенерировать текущее состояние файла в строки
+          // и прогнать через парсер ошибок.
+          let currentLines = window.generateFinalFileLines(); 
+          let lineLevelErrors = window.checkForLineLevelErrors(currentLines);
+          
+          // Ищем ОСОБЫЙ тип ошибки, который исправляет fixLongDialogues
+          errorsFoundThisPass.longDialogues = lineLevelErrors.some(
+            err => err.type === 'Ошибка компоновки' && err.reason.includes('слишком длинного диалога')
+          );
+
+          // --- Проверка 2: Ищем ошибки тегов имён ---
+          // Эта функция работает напрямую с window.textBlocks
+          errorsFoundThisPass.nameTags = window.hasNameTagErrors();
+          
+          // --- Выход из цикла, если ошибок нет ---
+          if (!errorsFoundThisPass.longDialogues && !errorsFoundThisPass.nameTags) {
+            if (pass > 1) {
+              addBatchReportLine(`  → ${fileName}: цикл исправления завершен за ${pass - 1} проход(а).`, 'info');
+            } else {
+              addBatchReportLine(`  → ${fileName}: доп. исправления не требуются.`, 'info');
+            }
+            break; // Все чисто, выходим из while
+          }
+
+          addBatchReportLine(`    [Проход ${pass}] Обнаружены ошибки: ${errorsFoundThisPass.longDialogues ? 'Длинные диалоги ' : ''}${errorsFoundThisPass.nameTags ? 'Теги имён' : ''}`, 'info');
+
+          // --- Выполнение исправления ---
+          if (errorsFoundThisPass.longDialogues) {
+            addBatchReportLine(`    [Проход ${pass}]... исправляем длинные диалоги...`, 'info');
+            window.fixLongDialogues(true);
+          }
+          
+          // Запускаем исправление тегов, *только* если есть ошибки тегов
+          // (или если мы только что исправили диалоги, что могло породить ошибки тегов)
+          if (errorsFoundThisPass.nameTags || errorsFoundThisPass.longDialogues) {
+            // Мы запускаем autoFixNameTagErrors в любом случае,
+            // так как fixLongDialogues мог создать ошибки тегов
+            if (errorsFoundThisPass.nameTags) {
+              addBatchReportLine(`    [Проход ${pass}]... исправляем теги имён...`, 'info');
+            }
+            window.autoFixNameTagErrors(true);
+          }
+          
+          // После исправления, цикл пойдет на новую итерацию и
+          // заново проверит, не появились ли новые ошибки
+        } // Конец while
+
+        if (pass >= MAX_PASSES) {
+          addBatchReportLine(`    [ПРЕДУПРЕЖДЕНИЕ] Достигнут лимит проходов (${MAX_PASSES}). Возможен бесконечный цикл.`, 'warning');
+        }
+
+        // 2d. Генерируем финальный контент файла из ИТОГОВОГО состояния
+        const finalLines = window.generateFinalFileLines();
+        
+        // === ЭТАП 3: Добавляем в ZIP ===
+        const fixedFileName = fileName.replace('.txt', '_fixed.txt');
+        fixedFiles.push({
+          name: fixedFileName,
+          content: finalLines.join('\n')
+        });
+        
+        fixedCount++;
+        console.log(`[Этап 3] Завершено исправление: ${fileName}`);
+        addBatchReportLine(`✓ ${fileName}: успешно исправлен`, 'success');
+
       } catch (error) {
-        console.error(`Ошибка при исправлении ${result.fileName}:`, error);
+        console.error(`Критическая ошибка при исправлении ${fileName}:`, error);
+        addBatchReportLine(`✗ ${fileName}: ошибка - ${error.message}`, 'error');
         errorCount++;
       }
     }
@@ -236,6 +406,8 @@ async function batchFixAllFiles() {
     // Если есть исправленные файлы, создаем ZIP архив
     if (fixedFiles.length > 0) {
       try {
+        addBatchReportLine('', 'info'); // Пустая строка
+        addBatchReportLine('=== Создание ZIP архива ===', 'info');
         // Создаем ZIP архив
         const zip = new JSZip();
         
@@ -253,20 +425,33 @@ async function batchFixAllFiles() {
         a.download = 'fixed_files.zip';
         a.click();
         
-        // Показываем результат
-        alert(`Исправление завершено!\n\nИсправлено файлов: ${fixedCount}\nОшибок при обработке: ${errorCount}\n\nСоздан архив 'fixed_files.zip' со всеми исправленными файлами.`);
+        // Показываем результат в отчете
+        addBatchReportLine('', 'info'); // Пустая строка
+        addBatchReportLine('=== ИТОГО ===', 'success');
+        addBatchReportLine(`Исправлено файлов: ${fixedCount}`, 'success');
+        addBatchReportLine(`Ошибок при обработке: ${errorCount}`, errorCount > 0 ? 'error' : 'success');
+        addBatchReportLine(`Создан архив 'fixed_files.zip'`, 'success');
         
       } catch (zipError) {
         console.error('Ошибка при создании ZIP архива:', zipError);
-        alert(`Исправление завершено, но не удалось создать ZIP архив.\n\nИсправлено файлов: ${fixedCount}\nОшибок при обработке: ${errorCount}`);
+        addBatchReportLine('', 'info'); // Пустая строка
+        addBatchReportLine('=== ИТОГО (С ОШИБКАМИ) ===', 'warning');
+        addBatchReportLine(`Исправлено файлов: ${fixedCount}`, fixedCount > 0 ? 'success' : 'error');
+        addBatchReportLine(`Ошибок при обработке: ${errorCount}`, 'error');
+        addBatchReportLine(`Не удалось создать ZIP архив`, 'error');
       }
     } else {
-      alert('Не удалось исправить ни одного файла.');
+      addBatchReportLine('', 'info'); // Пустая строка
+      addBatchReportLine('=== ИТОГО ===', 'error');
+      addBatchReportLine(`Не удалось исправить ни одного файла`, 'error');
+      addBatchReportLine(`Ошибок при обработке: ${errorCount}`, 'error');
     }
     
   } catch (error) {
     console.error('Ошибка при массовом исправлении:', error);
-    alert('Произошла ошибка при массовом исправлении файлов.');
+    addBatchReportLine('', 'info'); // Пустая строка
+    addBatchReportLine('=== КРИТИЧЕСКАЯ ОШИБКА ===', 'error');
+    addBatchReportLine(`Произошла ошибка при массовом исправлении: ${error.message}`, 'error');
   } finally {
     // Восстанавливаем кнопку
     fixBtn.textContent = originalText;
@@ -277,6 +462,9 @@ async function batchFixAllFiles() {
 async function batchCheckAllFiles() {
   const batchListDiv = document.getElementById('batchFileList');
   batchListDiv.innerHTML = '';
+  
+  // Очищаем панель отчета при новой проверке
+  clearBatchReport();
   
   // Собираем все уникальные имена файлов из обеих папок
   const allFileNames = new Set();
@@ -321,7 +509,7 @@ async function batchCheckAllFiles() {
       isError = true;
       hasErrors = true;
       results.push({fileDiv, isError, isOkFile, fileName});
-      batchResults.push({isError, isOkFile, fileName});
+      batchResults.push({isError, isOkFile, fileName, hasStructError: false});
       continue;
     }
     
@@ -345,7 +533,7 @@ async function batchCheckAllFiles() {
       isError = true;
       hasErrors = true;
       results.push({fileDiv, isError, isOkFile, fileName});
-      batchResults.push({isError, isOkFile, fileName});
+      batchResults.push({isError, isOkFile, fileName, hasStructError: false});
       continue;
     }
     
@@ -399,6 +587,9 @@ async function batchCheckAllFiles() {
     
     isError = totalErrorCount > 0;
     isOkFile = totalErrorCount === 0;
+    
+    // Определяем, есть ли структурные ошибки
+    const hasStructError = structErrorCount > 0;
     // <<< КОНЕЦ ИЗМЕНЕНИЯ >>>
     
     if (isError) {
@@ -406,7 +597,7 @@ async function batchCheckAllFiles() {
     }
     
     results.push({fileDiv, isError, isOkFile, fileName});
-    batchResults.push({isError, isOkFile, fileName});
+    batchResults.push({isError, isOkFile, fileName, hasStructError});
   }
   
   // --- Фильтрация вывода ---

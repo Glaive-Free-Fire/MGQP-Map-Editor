@@ -236,6 +236,7 @@ window.checkForLineLevelErrors = function(ruLines) {
   // START: All checks, now including the ShowTextAttributes check
   // =================================================================
   let checkedIndices_long = new Set();
+  let lastKnownNameTag = null; // Требуется для Ошибки 2
   textBlocks.forEach((block, i) => {
 
     // --- Check for long dialogues ---
@@ -268,43 +269,147 @@ window.checkForLineLevelErrors = function(ruLines) {
         }
     }
 
-    // --- Check for marked ShowTextAttributes without a following name tag ---
+    // --- Проверка на Ошибку 1: Тег есть, префикса ∾\n нет ---
+    if (block.type === 'ShowText') {
+        const text = block.text;
+        const hasNameTag = /<∾∾C\[6\].*?∾∾C\[0\]>/.test(text);
+        if (hasNameTag) {
+            // Запоминаем последний тег на случай Ошибки 2
+            const nameMatch = text.match(/(<∾∾C\[6\].*?∾∾C\[0\]>)/);
+            if (nameMatch) lastKnownNameTag = nameMatch[1];
+            
+            // Проверяем префикс
+            const isMissingPrefix = !/^∾\n/.test(text);
+            if (isMissingPrefix) {
+                errors.push({
+                    label: `строка ${block.idx + 1}`,
+                    type: 'Ошибка тега имени',
+                    reason: 'Тег имени должен начинаться с префикса `\\n` (в редакторе `∾` и перенос строки).'
+                });
+            }
+        }
+    }
+
+    // --- Проверка на Ошибку 2 (Добавить тег) и Ошибку 3 (Удалить STA) ---
     if (block.type === 'ShowTextAttributes' && block.manualPlus) {
+        
         let nextRelevantBlock = null;
         let nextRelevantBlockIndex = -1;
         for (let j = i + 1; j < textBlocks.length; j++) {
+            // (Парсер в main_script.js не имеет 'isDeleted', поэтому мы проверяем все блоки)
             if (textBlocks[j].type === 'ShowText') { nextRelevantBlock = textBlocks[j]; nextRelevantBlockIndex = j; break; }
             if (textBlocks[j].type !== 'ShowText' && textBlocks[j].type !== 'ShowTextAttributes') { break; }
         }
-        if (nextRelevantBlock && !window.isNameBlock(nextRelevantBlock.text)) {
-            let isNarrationBlock = false;
-            let k = i - 1;
-            while (k >= 0) {
-                const prev = textBlocks[k];
-                if (prev.type === 'ShowText' && window.isNameBlock(prev.text)) {
-                    isNarrationBlock = false;
-                    break;
+        
+        if (!nextRelevantBlock || window.isNameBlock(nextRelevantBlock.text)) {
+          // STA стоит перед именем или в конце, ошибки нет
+          return; 
+        }
+
+        // --- Ищем предыдущий блок (аналог getPreviousVisibleBlock) ---
+        let prevBlock = null;
+        let k = i - 1;
+        while (k >= 0) {
+            // (Пропускаем 'isDeleted' т.к. его здесь нет)
+            prevBlock = textBlocks[k];
+            if (prevBlock) break; // Нашли первый предыдущий блок
+            k--;
+        }
+
+        if (prevBlock && prevBlock.type === 'ShowText') {
+            // --- Проверка на Ошибку 3 (Мусорный STA) ---
+            if (prevBlock.manualPlus && nextRelevantBlock.manualPlus) {
+                if (!block.generated) {
+                    errors.push({
+                        label: `строка ${block.idx + 1}`,
+                        type: 'Ошибка компоновки',
+                        reason: 'Этот ShowTextAttributes (#+) находится между двумя строками-продолжениями (#+) и будет удален.'
+                    });
                 }
-                if (prev.type === 'ShowTextAttributes') {
-                    isNarrationBlock = /^"",\s*0/.test(prev.text || '');
-                    break;
-                }
-                if (prev.type !== 'ShowText' && prev.type !== 'ShowTextAttributes') {
-                    isNarrationBlock = true;
+            }
+
+            // --- Проверка на Ошибку 1 (Фаза 1 Очистки) ---
+            if (window.isNameBlock(prevBlock.text)) {
+                errors.push({
+                    label: `строка ${block.idx + 1}`,
+                    type: 'Ошибка компоновки',
+                    reason: 'Этот ShowTextAttributes (#+) находится сразу после строки с именем и будет удален.'
+                });
+            }
+        }
+
+        // --- Проверка на Ошибку 2 (Нет тега) v17 ---
+        
+        // <<< ИЗМЕНЕНИЕ: УДАЛЕНО "УМНОЕ" ИСКЛЮЧЕНИЕ >>>
+        // **ПОЯСНЕНИЕ ДЛЯ РАЗРАБОТЧИКОВ:**
+        // Причина: Любой STA#+ (вручную или сгенерированный),
+        // который обновляет окно диалога (например, с портретом персонажа),
+        // ДОЛЖЕН сопровождаться ShowText с тегом имени, если это диалог.
+        // Старая логика ошибочно пропускала эту проверку.
+        
+        // --- Теперь эта проверка выполняется ДЛЯ ВСЕХ STA#+ ---
+        
+        // --- Проверка на Ошибку 2 (v25 - Жесткое правило якоря STA) ---
+        let isNarrationBlock = true; // По умолчанию считаем, что это повествование
+
+        // 1. Ищем "якорь" - последний STA (без #+) строго перед текущим STA#+
+        let anchorStaIndex = -1;
+        k = i - 1;
+        while (k >= 0) {
+            const prev = textBlocks[k];
+
+            if (prev.type === 'ShowTextAttributes') {
+                if (!prev.manualPlus && !prev.generated) {
+                    anchorStaIndex = k;
                     break;
                 }
                 k--;
+                continue;
             }
-            if (k < 0) {
-                isNarrationBlock = true;
+            if (prev.type === 'ShowText') {
+                k--;
+                continue;
             }
-            if (!isNarrationBlock) {
-                errors.push({
-                    label: `строка ${nextRelevantBlock.idx + 1}`,
-                    type: 'Ошибка компоновки',
-                    reason: 'Эта строка должна содержать тег имени (\\n<\\C[6]Имя\\C[0]>), так как она идет после отмеченной (#+) ShowTextAttributes.'
-                });
+            break;
+        }
+        
+        // 2. Ищем "родителя" - первый ShowText (без #+) ПОСЛЕ найденного якоря
+        let parentBlock = null;
+        if (anchorStaIndex !== -1) {
+            k = anchorStaIndex + 1;
+            
+            while (k < i) {
+                const block = textBlocks[k];
+
+                if (block.type === 'ShowText' && !block.manualPlus && !block.generated) {
+                    parentBlock = block;
+                    break;
+                }
+                
+                if (block.type === 'ShowTextAttributes' && block.manualPlus) {
+                     k++;
+                     continue;
+                }
+
+                break;
             }
+        }
+        // (Если якорь не найден — повествование)
+
+        if (parentBlock) {
+            if (window.isNameBlock(parentBlock.text)) {
+                isNarrationBlock = false; // Это диалог
+            } else {
+                isNarrationBlock = true; // Это повествование
+            }
+        }
+        
+        if (!isNarrationBlock) {
+            errors.push({
+                label: `строка ${nextRelevantBlock.idx + 1}`,
+                type: 'Ошибка компоновки',
+                reason: 'Эта строка должна содержать тег имени (\\n<\\C[6]Имя\\C[0]>), так как она идет после отмеченной (#+) ShowTextAttributes.'
+            });
         }
     }
 
