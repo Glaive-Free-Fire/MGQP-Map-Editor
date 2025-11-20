@@ -44,7 +44,7 @@
 - **Structural Integrity Preservation:** Complete rewrite of `linkAndRender()` function ensures all structural commands are preserved during file matching.
 - **Performance Optimization:** Optimized "Split Lines" button algorithm from O(n²) to O(n) for significantly faster processing of large files.
 - **Enhanced Error Detection:** Improved logic for detecting long dialogues with proper structural command awareness.
-- **Automatic Fix Tools:** New "Fix ShowTextAttributes" button for automatic correction of long dialogue blocks.
+- **Automatic Fix Tools:** New "Fix ShowTextAttributes" button for automatic correction of long dialogue blocks. "Fix Name Tags" button automatically corrects missing name tags after `ShowTextAttributes #+` separators.
 - **Comprehensive Logging:** Detailed diagnostic logging for troubleshooting complex file structure issues.
 - **Type-Aware Block Matching:** Advanced matching algorithm that considers block types for more accurate Russian-Japanese correspondence.
 - **CommonEvent Boundary Respect:** Strict adherence to CommonEvent boundaries prevents cross-contamination of blocks between different events.
@@ -68,9 +68,10 @@
    - Japanese text (if loaded) is shown above the corresponding Russian block for reference.
    - Use the "+" button to split long text blocks. The editor will automatically insert a generated ShowTextAttributes block (with `#+`) after every 4 ShowText blocks.
    - Use the "-" button to remove blocks (soft deletion preserves structure).
-   - Use the **Split Lines** button to automatically split all long text blocks in the file at once.
+   - Use the **Split Lines** button to automatically split all long text blocks in the file at once. The function now intelligently checks if `ShowTextAttributes` separator is needed (only if total lines would exceed 4).
    - **NEW:** Related blocks (JumpToLabel/Label, Script/ScriptMore) are automatically synchronized when you edit one of them.
    - **NEW:** Use `##` marker at the end of ShowText lines to ignore Japanese text detection for that line.
+   - **NEW:** The **Duplicate** button (shown on matching lines) copies content from only the single associated block and works even when only the Russian file is loaded.
 
 3. **Undo/Redo:**
    - Use the ↺ and ↻ buttons or Ctrl+Z / Ctrl+Y to undo/redo changes.
@@ -80,7 +81,8 @@
    - **NEW:** The **Fix Script Errors** button automatically fixes missing quotes in Script commands.
    - **NEW:** The **Fix Indentation** button automatically corrects indentation errors.
    - **NEW:** The **Clear Lines** button appears when orphaned lines are detected, allowing you to clear their content with one click.
-   - **NEW:** The **Fix ShowTextAttributes** button automatically corrects long dialogue blocks by inserting proper structural commands.
+   - **NEW:** The **Fix ShowTextAttributes** button automatically corrects long dialogue blocks by inserting proper structural commands. The function now correctly identifies dialogue vs. narration context and only inserts name tags when appropriate.
+   - **NEW:** The **Fix Name Tags** button automatically corrects missing name tags after `ShowTextAttributes #+` separators, using intelligent "Window Search" logic to identify the correct parent block.
    - After restoring, use the **Update Editor** button to reload the fixed file into the editor without manual re-upload.
 
 5. **Preview & Export:**
@@ -129,7 +131,8 @@
 - **Preview = Save:** The "Preview" tab always shows exactly what will be saved to disk, including all generated and fixed blocks.
 - **Batch ZIP Export:** Batch fixes are exported as a ZIP archive containing all corrected files.
 - **Error Highlighting:** Lines exceeding the character limit, with syntax errors, or with new error types are highlighted in red. The download button is also highlighted if errors remain.
-- **Split Lines:** The new button allows you to split all long text blocks in one click, making it easier to conform to length limits.
+- **Split Lines:** The new button allows you to split all long text blocks in one click, making it easier to conform to length limits. The function now intelligently checks if `ShowTextAttributes` separator is needed (only when total lines would exceed 4).
+- **Duplicate Button:** The duplicate button now copies content from only the single associated block and works even when only the Russian file is loaded. It correctly handles all content types regardless of language.
 - **Update Editor:** After restoring structure, you can update the editor with the fixed file instantly, streamlining the workflow.
 - **Enhanced Error Lamp:** The red/green lamp now reflects all error types, giving you instant feedback on file status.
 - **Affinity System:** Character affinity strings (好感度) are automatically detected and properly formatted for translation.
@@ -144,7 +147,9 @@
 - **Soft Deletion:** Blocks can be marked as deleted while preserving file structure for proper Japanese mapping.
 - **Robust File Generation:** Improved algorithm ensures consistent file output with proper handling of all block types.
 - **Advanced Block Matching:** Revolutionary anchor-based algorithm eliminates false translation placeholders by precisely matching Russian and Japanese blocks.
-- **Intelligent Dialogue Management:** Automatic insertion of `ShowTextAttributes` commands ensures proper dialogue window structure.
+- **Intelligent Dialogue Management:** Automatic insertion of `ShowTextAttributes` commands ensures proper dialogue window structure. The function now intelligently checks if separator is needed (only when total lines would exceed 4).
+- **Window Search Algorithm:** Revolutionary "Window Search" logic (v23/v25) for precise parent block identification and context detection across all error detection and fix functions.
+- **Context-Aware Fixes:** All fix buttons now correctly identify dialogue vs. narration context using the "Window Search" algorithm, preventing incorrect name tag insertion.
 - **Performance Boost:** "Split Lines" button now processes large files significantly faster with optimized O(n) algorithm.
 - **Structural Integrity:** Complete preservation of all structural commands during file matching operations.
 - **Enhanced Diagnostics:** Comprehensive logging system provides detailed insights for troubleshooting complex issues.
@@ -153,6 +158,84 @@
 - **Japanese Text Ignore Marker:** Use `##` at the end of ShowText lines to exclude them from Japanese text error detection.
 - **Empty ShowText Processing:** Empty ShowText blocks are properly matched with Japanese counterparts but hidden from the editor interface.
 - **Special Template Recognition:** Automatic detection and handling of special text patterns for improved translation workflow.
+
+---
+
+## Changelog (v1.4.80)
+
+### Major Improvements
+- **Intelligent Dialogue Splitting:** Complete rewrite of `splitDialogueBlock` function with advanced "Window Search" logic for precise dialogue window management.
+  - The function now correctly identifies the dialogue window anchor (last `ShowTextAttributes` without `#+`) before the current block.
+  - Accurately counts existing `ShowText` blocks in the current window, considering only non-deleted blocks.
+  - Only inserts `ShowTextAttributes #+` separator when the total count (existing + new) exceeds 4 lines.
+  - Prevents unnecessary insertion of `ShowTextAttributes` separators when 4 or fewer lines would remain in the window.
+  - Ensures proper dialogue window structure while avoiding redundant separators.
+
+- **Enhanced Name Tag Detection:** Revolutionary "Window Search" algorithm (v23/v25) for precise parent block identification.
+  - Introduced anchor-based search: first finds the last `ShowTextAttributes` (without `#+`) as an anchor, then searches for the first `ShowText` (without `#+`) after it as the parent.
+  - Correctly ignores continuation lines (`manualPlus` or `generated`) when identifying parent blocks.
+  - Properly distinguishes between dialogue and narration contexts by examining the actual parent block structure.
+  - Synchronized across all error detection functions: `hasNameTagErrors`, `autoFixNameTagErrors`, `updateMatchLamp`, and `checkForLineLevelErrors`.
+
+- **Context-Aware ShowTextAttributes Insertion:** Improved `fixLongDialogues` function with intelligent context detection.
+  - Uses the same "Window Search" logic to correctly identify dialogue vs. narration context.
+  - Only inserts name tags when the context is actually dialogue (parent block has a name tag).
+  - Prevents incorrect insertion of name tags into narration blocks from distant dialogue blocks.
+  - Maintains proper dialogue window structure while respecting narration boundaries.
+
+### Bug Fixes
+- **Fixed "Split Lines" Button:** Resolved critical issue where the button was inserting `ShowTextAttributes` separators even when the total line count would be 4 or fewer.
+  - The function now correctly calculates the future line count (existing + 1 new) and only inserts separator when count > 4.
+  - Prevents unnecessary dialogue window breaks that disrupted reading flow.
+  - Example: Fixed issue where 4-line dialogues were incorrectly split into multiple windows.
+
+- **Fixed "Duplicate" Button:** Comprehensive fix for the duplicate button functionality.
+  - Now copies content only from the single block associated with the button, without concatenating subsequent lines.
+  - Works correctly even when only the Russian file is loaded (searches for duplicates based on `block.text` when `japaneseLink` is unavailable).
+  - Correctly handles all content types regardless of language.
+  - Eliminates "greedy" text capture from multiple lines.
+
+- **Fixed Name Tag Error Detection:** Resolved false positive/negative errors in name tag validation.
+  - Fixed issue where `ShowText` after `ShowTextAttributes #+` was incorrectly flagged as needing a name tag when parent block was narration without a name.
+  - Fixed issue where parent block identification stopped at continuation lines instead of finding the true "head" block.
+  - Corrected logic to properly identify the parent block by ignoring continuation lines and using the "Window Search" algorithm.
+  - Synchronized error detection logic across editor, preview, and batch processing modes.
+
+- **Fixed Name Tag Auto-Fix:** Corrected `autoFixNameTagErrors` function behavior.
+  - Now correctly extracts name tag directly from the identified parent block instead of relying on potentially null `lastKnownNameTag`.
+  - Properly reconstructs text with correct `∾\n` prefix, replacing any existing incorrect prefix.
+  - Uses regex to find the actual name tag and all text after it, then reconstructs the string correctly.
+
+- **Fixed "Fix ShowTextAttributes" Button:** Resolved issue where the button was adding name tags from distant dialogues into narration blocks.
+  - Implemented "Window Search" logic (v25) to correctly identify the nearest relevant parent block.
+  - Only inherits name tags from the actual parent block within the same dialogue window.
+  - Prevents cross-contamination between different dialogue contexts and narration blocks.
+
+- **Fixed Template Fix Button:** Corrected issue where Japanese lines disappeared after using "Исправить Шаблоны Строк" button.
+  - Now explicitly preserves and merges `japaneseLink` from the next block into the current block when merging template blocks.
+  - Calls `linkAndRender()` after the fix to re-establish all Japanese associations.
+  - Ensures Japanese text is not lost during template block merging operations.
+
+- **Fixed Post-Fix Error Re-checking:** Resolved issue where editor failed to re-check for errors after using "Исправить ShowTextAttributes" button.
+  - Now calls `updateFixButtonsVisibility()` after `fixLongDialogues` to re-check for all error types.
+  - Ensures that errors created by inserting `ShowTextAttributes` separators are immediately detected.
+  - Provides consistent error detection across all fix operations.
+
+### Technical Improvements
+- **Unified Window Search Algorithm:** Standardized parent block identification logic across all functions.
+  - Single source of truth for context detection: find anchor (last `ShowTextAttributes` without `#+`), then find parent (first `ShowText` without `#+` after anchor).
+  - Implemented in: `hasNameTagErrors`, `autoFixNameTagErrors`, `updateMatchLamp`, `checkForLineLevelErrors`, `fixLongDialogues`, and `splitDialogueBlock`.
+  - Ensures consistent behavior across editor, preview, batch processing, and fix operations.
+
+- **Enhanced Block Continuation Detection:** Improved handling of continuation lines.
+  - Explicitly ignores blocks marked with `manualPlus` or `generated` when searching for parent blocks.
+  - Distinguishes between "head" blocks (true dialogue/narration starts) and continuation blocks.
+  - Provides more accurate context detection for error validation and auto-fixing.
+
+- **Improved Error Detection Flow:** Enhanced error checking pipeline.
+  - All fix buttons now trigger full error re-check after their operations.
+  - Consistent error detection across all editor states and operations.
+  - Eliminates stale error states after fix operations.
 
 ---
 
@@ -328,6 +411,10 @@
 - **NEW:** Use `##` marker at the end of ShowText lines to ignore Japanese text detection for specific lines.
 - **NEW:** Empty ShowText blocks are automatically handled - they match properly but stay hidden from the interface.
 - **NEW:** Special templates like "Уровень симпатии" and "Найдено мастеров" are automatically recognized and processed.
+- **NEW:** The "Split Lines" button now intelligently checks if `ShowTextAttributes` separator is needed, preventing unnecessary dialogue window breaks when 4 or fewer lines would remain.
+- **NEW:** The "Duplicate" button now copies content from only the single associated block and works even when only the Russian file is loaded.
+- **NEW:** All error detection and fix functions now use the unified "Window Search" algorithm for consistent and accurate parent block identification.
+- **NEW:** The "Fix ShowTextAttributes" and "Fix Name Tags" buttons now correctly identify dialogue vs. narration context, preventing incorrect name tag insertion into narration blocks.
 
 ---
 
