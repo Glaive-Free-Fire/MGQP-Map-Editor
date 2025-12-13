@@ -1,6 +1,6 @@
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function () {
   // --- Универсальный генератор актуального содержимого файла ---
-  window.generateCurrentFileContentAsLines = function() {
+  window.generateCurrentFileContentAsLines = function () {
     if (window.restoreModeEnabled) {
       return window.fullRusLines.slice();
     }
@@ -24,24 +24,24 @@ document.addEventListener('DOMContentLoaded', function() {
     if (!foundDisplayName) {
       newLines.unshift(displayNameLine);
     }
-      
-      // 2. Создаём карту блоков и карту позиций
+
+    // 2. Создаём карту блоков и карту позиций
     const blockMap = new Map();
     textBlocks.forEach(block => {
       if (block.idx !== undefined) {
         blockMap.set(block.idx, block);
       }
     });
-      
-      // >>> НАЧАЛО ИЗМЕНЕНИЯ: Создаём карту для отслеживания позиций <<<
+
+    // >>> НАЧАЛО ИЗМЕНЕНИЯ: Создаём карту для отслеживания позиций <<<
     const originalIdxToPosMap = new Map();
-      // >>> КОНЕЦ ИЗМЕНЕНИЯ <<<
-      
-      // 3. Собираем итоговый файл
+    // >>> КОНЕЦ ИЗМЕНЕНИЯ <<<
+
+    // 3. Собираем итоговый файл
     for (let i = 0; i < newLines.length; i++) {
       const originalLine = newLines[i];
       const block = blockMap.get(i);
-      
+
       if (block) {
         if (block.isDeleted) {
           continue;
@@ -49,108 +49,108 @@ document.addEventListener('DOMContentLoaded', function() {
         const indentMatch = originalLine.match(/^\s*/);
         const indent = indentMatch ? indentMatch[0] : '';
         let formattedLine = originalLine; // Default fallback
-        
+
         switch (block.type) {
-            case 'ShowText':
-              let txt = block.text.replace(/∿/g, '<<ONE>>').replace(/\n/g, '\\n').replace(/∾∾/g, '\\\\').replace(/∾/g, '\\').replace(/<<ONE>>/g, '\\').replace(/\\(?=[\?\.!\,—])/g, '');
-              let newText = txt.replace(/(?<!\\)"/g, '\\"');
-              formattedLine = originalLine.replace(/\[(.*)\]/, `["${newText}"]`);
-              break;
-            case 'ShowTextAttributes':
-              // ShowTextAttributes не требует экранирования кавычек, но заменяем ∾ на \
-              let attrText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
-              // Определяем, были ли кавычки в оригинале
-              const attrHasQuotes = /\["(.*)"\]/.test(originalLine);
-              if (attrHasQuotes) {
-                formattedLine = originalLine.replace(/\["(.*)"\]/, `["${attrText}"]`);
-              } else {
-                formattedLine = originalLine.replace(/\[(.*)\]/, `[${attrText}]`);
-              }
-              break;
-            case 'Script':
-              let scriptText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
-              let escapedScriptText = scriptText.replace(/(?<!\\)"/g, '\\"');
-              formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedScriptText}"]`);
-              break;
-            case 'ScriptMore':
-              let scriptMoreText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
-              let escapedScriptMoreText = scriptMoreText.replace(/(?<!\\)"/g, '\\"');
-              formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedScriptMoreText}"]`);
-              break;
-            case 'Label':
-              // Label имеет специальный формат: [имя_метки]
-              // Сохраняем оригинальное форматирование с кавычками, заменяем только содержимое
-              let labelText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
-              // Определяем, были ли кавычки в оригинале
-              const labelHasQuotes = /\["(.*)"\]/.test(originalLine);
-              if (labelHasQuotes) {
-                formattedLine = originalLine.replace(/\["(.*)"\]/, `["${labelText}"]`);
-              } else {
-                formattedLine = originalLine.replace(/\[(.*)\]/, `[${labelText}]`);
-              }
-              break;
+          case 'ShowText':
+            let txt = block.text.replace(/∿/g, '<<ONE>>').replace(/\n/g, '\\n').replace(/∾∾/g, '\\\\').replace(/∾/g, '\\').replace(/<<ONE>>/g, '\\').replace(/\\(?=[\?\.!\,—])/g, '');
+            let newText = txt.replace(/(?<!\\)"/g, '\\"');
+            formattedLine = originalLine.replace(/\[(.*)\]/, `["${newText}"]`);
+            break;
+          case 'ShowTextAttributes':
+            // ShowTextAttributes не требует экранирования кавычек, но заменяем ∾ на \
+            let attrText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+            // Определяем, были ли кавычки в оригинале
+            const attrHasQuotes = /\["(.*)"\]/.test(originalLine);
+            if (attrHasQuotes) {
+              formattedLine = originalLine.replace(/\["(.*)"\]/, `["${attrText}"]`);
+            } else {
+              formattedLine = originalLine.replace(/\[(.*)\]/, `[${attrText}]`);
+            }
+            break;
+          case 'Script':
+            let scriptText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+            let escapedScriptText = scriptText.replace(/(?<!\\)"/g, '\\"');
+            formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedScriptText}"]`);
+            break;
+          case 'ScriptMore':
+            let scriptMoreText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+            let escapedScriptMoreText = scriptMoreText.replace(/(?<!\\)"/g, '\\"');
+            formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedScriptMoreText}"]`);
+            break;
+          case 'Label':
+            // Label имеет специальный формат: [имя_метки]
+            // Сохраняем оригинальное форматирование с кавычками, заменяем только содержимое
+            let labelText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+            // Определяем, были ли кавычки в оригинале
+            const labelHasQuotes = /\["(.*)"\]/.test(originalLine);
+            if (labelHasQuotes) {
+              formattedLine = originalLine.replace(/\["(.*)"\]/, `["${labelText}"]`);
+            } else {
+              formattedLine = originalLine.replace(/\[(.*)\]/, `[${labelText}]`);
+            }
+            break;
 
 
-            case 'JumpToLabel':
-              // JumpToLabel имеет специальный формат: [имя_метки]
-              // Сохраняем оригинальное форматирование с кавычками, заменяем только содержимое
-              let jumpText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
-              // Определяем, были ли кавычки в оригинале
-              const jumpHasQuotes = /\["(.*)"\]/.test(originalLine);
-              if (jumpHasQuotes) {
-                formattedLine = originalLine.replace(/\["(.*)"\]/, `["${jumpText}"]`);
-              } else {
-                formattedLine = originalLine.replace(/\[(.*)\]/, `[${jumpText}]`);
-              }
-              break;
-            case 'Name':
-              // Name имеет специальный формат: [имя_персонажа]
-              // Сохраняем оригинальное форматирование с кавычками, заменяем только содержимое
-              let nameText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
-              // Определяем, были ли кавычки в оригинале
-              const nameHasQuotes = /\["(.*)"\]/.test(originalLine);
-              if (nameHasQuotes) {
-                formattedLine = originalLine.replace(/\["(.*)"\]/, `["${nameText}"]`);
-              } else {
-                formattedLine = originalLine.replace(/\[(.*)\]/, `[${nameText}]`);
-              }
-              break;
-            case 'ShowChoices':
-              // ShowChoices имеет формат: [[текст1, текст2, ...], номер_выбора]
-              // Заменяем содержимое массива выборов, сохраняя структуру
-              let choicesText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
-              // Разбиваем варианты выбора и добавляем кавычки к каждому
-              const choices = choicesText.split(/\s*\|\s*/);
-              const quotedChoices = choices.map(choice => `"${choice.trim()}"`).join(' | ');
-              // Заменяем содержимое массива выборов
-              formattedLine = originalLine.replace(/\[\[(.*?)\],\s*(\d+)\]/, `[[${quotedChoices}], $2]`);
-              break;
-            case 'When':
-              // When имеет формат: [номер_выбора, "текст_условия"]
-              // Заменяем текст условия, сохраняя номер выбора
-              let whenText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
-              // Определяем, были ли кавычки в оригинале
-              const whenHasQuotes = /\[(\d+),\s*"(.*)"\]/.test(originalLine);
-              if (whenHasQuotes) {
-                formattedLine = originalLine.replace(/\[(\d+),\s*"(.*)"\]/, `[$1, "${whenText}"]`);
-              } else {
-                formattedLine = originalLine.replace(/\[(\d+),\s*(.*)\]/, `[$1, ${whenText}]`);
-              }
-              break;
-            default:
-              // Для ВСЕХ остальных типов (MoveRoute, PlaySE и т.д.)
-              // мы НЕ ДЕЛАЕМ НИЧЕГО. Это сохранит их оригинальную структуру.
-              formattedLine = originalLine;
-              break;
-          }
+          case 'JumpToLabel':
+            // JumpToLabel имеет специальный формат: [имя_метки]
+            // Сохраняем оригинальное форматирование с кавычками, заменяем только содержимое
+            let jumpText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+            // Определяем, были ли кавычки в оригинале
+            const jumpHasQuotes = /\["(.*)"\]/.test(originalLine);
+            if (jumpHasQuotes) {
+              formattedLine = originalLine.replace(/\["(.*)"\]/, `["${jumpText}"]`);
+            } else {
+              formattedLine = originalLine.replace(/\[(.*)\]/, `[${jumpText}]`);
+            }
+            break;
+          case 'Name':
+            // Name имеет специальный формат: [имя_персонажа]
+            // Сохраняем оригинальное форматирование с кавычками, заменяем только содержимое
+            let nameText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+            // Определяем, были ли кавычки в оригинале
+            const nameHasQuotes = /\["(.*)"\]/.test(originalLine);
+            if (nameHasQuotes) {
+              formattedLine = originalLine.replace(/\["(.*)"\]/, `["${nameText}"]`);
+            } else {
+              formattedLine = originalLine.replace(/\[(.*)\]/, `[${nameText}]`);
+            }
+            break;
+          case 'ShowChoices':
+            // ShowChoices имеет формат: [[текст1, текст2, ...], номер_выбора]
+            // Заменяем содержимое массива выборов, сохраняя структуру
+            let choicesText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+            // Разбиваем варианты выбора и добавляем кавычки к каждому
+            const choices = choicesText.split(/\s*\|\s*/);
+            const quotedChoices = choices.map(choice => `"${choice.trim()}"`).join(' | ');
+            // Заменяем содержимое массива выборов
+            formattedLine = originalLine.replace(/\[\[(.*?)\],\s*(\d+)\]/, `[[${quotedChoices}], $2]`);
+            break;
+          case 'When':
+            // When имеет формат: [номер_выбора, "текст_условия"]
+            // Заменяем текст условия, сохраняя номер выбора
+            let whenText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+            // Определяем, были ли кавычки в оригинале
+            const whenHasQuotes = /\[(\d+),\s*"(.*)"\]/.test(originalLine);
+            if (whenHasQuotes) {
+              formattedLine = originalLine.replace(/\[(\d+),\s*"(.*)"\]/, `[$1, "${whenText}"]`);
+            } else {
+              formattedLine = originalLine.replace(/\[(\d+),\s*(.*)\]/, `[$1, ${whenText}]`);
+            }
+            break;
+          default:
+            // Для ВСЕХ остальных типов (MoveRoute, PlaySE и т.д.)
+            // мы НЕ ДЕЛАЕМ НИЧЕГО. Это сохранит их оригинальную структуру.
+            formattedLine = originalLine;
+            break;
+        }
         previewLines.push(indent + formattedLine.trimStart());
         originalIdxToPosMap.set(block.idx, previewLines.length - 1);
       } else {
         previewLines.push(originalLine);
       }
     }
-      
-      // 4. Вставляем новые строки, используя карту позиций
+
+    // 4. Вставляем новые строки, используя карту позиций
     textBlocks.forEach(block => {
       if (block.idx === undefined && !block.isDeleted) {
         if (block.generated && block.text === 'ТРЕБУЕТСЯ ПЕРЕВОД') {
@@ -198,7 +198,7 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   // --- Обновленная функция предпросмотра ---
-  window.updatePreviewArea = function() {
+  window.updatePreviewArea = function () {
     // Используем единую функцию сборки файла для предпросмотра
     const previewLines = window.generateFinalFileLines ? window.generateFinalFileLines() : window.generateCurrentFileContentAsLines();
     document.getElementById('previewArea').value = previewLines.join('\n');
@@ -208,7 +208,7 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 });
 
-window.testModeCompare = function(textBlocks, previewLines) {
+window.testModeCompare = function (textBlocks, previewLines) {
   const diffs = [];
   // --- Функция нормализации спецсимволов для сравнения ---
   function normalizeShowText(str) {
@@ -261,15 +261,15 @@ window.testModeCompare = function(textBlocks, previewLines) {
     const exp = normalizeShowText(exported[i]);
     const prev = previewShowTexts[i] ? normalizeShowText(previewShowTexts[i].text) : undefined;
     if (prev === undefined) {
-      diffs.push(`Строка [ShowText #${i+1}] не попала в файл: "${exported[i]}"`);
+      diffs.push(`Строка [ShowText #${i + 1}] не попала в файл: "${exported[i]}"`);
     } else if (exp !== prev) {
-      diffs.push(`Строка [ShowText #${i+1}] отличается в файле:\nВ редакторе: "${exported[i]}"\nВ файле:    "${previewShowTexts[i].text}"`);
+      diffs.push(`Строка [ShowText #${i + 1}] отличается в файле:\nВ редакторе: "${exported[i]}"\nВ файле:    "${previewShowTexts[i].text}"`);
     }
   }
   // 4. Проверяем лишние строки в файле
   if (previewShowTexts.length > exported.length) {
     for (let i = exported.length; i < previewShowTexts.length; i++) {
-      diffs.push(`В файле есть лишняя строка [ShowText #${i+1}]: "${previewShowTexts[i].text}"`);
+      diffs.push(`В файле есть лишняя строка [ShowText #${i + 1}]: "${previewShowTexts[i].text}"`);
     }
   }
   return diffs;
@@ -279,15 +279,15 @@ window.testModeCompare = function(textBlocks, previewLines) {
 // =================================================================================
 // === НАЧАЛО ИСПРАВЛЕНИЯ: Упрощенная функция updatePreviewErrors ===
 // =================================================================================
-window.updatePreviewErrors = function() {
-    // Шаг 1: Пересчитываем все ошибки и обновляем список в предпросмотре
-    if (window.updateMatchLamp) {
-        window.updateMatchLamp();
-    }
-    // Шаг 2 (недостающий): Применяем изменения подсветки в редакторе
-    if (typeof updateRedIndices === 'function') {
-        updateRedIndices();
-    }
+window.updatePreviewErrors = function () {
+  // Шаг 1: Пересчитываем все ошибки и обновляем список в предпросмотре
+  if (window.updateMatchLamp) {
+    window.updateMatchLamp();
+  }
+  // Шаг 2 (недостающий): Применяем изменения подсветки в редакторе
+  if (typeof updateRedIndices === 'function') {
+    updateRedIndices();
+  }
 };
 // ===============================================================================
 // === КОНЕЦ ИСПРАВЛЕНИЯ ===
@@ -295,7 +295,7 @@ window.updatePreviewErrors = function() {
 
 
 // --- Переключение вкладок: обновляем предпросмотр и ошибки ---
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function () {
   function showTab(tab) {
     document.getElementById('tabContentEditor').style.display = (tab === 'editor') ? '' : 'none';
     document.getElementById('tabContentPreview').style.display = (tab === 'preview') ? '' : 'none';
@@ -306,13 +306,13 @@ document.addEventListener('DOMContentLoaded', function() {
   document.getElementById('tabPreview').onclick = () => {
     updatePreviewArea();
     showTab('preview');
-      // updatePreviewErrors() уже вызывается внутри updatePreviewArea
+    // updatePreviewErrors() уже вызывается внутри updatePreviewArea
   };
 });
 
 // --- Также обновляем ошибки при каждом изменении textBlocks ---
 window._origUpdateAllForBlock = window.updateAllForBlock;
-window.updateAllForBlock = function(block, textarea, plusBtn, minusBtn, counter, textBlocks) {
+window.updateAllForBlock = function (block, textarea, plusBtn, minusBtn, counter, textBlocks) {
   if (window._origUpdateAllForBlock) window._origUpdateAllForBlock(block, textarea, plusBtn, minusBtn, counter, textBlocks);
   if (typeof window.updatePreviewErrors === 'function') window.updatePreviewErrors();
 };
@@ -320,7 +320,7 @@ window.updateAllForBlock = function(block, textarea, plusBtn, minusBtn, counter,
 // === Добавляю функцию escapeFirstThree в начало файла ===
 function escapeFirstThree(str) {
   let count = 0;
-  let result = str.replace(/\\n|<\\?C\[6\]|\\?C\[0\]>/g, function(match) {
+  let result = str.replace(/\\n|<\\?C\[6\]|\\?C\[0\]>/g, function (match) {
     count++;
     if (count === 1 && match === '\\n') return '\\\\n';
     if (count === 2 && (match === '<\\C[6]' || match === '<C[6]')) return '<\\\\C[6]';
@@ -339,23 +339,23 @@ function escapeSkillAttributes(str) {
     if (str.includes('\\\\I[') && str.includes('\\\\C[')) {
       return str; // Уже правильно экранировано, не изменяем
     }
-    
+
     // Обрабатываем управляющие последовательности для навыков
     let result = str;
-    
+
     // Заменяем одиночные слеши на двойные для управляющих последовательностей навыков
     result = result.replace(/\\([IC])\[/g, '\\\\$1[');
     result = result.replace(/\\C\[(\d+)\]/g, '\\\\C[$1]');
     result = result.replace(/\\I\[(\d+)\]/g, '\\\\I[$1]');
-    
+
     return result;
   }
-  
+
   return str;
 }
 
 // --- Проверка структуры для красной лампочки ---
-window.checkMapStructureMatch = function(jpContent, ruContent) {
+window.checkMapStructureMatch = function (jpContent, ruContent) {
   // 1) Простой единый парсер для обоих языков
   function parseMapFile(content) {
     const events = {};
@@ -407,6 +407,21 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
         const jpPage = jpEv.pages[p] || [];
         const ruPage = (ruEv.pages[p] || []);
         let issues = [];
+
+        // --- НОВЫЙ БЛОК: СРАВНЕНИЕ ИМЕН СОБЫТИЙ ---
+        // Проверяем только на первой странице (p=0), чтобы не дублировать ошибку
+        if (p === 0 && jpEv.name !== ruEv.name) {
+          issues.push({
+            line: 1, // Условный номер строки (где-то в заголовке)
+            msg: `Имя события (Name) не совпадает с японским. Ожидалось: <b>"${jpEv.name}"</b>, найдено: <b>"${ruEv.name}"</b>`,
+            jp: `Name = "${jpEv.name}"`,
+            ru: `Name = "${ruEv.name}"`,
+            jpLineNum: undefined, // Сложно определить точно без перепарсинга, но для вывода достаточно msg
+            ruLineNum: undefined
+          });
+        }
+        // --- КОНЕЦ НОВОГО БЛОКА ---
+
         let i = 0, j = 0;
         let expectedIndent = null;
         while (i < jpPage.length || j < ruPage.length) {
@@ -439,26 +454,26 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
           if (ruPage[j] && ruPage[j].raw.trim().endsWith('#+')) { j++; continue; }
           if (jpCmd === 'ShowText' || ruCmd === 'ShowText') {
             const isJpNameLine = jpLine?.raw.includes('["【');
-            
+
             // <<< НАЧАЛО ИСПРАВЛЕНИЯ: Проверка на оба специальных шаблона >>>
             let isRuSpecialTemplateLine = false;
             if (ruLine) {
-                const ruRawTrimmed = ruLine.raw.trim();
-                // Проверяем наличие одной из двух ключевых фраз
-                const hasSympathy = ruRawTrimmed.includes('(Уровень симпатии:');
-                const hasMasters = ruRawTrimmed.includes('(Найдено мастеров:');
-                
-                if (ruRawTrimmed.startsWith('ShowText') && (hasSympathy || hasMasters) && ruRawTrimmed.endsWith(')"])')) {
-                    isRuSpecialTemplateLine = true;
-                }
+              const ruRawTrimmed = ruLine.raw.trim();
+              // Проверяем наличие одной из двух ключевых фраз
+              const hasSympathy = ruRawTrimmed.includes('(Уровень симпатии:');
+              const hasMasters = ruRawTrimmed.includes('(Найдено мастеров:');
+
+              if (ruRawTrimmed.startsWith('ShowText') && (hasSympathy || hasMasters) && ruRawTrimmed.endsWith(')"])')) {
+                isRuSpecialTemplateLine = true;
+              }
             }
 
             // Условие срабатывает, только если ОБА файла имеют пару ShowText для обработки
             if (isJpNameLine && jpPage[i + 1]?.command === 'ShowText' && isRuSpecialTemplateLine && ruPage[j + 1]?.command === 'ShowText') {
-                // Это наш особый случай: 2 строки в JP (Имя, Диалог) соответствуют 2 строкам в RU (Симпатия, Диалог)
-                i += 2; // Пропускаем пару в JP
-                j += 2; // Пропускаем пару в RU
-                continue;
+              // Это наш особый случай: 2 строки в JP (Имя, Диалог) соответствуют 2 строкам в RU (Симпатия, Диалог)
+              i += 2; // Пропускаем пару в JP
+              j += 2; // Пропускаем пару в RU
+              continue;
             }
             // <<< КОНЕЦ ИСПРАВЛЕНИЯ >>>
 
@@ -501,3 +516,90 @@ window.checkMapStructureMatch = function(jpContent, ruContent) {
   const ruEvents = parseMapFile(ruContent);
   return compareEvents(jpEvents, ruEvents);
 };
+
+// =================================================================================
+// === НОВОЕ: Принудительное использование имен из японского файла ===
+// =================================================================================
+
+// 1. Функция принудительного исправления имен
+window.forceCorrectNames = function () {
+  // Если нет загруженных данных, выходим
+  if (!window.fullJapLines || window.fullJapLines.length === 0) return;
+  if (!window.originalLines || window.originalLines.length === 0) return;
+
+  // A. Парсим японские имена (EventId -> Name)
+  const jpNames = {}; // EventId -> Name
+  let curJpEvent = null;
+  for (const line of window.fullJapLines) {
+    const trim = line.trim();
+    const evMatch = trim.match(/^CommonEvent (\d+)/);
+    if (evMatch) {
+      curJpEvent = evMatch[1];
+      continue;
+    }
+    if (curJpEvent && trim.startsWith('Name = ')) {
+      // Извлекаем имя, убирая кавычки
+      jpNames[curJpEvent] = trim.replace('Name = ', '').replace(/^"|"$/g, '');
+      curJpEvent = null;
+    }
+  }
+
+  // B. Сопоставляем строки русского файла с EventID
+  const lineToEvent = new Map();
+  let curRuEvent = null;
+  for (let i = 0; i < window.originalLines.length; i++) {
+    const trim = window.originalLines[i].trim();
+    const evMatch = trim.match(/^CommonEvent (\d+)/);
+    if (evMatch) { curRuEvent = evMatch[1]; }
+    if (curRuEvent) lineToEvent.set(i, curRuEvent);
+  }
+
+  // C. Проходим по всем блокам и обновляем имена
+  if (window.textBlocks) {
+    window.textBlocks.forEach(block => {
+      // Нас интересуют только блоки типа Name и только те, что имеют привязку к строкам
+      if (block.type === 'Name' && block.idx !== undefined) {
+        const evId = lineToEvent.get(block.idx);
+
+        // Если мы знаем EventID и для него есть японское имя
+        if (evId && jpNames[evId] !== undefined) {
+          // Проверяем, отличается ли имя
+          if (block.text !== jpNames[evId]) {
+            console.log(`[AutoFix] Исправлено имя события ${evId}: "${block.text}" -> "${jpNames[evId]}"`);
+            // 1. Обновляем текст в блоке данных
+            block.text = jpNames[evId];
+
+            // 2. Обновляем UI (поле ввода), если оно существует
+            if (block.dom && block.dom.rusInput) {
+              block.dom.rusInput.value = jpNames[evId];
+              // Вызываем событие input, чтобы сбросить красную подсветку (если была)
+              // и обновить любые связанные состояния редактора
+              block.dom.rusInput.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+          }
+        }
+      }
+    });
+  }
+};
+
+// 2. Переопределяем генератор файла, чтобы он внедрял это исправление
+// Используем setTimeout, чтобы убедиться, что основной скрипт уже загрузил оригинальную функцию
+setTimeout(function () {
+  const originalGen = window.generateFinalFileLines;
+  if (originalGen) {
+    window.generateFinalFileLines = function () {
+      try {
+        // Сначала исправляем имена в структурах данных
+        window.forceCorrectNames();
+      } catch (e) {
+        console.error("Critical Error in forceCorrectNames:", e);
+      }
+      // Затем вызываем оригинальную генерацию, которая соберет файл из исправленных данных
+      return originalGen.apply(this, arguments);
+    };
+    console.log("window.generateFinalFileLines успешно переопределена для авто-исправления имен.");
+  } else {
+    console.warn("Внимание: window.generateFinalFileLines не найдена. Авто-исправление имен может не работать.");
+  }
+}, 500); // 500мс задержка для надежности
