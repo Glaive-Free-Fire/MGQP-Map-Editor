@@ -1,4 +1,4 @@
-# MGQP Map Editor v1.4.81
+# MGQP Map Editor v1.4.90
 
 **A modern web-based tool for editing and batch-fixing RPG Maker XP map/event files, with advanced support for translation workflows (RU/JP), structure validation, and mass error correction.**
 
@@ -9,7 +9,8 @@
 - **Visual Editor:** Edit map/event files with a user-friendly interface, including block-based editing for ShowText, ShowTextAttributes, ShowChoices, When, JumpToLabel, Label, Script, ScriptMore, and more.
 - **Japanese/Translation Support:** Load both Russian and Japanese versions of files for side-by-side comparison and translation assistance.
 - **Japanese-Only Mode:** Create translations from scratch by loading only the Japanese file - the editor will automatically structure the content for translation.
-- **Structure Validation:** Automatic detection of CommonEvent structure errors, with detailed error reporting and highlighting.
+- **Logical Structure Validation:** Automatic detection of logical skeleton errors (Switches, Variables, Branches). Ignores `ShowText` and `ShowTextAttributes` to allow flexible dialogue editing.
+- **Hot Reload Dialogue Splitting:** Split long lines with a direct "Divide -> Reload -> Auto-Fix" cycle for perfect structural integrity.
 - **Batch Processing:** Check and fix entire folders of map files at once, with ZIP export of all corrected files.
 - **Undo/Redo:** Full undo/redo support for editing operations.
 - **Smart Text Wrapping:** Split long text blocks with a single click, with customizable wrapping modes.
@@ -24,7 +25,7 @@
 - **New Error Types:** Additional error types are now detected and highlighted, including new syntax and structure issues.
 - **Red Download Button:** The "Download edited file" button turns red if there are unresolved errors, preventing accidental saving.
 - **Improved Restore Structure:** The CommonEvent structure fixer now handles errors left after the first fix, and you no longer need to reload the fixed file each time—just click "Update Editor".
-- **Enhanced Error Lamp:** The red/green lamp now reflects new error types and provides more detailed feedback.
+- **Enhanced Error Lamp:** The red/green lamp now verifies the **logical skeleton** of the event, allowing split dialogues while still catching accidental command deletions.
 - **Affinity System Support:** Automatic detection and handling of character affinity/好感度 system strings with proper formatting.
 - **Automatic Block Synchronization:** Related blocks (JumpToLabel/Label, Script/ScriptMore) are automatically synchronized when edited.
 - **Smart Block Filtering:** Only relevant blocks are shown in the editor based on content analysis (e.g., Script blocks with Japanese text or Russian translations).
@@ -48,9 +49,11 @@
 - **Comprehensive Logging:** Detailed diagnostic logging for troubleshooting complex file structure issues.
 - **Type-Aware Block Matching:** Advanced matching algorithm that considers block types for more accurate Russian-Japanese correspondence.
 - **CommonEvent Boundary Respect:** Strict adherence to CommonEvent boundaries prevents cross-contamination of blocks between different events.
-- **Japanese Text Ignore Marker:** New `##` marker support allows ignoring Japanese text in specific lines from error detection.
-- **Empty ShowText Handling:** Improved processing of empty ShowText blocks with proper matching and interface hiding.
-- **Special Template Support:** Enhanced support for special text patterns like "Уровень симпатии" and "Найдено мастеров".
+- **Japanese Text Ignore Marker:** New `##` marker support allows ignoring Japanese text in specific lines from error detection. Now works correctly even on generated `#+` lines (e.g., `ShowText(["..."]) #+ ##`).
+- **Smart Name Tag Handling:** Automatically detects and skips duplicate dialogue lines following name tags (`【Имя】`).
+- **Advanced Dialogue Splitting:** Redesigned `splitDialogueBlock` uses visual indexing and atomic insertion for flawless page break management.
+- **Contextual Indentation Fixing:** Automatically detects and corrects indentation for generated lines with built-in protection against non-indent errors (NaN fix).
+- **CommonEvent Compatibility:** Full support for `CommonEvent.txt` parsing even without explicit "Page 1" headers.
 
 ---
 
@@ -60,104 +63,147 @@
 
 1. **Load Files:**
    - Click "Load file for translation" to upload your Russian map/event file.
-   - (Optional) Click "Load Japanese file" to upload the original Japanese file for comparison.
-   - **NEW:** You can now load only the Japanese file to create a translation from scratch!
+1.  **Load Files:**
+    -   Click "Load file for translation" to upload your Russian map/event file.
+    -   (Optional) Click "Load Japanese file" to upload the original Japanese file for comparison.
+    -   **NEW:** You can now load only the Japanese file to create a translation from scratch!
 
-2. **Edit Blocks:**
-   - Each block (ShowText, ShowTextAttributes, ShowChoices, When, JumpToLabel, Label, Script, ScriptMore, etc.) is shown as a separate editable area.
-   - Japanese text (if loaded) is shown above the corresponding Russian block for reference.
-   - Use the "+" button to split long text blocks. The editor will automatically insert a generated ShowTextAttributes block (with `#+`) after every 4 ShowText blocks.
-   - Use the "-" button to remove blocks (soft deletion preserves structure).
-   - Use the **Split Lines** button to automatically split all long text blocks in the file at once. The function now intelligently checks if `ShowTextAttributes` separator is needed (only if total lines would exceed 4).
-   - **NEW:** Related blocks (JumpToLabel/Label, Script/ScriptMore) are automatically synchronized when you edit one of them.
-   - **NEW:** Use `##` marker at the end of ShowText lines to ignore Japanese text detection for that line.
-   - **NEW:** The **Duplicate** button (shown on matching lines) copies content from only the single associated block and works even when only the Russian file is loaded.
+2.  **Edit Blocks:**
+    -   Each block (ShowText, ShowTextAttributes, ShowChoices, When, JumpToLabel, Label, Script, ScriptMore, etc.) is shown as a separate editable area.
+    -   Japanese text (if loaded) is shown above the corresponding Russian block for reference.
+    -   Use the "+" button to split long text blocks. The editor now uses a **Hot Reload** strategy: it splits the text and automatically triggers a re-parse/fix cycle to ensure all attributes and names are placed correctly.
+    -   Use the "-" button to remove blocks (soft deletion preserves structure).
+    -   Use the **Split Lines** button to automatically split all long text blocks. It now orchestrates a full in-memory reload for flawless formatting.
+    -   **NEW:** Related blocks (JumpToLabel/Label, Script/ScriptMore) are automatically synchronized when you edit one of them.
+    -   **NEW:** Use `##` marker at the end of ShowText lines to ignore Japanese text detection for that line.
+    -   **NEW:** The **Duplicate** button (shown on matching lines) copies content from only the single associated block and works even when only the Russian file is loaded.
 
-3. **Undo/Redo:**
-   - Use the ↺ and ↻ buttons or Ctrl+Z / Ctrl+Y to undo/redo changes.
+3.  **Undo/Redo:**
+    -   Use the ↺ and ↻ buttons or Ctrl+Z / Ctrl+Y to undo/redo changes.
 
-4. **Structure Validation & Fixing:**
-   - The **Restore CommonEvent Structure** button will attempt to fix structural errors using the Japanese file as a reference, including restoring missing CommonEvent blocks and fixing errors left after the first fix.
-   - **NEW:** The **Fix Script Errors** button automatically fixes missing quotes in Script commands.
-   - **NEW:** The **Fix Indentation** button automatically corrects indentation errors.
-   - **NEW:** The **Clear Lines** button appears when orphaned lines are detected, allowing you to clear their content with one click.
-   - **NEW:** The **Fix ShowTextAttributes** button automatically corrects long dialogue blocks by inserting proper structural commands. The function now correctly identifies dialogue vs. narration context and only inserts name tags when appropriate.
-   - **NEW:** The **Fix Name Tags** button automatically corrects missing name tags after `ShowTextAttributes #+` separators, using intelligent "Window Search" logic to identify the correct parent block.
-   - After restoring, use the **Update Editor** button to reload the fixed file into the editor without manual re-upload.
+4.  **Structure Validation & Fixing:**
+    -   The **Restore CommonEvent Structure** button will attempt to fix structural errors using the Japanese file as a reference, including restoring missing CommonEvent blocks and fixing errors left after the first fix.
+    -   **NEW:** The **Fix Script Errors** button automatically fixes missing quotes in Script commands.
+    -   **NEW:** The **Fix Indentation** button automatically corrects indentation errors.
+    -   **NEW:** The **Clear Lines** button appears when orphaned lines are detected, allowing you to clear their content with one click.
+    -   **NEW:** The **Fix ShowTextAttributes** button automatically corrects long dialogue blocks by inserting proper structural commands. The function now correctly identifies dialogue vs. narration context and only inserts name tags when appropriate.
+    -   **NEW:** The **Fix Name Tags** button automatically corrects missing name tags after `ShowTextAttributes #+` separators, using intelligent "Window Search" logic to identify the correct parent block.
+    -   After restoring, use the **Update Editor** button to reload the fixed file into the editor without manual re-upload.
 
-5. **Preview & Export:**
-   - Switch to the "Preview" tab to see the exact file that will be saved, including all generated blocks and structure corrections.
-   - The **Download edited file** button will turn red if there are unresolved errors, and saving will be blocked until they are fixed.
-   - Click "Download edited file" to save your changes, or "Copy all extracted" to copy the text.
+5.  **Preview & Export:**
+    -   Switch to the "Preview" tab to see the exact file that will be saved, including all generated blocks and structure corrections.
+    -   The **Download edited file** button will turn red if there are unresolved errors, and saving will be blocked until they are fixed.
+    -   Click "Download edited file" to save your changes, or "Copy all extracted" to copy the text.
 
 ### 2. Japanese-Only Translation Mode
 
-1. **Load Japanese File Only:**
-   - Click "Load Japanese file" without loading a Russian file.
-   - The editor will automatically structure the content for translation.
+1.  **Load Japanese File Only:**
+    -   Click "Load Japanese file" without loading a Russian file.
+    -   The editor will automatically structure the content for translation.
 
-2. **Translate Content:**
-   - Edit the automatically generated Russian text blocks.
-   - The editor maintains the original Japanese structure while allowing you to add translations.
+2.  **Translate Content:**
+    -   Edit the automatically generated Russian text blocks.
+    -   The editor maintains the original Japanese structure while allowing you to add translations.
 
-3. **Save Translation:**
-   - The file will be saved with the proper structure and formatting.
+3.  **Save Translation:**
+    -   The file will be saved with the proper structure and formatting.
 
 ### 3. Batch Processing
 
-1. **Go to the "Batch Processing" Tab:**
-   - Upload entire folders of Russian and Japanese map files using the folder upload controls.
+1.  **Go to the "Batch Processing" Tab:**
+    -   Upload entire folders of Russian and Japanese map files using the folder upload controls.
 
-2. **Check Files:**
-   - Click "Check maps for errors" to validate all files.
-   - **NEW:** All files from both folders are now displayed with clear indication of missing files.
-   - **NEW:** Detailed statistics show file counts and error summaries.
-   - Errors and structure mismatches are shown per file, with detailed breakdowns.
+2.  **Check Files:**
+    -   Click "Check maps for errors" to validate all files.
+    -   **NEW:** All files from both folders are now displayed with clear indication of missing files.
+    -   **NEW:** Detailed statistics show file counts and error summaries.
+    -   Errors and structure mismatches are shown per file, with detailed breakdowns.
 
-3. **Fix All Errors:**
-   - If errors are found, click "Fix all files with errors" to automatically correct them.
-   - **NEW:** Files with missing CommonEvent blocks are now properly processed with correct ShowText merging.
-   - All fixed files are packaged into a ZIP archive for download.
+3.  **Fix All Errors:**
+    -   If errors are found, click "Fix all files with errors" to automatically correct them.
+    -   **NEW:** Files with missing CommonEvent blocks are now properly processed with correct ShowText merging.
+    -   All fixed files are packaged into a ZIP archive for download.
 
-4. **All OK Message:**
-   - If all files are correct and the "Show OK files" checkbox is off, a green message "Congratulations! All files are correct" will be displayed.
+4.  **All OK Message:**
+    -   If all files are correct and the "Show OK files" checkbox is off, a green message "Congratulations! All files are correct" will be displayed.
 
 ---
 
 ## Key Details
 
-- **Generated Blocks:** All auto-generated blocks (ShowTextAttributes, etc.) are marked with `#+` at the end of the line, both in the editor and in the saved file.
-- **Scroll Position:** The editor remembers your scroll position when switching tabs or after editing, so you never lose your place.
-- **Preview = Save:** The "Preview" tab always shows exactly what will be saved to disk, including all generated and fixed blocks.
-- **Batch ZIP Export:** Batch fixes are exported as a ZIP archive containing all corrected files.
-- **Error Highlighting:** Lines exceeding the character limit, with syntax errors, or with new error types are highlighted in red. The download button is also highlighted if errors remain.
-- **Split Lines:** The new button allows you to split all long text blocks in one click, making it easier to conform to length limits. The function now intelligently checks if `ShowTextAttributes` separator is needed (only when total lines would exceed 4).
-- **Duplicate Button:** The duplicate button now copies content from only the single associated block and works even when only the Russian file is loaded. It correctly handles all content types regardless of language.
-- **Update Editor:** After restoring structure, you can update the editor with the fixed file instantly, streamlining the workflow.
-- **Enhanced Error Lamp:** The red/green lamp now reflects all error types, giving you instant feedback on file status.
-- **Affinity System:** Character affinity strings (好感度) are automatically detected and properly formatted for translation.
-- **Block Synchronization:** Related blocks are automatically kept in sync, reducing manual work and preventing inconsistencies.
-- **Smart Filtering:** The editor intelligently shows only relevant blocks, making it easier to focus on translatable content.
-- **Contextual Fix Buttons:** Fix buttons appear only when relevant errors are detected, providing a cleaner interface.
-- **Script Error Fixing:** Automatic detection and correction of missing quotes in Script commands.
-- **Skill Attributes:** Proper handling of skill attribute strings with correct escaping of control sequences like `\I[98]` and `\C[1]`.
-- **Indentation Fixing:** Automatic detection and correction of indentation errors in map files.
-- **Complete Batch Visibility:** All files from both folders are displayed with clear indication of missing files and detailed statistics.
-- **Orphaned Line Management:** New system for detecting and managing ShowText lines without Japanese counterparts.
-- **Soft Deletion:** Blocks can be marked as deleted while preserving file structure for proper Japanese mapping.
-- **Robust File Generation:** Improved algorithm ensures consistent file output with proper handling of all block types.
-- **Advanced Block Matching:** Revolutionary anchor-based algorithm eliminates false translation placeholders by precisely matching Russian and Japanese blocks.
-- **Intelligent Dialogue Management:** Automatic insertion of `ShowTextAttributes` commands ensures proper dialogue window structure. The function now intelligently checks if separator is needed (only when total lines would exceed 4).
-- **Window Search Algorithm:** Revolutionary "Window Search" logic (v23/v25) for precise parent block identification and context detection across all error detection and fix functions.
-- **Context-Aware Fixes:** All fix buttons now correctly identify dialogue vs. narration context using the "Window Search" algorithm, preventing incorrect name tag insertion.
-- **Performance Boost:** "Split Lines" button now processes large files significantly faster with optimized O(n) algorithm.
-- **Structural Integrity:** Complete preservation of all structural commands during file matching operations.
-- **Enhanced Diagnostics:** Comprehensive logging system provides detailed insights for troubleshooting complex issues.
-- **Type-Aware Matching:** Advanced algorithm considers block types for more accurate Russian-Japanese correspondence.
-- **Boundary Respect:** Strict adherence to CommonEvent boundaries prevents cross-contamination between different events.
-- **Japanese Text Ignore Marker:** Use `##` at the end of ShowText lines to exclude them from Japanese text error detection.
-- **Empty ShowText Processing:** Empty ShowText blocks are properly matched with Japanese counterparts but hidden from the editor interface.
-- **Special Template Recognition:** Automatic detection and handling of special text patterns for improved translation workflow.
+-   **Generated Blocks:** All auto-generated blocks (ShowTextAttributes, etc.) are marked with `#+` at the end of the line, both in the editor and in the saved file.
+-   **Scroll Position:** The editor remembers your scroll position when switching tabs or after editing, so you never lose your place.
+-   **Preview = Save:** The "Preview" tab always shows exactly what will be saved to disk, including all generated and fixed blocks.
+-   **Batch ZIP Export:** Batch fixes are exported as a ZIP archive containing all corrected files.
+-   **Error Highlighting:** Lines exceeding the character limit, with syntax errors, or with new error types are highlighted in red. The download button is also highlighted if errors remain.
+-   **Split Lines:** The new button allows you to split all long text blocks in one click, making it easier to conform to length limits. The function now intelligently checks if `ShowTextAttributes` separator is needed (only when total lines would exceed 4).
+-   **Duplicate Button:** The duplicate button now copies content from only the single associated block and works even when only the Russian file is loaded. It correctly handles all content types regardless of language.
+-   **Update Editor:** After restoring structure, you can update the editor with the fixed file instantly, streamlining the workflow.
+-   **Enhanced Error Lamp:** The red/green lamp now reflects all error types, giving you instant feedback on file status.
+-   **Affinity System:** Character affinity strings (好感度) are automatically detected and properly formatted for translation.
+-   **Block Synchronization:** Related blocks are automatically kept in sync, reducing manual work and preventing inconsistencies.
+-   **Smart Filtering:** The editor intelligently shows only relevant blocks, making it easier to focus on translatable content.
+-   **Contextual Fix Buttons:** Fix buttons appear only when relevant errors are detected, providing a cleaner interface.
+-   **Script Error Fixing:** Automatic detection and correction of missing quotes in Script commands.
+-   **Skill Attributes:** Proper handling of skill attribute strings with correct escaping of control sequences like `\I[98]` and `\C[1]`.
+-   **Indentation Fixing:** Automatic detection and correction of indentation errors in map files.
+-   **Complete Batch Visibility:** All files from both folders are displayed with clear indication of missing files and detailed statistics.
+-   **Orphaned Line Management:** New system for detecting and managing ShowText lines without Japanese counterparts.
+-   **Soft Deletion:** Blocks can be marked as deleted while preserving file structure for proper Japanese mapping.
+-   **Robust File Generation:** Improved algorithm ensures consistent file output with proper handling of all block types.
+-   **Advanced Block Matching:** Revolutionary anchor-based algorithm eliminates false translation placeholders by precisely matching Russian and Japanese blocks.
+-   **Intelligent Dialogue Management:** Automatic insertion of `ShowTextAttributes` commands ensures proper dialogue window structure. The function now intelligently checks if separator is needed (only when total lines would exceed 4).
+-   **Window Search Algorithm:** Revolutionary "Window Search" logic (v23/v25) for precise parent block identification and context detection across all error detection and fix functions.
+-   **Context-Aware Fixes:** All fix buttons now correctly identify dialogue vs. narration context using the "Window Search" algorithm, preventing incorrect name tag insertion.
+-   **Performance Boost:** "Split Lines" button now processes large files significantly faster with optimized O(n) algorithm.
+-   **Structural Integrity:** Complete preservation of all structural commands during file matching operations.
+-   **Enhanced Diagnostics:** Comprehensive logging system provides detailed insights for troubleshooting complex issues.
+-   **Type-Aware Matching:** Advanced algorithm considers block types for more accurate Russian-Japanese correspondence.
+-   **Boundary Respect:** Strict adherence to CommonEvent boundaries prevents cross-contamination between different events.
+-   **Japanese Text Ignore Marker:** Use `##` at the end of ShowText lines to exclude them from Japanese text error detection.
+-   **Empty ShowText Processing:** Empty ShowText blocks are properly matched with Japanese counterparts but hidden from the editor interface.
+-   **Special Template Recognition:** Automatic detection and handling of special text patterns for improved translation workflow.
+
+---
+
+## Changelog (v1.4.90+)
+
+### Structural & Validation Rewrite
+- **Pivot to Logical Comparison:** The Red Lamp now ignores `ShowText` and `ShowTextAttributes`. This allows translators to split lines or change portraits without triggering false "Structure Mismatch" errors.
+- **NaN Error Protection:** Fixed a bug in the indentation reporter where standard errors (Japanese text, character limits) were causing `NaN: undefined` entries. Added `isFixableIndent` flagging.
+- **CommonEvent Header Fix:** Added auto-detection of "Page 1" for `CommonEvent` files, fixing structure validation failures for these files.
+- **Extended Batch Checker:** The batch validator now correctly merges core validation (character limits) with the new indentation checks.
+
+### Improved Dialogue Splitting (Hot Reload)
+- **Pure Splitting Logic:** Simplified `splitDialogueBlock` to focus solely on text division.
+- **Reload Orchestration:** Updated `splitAllBtn` to trigger a full file re-generation and re-parse sequence.
+- **Auto-Apply Fixes:** Automatically invokes `fixLongDialogues` and `autoFixNameTagErrors` after splitting, ensuring perfect results without manual overhead.
+- **Navigation Fix:** Long dialogue errors are now added to the global error index, allowing the editor to navigate directly to them.
+
+### Major Improvements
+- **Redesigned Dialogue Splitting:** Complete overhaul of `splitDialogueBlock` function.
+  - Uses `visualLineIndex` to accurately track the current line's position within the dialogue window (0-3).
+  - Guarantees correct insertion order: `[Attributes (if page break needed)] -> [Tail Text]`.
+  - Performs **atomic insertion** using a single `splice` operation, eliminating indexing chaos.
+  - Automatically retrieves settings from previous `ShowTextAttributes` for consistency.
+
+- **Smart Duplicate Management:**
+  - `extractTexts` now automatically skips creating redundant text blocks for dialogue lines that are already included in name-tagged blocks (`【Имя】`).
+  - "Fix Name Tags" and "Fix All Names" buttons now logically delete (soft-delete) duplicate blocks from the editor, ensuring they are skipped during file generation.
+  - Prevents "orphaned" blocks and `#+` indentation errors caused by duplicate text.
+
+- **Improved Ignore Marker Logic:**
+  - The `##` ignore marker now works correctly even when combined with `#+` on the same line.
+  - Detection logic updated to support `ShowText(["..."]) #+ ##` syntax, allowing translators to ignore specific lines regardless of generation status.
+
+- **Automated Indentation Correction:**
+  - Enhanced `checkForLineLevelErrors` to detect indentation mismatches in generated `#+` lines.
+  - The "Fix Indentation" tool now correctly inherits indentation from the preceding block in the window context.
+
+### Bug Fixes
+- **Fixed Indexing Chaos:** Resolved a critical issue where splitting long lines caused parts of the text to be swapped or misplaced due to sequential `splice` calls.
+- **Fixed Orphaned Blocks:** Eliminated unnecessary errors and blocks when name tags were followed by identical dialogue lines.
+- **Fixed Ignore Marker Detection:** Resolved issue where `##` was ignored if prefixed by `#+`.
 
 ---
 
