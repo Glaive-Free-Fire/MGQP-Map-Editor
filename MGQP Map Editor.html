@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8">
-  <title>MGQP Map Editor v1.4.81</title>
+  <title>MGQP Map Editor v1.4.90</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="Java scripts/main_script.js"></script>
   <script src="Java scripts/restore-mode.js"></script>
@@ -138,6 +138,18 @@
         padding: 6px 10px;
       }
     }
+
+    .file-type-indicator {
+      display: inline-block;
+      margin-left: 15px;
+      padding: 4px 12px;
+      border-radius: 20px;
+      color: white;
+      font-size: 0.6em;
+      vertical-align: middle;
+      font-weight: normal;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    }
   </style>
 </head>
 
@@ -185,8 +197,8 @@
       </div>
     </div>
   </div>
+  <h1>MGQP Map Editor<span id="fileTypeIndicator" class="file-type-indicator" style="display:none"></span></h1>
 
-  <h1>MGQP Map Editor</h1>
 
   <div class="file-inputs">
     <div>
@@ -410,6 +422,7 @@
                 type: 'Ошибка компоновки',
                 reason: `Часть слишком длинного диалога (${lineCount} строк). Требуется вставка ShowTextAttributes.`
               });
+              window.allErrorIndices.add(errorIndex); // << ISPFRAVLENIE: Dobavlyaem v spisok dlya podsvetki
             });
           }
         });
@@ -914,7 +927,6 @@
     window.extractTexts = function () {
       // --- Сначала парсим Display Name ---
       mapDisplayName = '';
-      // Используем window.originalLines если доступен, иначе локальный originalLines
       const linesToUse = window.originalLines || originalLines;
       for (let i = 0; i < linesToUse.length; i++) {
         const match = linesToUse[i].match(/^\s*Display Name\s*=\s*"(.*)"/);
@@ -929,7 +941,6 @@
       const textCmdRegex = /^\s*ShowText\(\["([\s\S]*?)"\]\)(.*)/;
       const showChoicesRegex = /^\s*ShowChoices\(\[\[(.*)\],\s*(\d+)\]\)/;
       const whenRegex = /^\s*When\(\[(\d+),\s*"(.*)"\]\)/;
-      // Изменено: нежадный захват содержимого и хвоста (#+)
       const otherRegex = /^\s*(\w+)\(\[([\s\S]*?)\]\)(.*)/;
       const nameValueRegex = /^\s*(\w+)\s*=\s*"(.*)"$/;
 
@@ -944,7 +955,7 @@
         if ((match = line.match(textCmdRegex))) {
           const textContent = match[1];
           const trailingContent = match[2] || '';
-          const hasIgnoreMarker = trailingContent.trim().startsWith('##');
+          const hasIgnoreMarker = /##/.test(trailingContent);
           tempBlocks.push({ text: textContent, type: 'ShowText', originalIdx: idx, line: line, commonEventId: currentEventId, hasIgnoreMarker: hasIgnoreMarker, trailingContent: trailingContent });
         } else if ((match = line.match(showChoicesRegex))) {
           let choicesText = match[1];
@@ -970,41 +981,49 @@
       });
 
       window.textBlocks = textBlocks = [];
-
       const affinityRegex = /^【(.+?)】（好感度：(.*)）$/;
 
       for (let i = 0; i < tempBlocks.length; i++) {
         const currentBlock = tempBlocks[i];
         const rawText = currentBlock.text.replace(/^"(.*)"$/, '$1');
         const hasPlus = /#\+/.test(currentBlock.trailingContent || '');
-        let affinityMatch = rawText.match(affinityRegex);
+        const isName = window.isNameBlock(rawText) || rawText.includes('<\\C[6]') || rawText.includes('<∾∾C[6]');
 
         if (currentBlock.type === 'ShowTextAttributes') {
           textBlocks.push({ text: currentBlock.text, type: 'ShowTextAttributes', originalIdx: currentBlock.originalIdx, idx: currentBlock.originalIdx, line: currentBlock.line, generated: hasPlus, manualPlus: hasPlus && currentBlock.originalIdx !== undefined, commonEventId: currentBlock.commonEventId });
           continue;
         }
 
+        let affinityMatch = rawText.match(affinityRegex);
         if (currentBlock.type === 'ShowText' && affinityMatch) {
           const name = affinityMatch[1];
           const variable = affinityMatch[2].replace(/\\/g, '∾∾');
           const newText = `∾\n<∾∾C[6]${name}∾∾C[0]>(Уровень симпатии: ${variable})`;
           textBlocks.push({ idx: currentBlock.originalIdx, text: newText, type: 'ShowText', generated: hasPlus, manualPlus: hasPlus && currentBlock.originalIdx !== undefined, commonEventId: currentBlock.commonEventId, hasIgnoreMarker: currentBlock.hasIgnoreMarker });
-        } else if (currentBlock.type === 'ShowText' && window.isNameBlock(rawText)) {
+        } else if (currentBlock.type === 'ShowText' && isName) {
           let combinedText = currentBlock.text;
-
           const specialTemplateRegex = /^\n<\\C\[\d+\].*\\C\[0\]>\((Уровень симпатии:|Найдено мастеров:|Привязанность:).*?\)$/;
+
           if (specialTemplateRegex.test(rawText) && i + 1 < tempBlocks.length && tempBlocks[i + 1].type === 'ShowText') {
             combinedText += '\n' + tempBlocks[i + 1].text;
             i++;
           }
-          else if (
-            i + 1 < tempBlocks.length &&
-            tempBlocks[i + 1].type === 'ShowText' &&
-            !window.isNameBlock(tempBlocks[i + 1].text.replace(/^"(.*)"$/, '$1'))
-          ) {
-            combinedText += '\n' + tempBlocks[i + 1].text;
-            i++;
+          else if (i + 1 < tempBlocks.length && tempBlocks[i + 1].type === 'ShowText') {
+            const nextBlock = tempBlocks[i + 1];
+            const nextRaw = nextBlock.text.replace(/^"(.*)"$/, '$1').replace(/\\n/g, '\n').trim();
+            const dialoguePart = rawText.split('>').slice(1).join('>').replace(/\\n/g, '\n').trim();
+
+            if (dialoguePart === nextRaw && nextRaw !== "") {
+              // Это дубликат. Пропускаем следующую строку.
+              console.log("Auto-skipped duplicate line at original index:", nextBlock.originalIdx);
+              i++;
+            } else if (!window.isNameBlock(nextRaw) && !nextRaw.includes('<\\C[6]')) {
+              // Это продолжение диалога (не имя). Объединяем.
+              combinedText += '\n' + nextBlock.text;
+              i++;
+            }
           }
+
           const finalText = combinedText
             .replace(/^"(.*)"$/, '$1')
             .replace(/\\n/g, '\n')
@@ -1026,7 +1045,7 @@
         }
       }
 
-      resetJapaneseBlockMapping();
+      if (typeof resetJapaneseBlockMapping === 'function') resetJapaneseBlockMapping();
       renderTextBlocks();
     }
 
@@ -1479,9 +1498,9 @@
         if (block.isDeleted) return; // Пропускаем удаленные блоки
 
         // <<< НАЧАЛО ИЗМЕНЕНИЯ: Пропускаем рендеринг пустых ShowText >>>
-        if (block.type === 'ShowText' && block.text.trim() === '') {
-          return;
-        }
+        // if (block.type === 'ShowText' && block.text.trim() === '') {
+        //   return;
+        // }
         // <<< КОНЕЦ ИЗМЕНЕНИЯ >>>
 
 
@@ -2245,118 +2264,63 @@
     };
     document.getElementById('wrapModeBtn').title = 'Переносятся только слова, не вмещающиеся в лимит';
 
-    // Новая единая функция для разделения строк с правильной логикой
+    // Новая функция для разделения строк с исправленным порядком
+    // Чистая функция: ТОЛЬКО разделяет строку на две части
     function splitDialogueBlock(blockIndex, textBlocks) {
       const block = textBlocks[blockIndex];
+      // Проверяем валидность блока
       if (!block || block.type !== 'ShowText' || !block.text) return false;
 
       const info = window.getGameTextInfo(block.text);
       const visibleText = info.rawGameText;
 
-      if (visibleText.length <= 50) return false; // Нечего разделять
+      // Если строка короткая (<= 50 символов), разделять нечего
+      if (visibleText.length <= 50) return false;
 
-      pushUndo(); // Сохраняем состояние для отмены
+      // Сохраняем состояние для отмены (Undo)
+      if (typeof pushUndo === 'function') pushUndo();
 
       let namePart = info.fullPrefix;
       let textPart = info.rawGameText;
-      let acc = '';
-      let rest = '';
 
-      // Логика разделения текста (остаточный режим)
+      // Логика разделения слов
       const words = textPart.split(' ');
       let firstLineWords = [];
       for (const word of words) {
         firstLineWords.push(word);
-        if (firstLineWords.join(' ').replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/g, '').replace(/∾/g, '').length > 50) {
-          firstLineWords.pop();
+        // Проверяем длину без тегов управления цветом
+        const currentLen = firstLineWords.join(' ')
+          .replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/g, '')
+          .replace(/∾/g, '')
+          .length;
+
+        if (currentLen > 50) {
+          firstLineWords.pop(); // Убираем последнее слово
           break;
         }
       }
-      acc = firstLineWords.join(' ');
-      rest = words.slice(firstLineWords.length).join(' ');
 
-      // Обновляем текущий блок
+      const acc = firstLineWords.join(' ');
+      const rest = words.slice(firstLineWords.length).join(' ');
+
+      // Если хвост пустой, выходим
+      if (rest.trim() === '') return false;
+
+      // 1. Обрезаем текущий блок
       textBlocks[blockIndex].text = namePart + acc.trimEnd();
 
-      if (rest.trim() === '') return true; // Разделили, но новой строки не будет
+      // 2. Вставляем ТОЛЬКО хвост текста (без всяких атрибутов)
+      const newBlock = {
+        text: rest.trimStart(),
+        type: 'ShowText',
+        idx: undefined, // idx нет, так как блок новый
+        generated: true,
+        manualPlus: true
+      };
 
-      // Теперь самая важная часть: определяем, нужно ли вставлять ShowTextAttributes
-      // 1. Ищем якорь окна: последний ShowTextAttributes без #+
-      let anchorStaIndex = -1;
-      for (let j = blockIndex - 1; j >= 0; j--) {
-        const prev = textBlocks[j];
-        if (!prev || prev.isDeleted) continue;
-        if (prev.type === 'ShowTextAttributes' && !prev.manualPlus && !prev.generated) {
-          anchorStaIndex = j;
-          break;
-        }
-        if (prev.type !== 'ShowText' && prev.type !== 'ShowTextAttributes') {
-          break;
-        }
-      }
+      textBlocks.splice(blockIndex + 1, 0, newBlock);
 
-      // 2. Находим фактическое начало окна (первая ShowText после якоря)
-      let windowStartIndex = blockIndex;
-      if (anchorStaIndex !== -1) {
-        windowStartIndex = anchorStaIndex + 1;
-        while (windowStartIndex < textBlocks.length && textBlocks[windowStartIndex].isDeleted) {
-          windowStartIndex++;
-        }
-        if (windowStartIndex >= textBlocks.length || textBlocks[windowStartIndex].type !== 'ShowText') {
-          windowStartIndex = blockIndex; // fallback
-        }
-      }
-
-      // 3. Считаем количество ShowText в текущем окне до следующего якоря/имени
-      let linesInWindow = 0;
-      let counterIndex = windowStartIndex;
-      while (counterIndex < textBlocks.length) {
-        const current = textBlocks[counterIndex];
-        if (current.isDeleted) {
-          counterIndex++;
-          continue;
-        }
-
-        if (current.type === 'ShowText') {
-          if (counterIndex > windowStartIndex && current.idx !== undefined && window.isNameBlock(current.text)) {
-            break; // начался новый диалог
-          }
-          linesInWindow++;
-          counterIndex++;
-          continue;
-        }
-
-        if (current.type === 'ShowTextAttributes') {
-          if (!current.manualPlus && !current.generated) {
-            break; // следующее окно
-          }
-          counterIndex++;
-          continue;
-        }
-
-        break;
-      }
-
-      const futureLines = linesInWindow + 1; // Добавим новую строку после разделения
-
-      // Если после разделения в окне будет >4 строк, перед новой строкой нужен ShowTextAttributes
-      if (futureLines > 4) {
-        let attrText = '"",0,0,2'; // Атрибуты по умолчанию
-        // Ищем предыдущие атрибуты, чтобы их скопировать
-        for (let j = blockIndex; j >= 0; j--) {
-          if (textBlocks[j].type === 'ShowTextAttributes') {
-            attrText = textBlocks[j].text;
-            break;
-          }
-        }
-        textBlocks.splice(blockIndex + 1, 0, { type: 'ShowTextAttributes', text: attrText, idx: undefined, generated: true, manualPlus: true });
-        textBlocks.splice(blockIndex + 2, 0, { text: rest.trimStart(), type: 'ShowText', idx: undefined, generated: true, manualPlus: true });
-      } else {
-        // В противном случае просто вставляем новую строку
-        textBlocks.splice(blockIndex + 1, 0, { text: rest.trimStart(), type: 'ShowText', idx: undefined, generated: true, manualPlus: true });
-      }
-
-      return true; // Возвращаем true, если было произведено разделение
+      return true;
     }
 
     // === НОВАЯ ФУНКЦИЯ ДЛЯ ИСПРАВЛЕНИЯ ДЛИННЫХ ДИАЛОГОВ (v7.4) ===
@@ -2537,26 +2501,50 @@
     document.getElementById('splitAllBtn').onclick = function () {
       let hasSplitted = false;
 
-      // Итерируем по массиву С КОНЦА В НАЧАЛО.
-      // Это безопасно, так как `splice` не будет влиять на индексы еще не проверенных элементов.
+      // 1. Проходим и просто делим строки (без вставок атрибутов)
       for (let i = textBlocks.length - 1; i >= 0; i--) {
-        // Вызываем функцию разделения для каждого блока.
         if (splitDialogueBlock(i, textBlocks)) {
           hasSplitted = true;
-          // 'break' и внешний цикл 'while' больше не нужны. Просто продолжаем цикл.
         }
       }
 
       if (hasSplitted) {
-        // --- НАЧАЛО ИСПРАВЛЕНИЯ ---
-        // Сначала полностью пересчитываем ВСЕ ошибки (включая длину строк).
+        // === МАГИЯ "ГОРЯЧЕЙ ПЕРЕЗАГРУЗКИ" ===
+
+        // А. Генерируем полный текст файла из текущих блоков (как при сохранении)
+        const currentFileLines = window.generateFinalFileLines();
+
+        // Б. Обновляем глобальные переменные строк (как при загрузке)
+        window.fullRusLines = currentFileLines;
+        window.originalLines = currentFileLines;
+
+        // В. Заново парсим текст. Это выстроит правильную последовательность блоков.
+        window.extractTexts();
+
+        // Если загружен японский файл, нужно обновить связи
+        if (window.fullJapLines && window.fullJapLines.length > 0) {
+          extractJapaneseTexts(window.fullJapLines);
+        }
+
+        // Г. Теперь, когда структура чистая и идеальная, запускаем "Исправить ShowTextAttributes"
+        // Она сработает точно так же, как если бы вы нажали кнопку вручную после перезагрузки.
+        if (typeof window.fixLongDialogues === 'function') {
+          window.fixLongDialogues(true); // true = тихий режим (без лишних алертов)
+        }
+
+        // Д. Шаг 2: Исправляем теги имен (добавляем \n<\C[6]...> в оторванные хвосты)
+        // - используем функцию autoFixNameTagErrors
+        if (typeof window.autoFixNameTagErrors === 'function') {
+          window.autoFixNameTagErrors(true); // true = тихий режим
+        }
+
+        // Е. Обновляем интерфейс
         if (typeof window.updateMatchLamp === 'function') {
           window.updateMatchLamp();
         }
-        // --- КОНЕЦ ИСПРАВЛЕНИЯ ---
-
-        // И только потом перерисовываем редактор.
         renderTextBlocks();
+
+        alert('Строки разделены, структура исправлена, теги имен добавлены!');
       } else {
         alert('Нет строк для разделения (все строки короче 50 символов).');
       }
