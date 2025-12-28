@@ -1,13 +1,13 @@
 // main_script.js
 // --- Подсчёт игровых символов ---
-window.getGameTextInfo = function(txt) {
+window.getGameTextInfo = function (txt) {
   const result = {
     rawGameText: txt,
     fullPrefix: '',
     continuationPrefix: '',
     isCorrupted: false
   };
-  
+
   // Проверка на поврежденный тег
   const hasTagHint = /<∾∾C/.test(txt);
   const validNameTagRegex = /<∾∾C\[\d+\](?:.*?)∾∾C\[0\]>/;
@@ -18,12 +18,12 @@ window.getGameTextInfo = function(txt) {
 
   // Новое, улучшенное регулярное выражение
   const fullMatch = txt.match(/^(∾\n)?(<∾∾C\[\d+\].*?∾∾C\[0\]>)?(.*)$/s);
-  
+
   if (fullMatch) {
     const newlinePrefix = fullMatch[1] || '';
     const nameTag = fullMatch[2] || '';
     const dialogue = fullMatch[3] || '';
-    
+
     result.fullPrefix = newlinePrefix + nameTag;
     result.continuationPrefix = nameTag; // Для продолжений диалога без ∾\n
     result.rawGameText = dialogue;
@@ -37,7 +37,7 @@ window.getGameTextInfo = function(txt) {
 
 // --- Подсчёт символов и управление кнопками ---
 // --- НОВАЯ ЦЕНТРАЛИЗОВАННАЯ ФУНКЦИЯ ПОДСЧЁТА СИМВОЛОВ ---
-window.getVisibleTextMetrics = function(text) {
+window.getVisibleTextMetrics = function (text) {
   const info = window.getGameTextInfo(text);
   const visibleText = info.rawGameText
     .replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[0\]>/g, '')
@@ -49,7 +49,7 @@ window.getVisibleTextMetrics = function(text) {
 };
 
 // --- Подсчёт символов и управление кнопками ---
-window.updateAllForBlock = function(block, textarea, plusBtn, minusBtn, counter, textBlocks) {
+window.updateAllForBlock = function (block, textarea, plusBtn, minusBtn, counter, textBlocks) {
   const text = textarea.value;
   if (block.type === 'ShowText' || block.type === undefined) {
     const info = window.getGameTextInfo(text);
@@ -100,7 +100,7 @@ window.updateAllForBlock = function(block, textarea, plusBtn, minusBtn, counter,
 // --- Навигация по красным строкам ---
 window.redIndices = [];
 window.redPointer = -1;
-window.updateRedIndices = function() {
+window.updateRedIndices = function () {
   window.redIndices = window.textBlocks
     .map((_, i) => i)
     .filter(i => {
@@ -114,18 +114,18 @@ window.updateRedIndices = function() {
   if (prev) prev.disabled = disabled;
   if (next) next.disabled = disabled;
 };
-window.moveToNextRed = function() {
+window.moveToNextRed = function () {
   window.updateRedIndices();
   if (window.redIndices.length === 0) return;
   window.redPointer = (window.redPointer + 1) % window.redIndices.length;
   const idx = window.redIndices[window.redPointer];
   const ta = document.querySelector(`textarea[data-block='${idx}']`);
   if (ta) {
-    ta.scrollIntoView({behavior:'smooth', block:'center'});
+    ta.scrollIntoView({ behavior: 'smooth', block: 'center' });
     ta.focus();
   }
 };
-window.moveToPrevRed = function() {
+window.moveToPrevRed = function () {
   window.updateRedIndices();
   if (window.redIndices.length === 0) return;
   if (window.redPointer < 0) window.redPointer = 0;
@@ -133,12 +133,12 @@ window.moveToPrevRed = function() {
   const idx = window.redIndices[window.redPointer];
   const ta = document.querySelector(`textarea[data-block='${idx}']`);
   if (ta) {
-    ta.scrollIntoView({behavior:'smooth', block:'center'});
+    ta.scrollIntoView({ behavior: 'smooth', block: 'center' });
     ta.focus();
   }
 };
 // --- Привязка обработчиков к стрелкам ---
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function () {
   const nextBtn = document.getElementById('nextRedBtn');
   const prevBtn = document.getElementById('prevRedBtn');
   if (nextBtn) nextBtn.onclick = window.moveToNextRed;
@@ -152,7 +152,7 @@ document.addEventListener('DOMContentLoaded', function() {
  * @param {string[]} ruLines - Массив строк русского файла.
  * @returns {object[]} - Массив объектов с описанием ошибок.
  */
-window.checkForLineLevelErrors = function(ruLines) {
+window.checkForLineLevelErrors = function (ruLines) {
   const errors = [];
   if (!ruLines || ruLines.length === 0) {
     return errors;
@@ -170,12 +170,12 @@ window.checkForLineLevelErrors = function(ruLines) {
 
   ruLines.forEach((line, idx) => {
     if (/^\s*Display Name\s*=/.test(line)) return;
-    
+
     let match;
     if ((match = line.match(textCmdRegex))) {
       const textContent = match[1];
       const trailingContent = match[2] || '';
-      const hasIgnoreMarker = trailingContent.trim().startsWith('##');
+      const hasIgnoreMarker = /##/.test(trailingContent);
       tempBlocks.push({ text: textContent, type: 'ShowText', originalIdx: idx, line: line, hasIgnoreMarker: hasIgnoreMarker, trailingContent: trailingContent });
     } else if ((match = line.match(showChoicesRegex))) {
       let choicesText = match[1];
@@ -189,13 +189,13 @@ window.checkForLineLevelErrors = function(ruLines) {
       const trailingContent = match[3] || '';
       const translatableCommands = ['Script', 'ScriptMore', 'Label', 'JumpToLabel', 'Name', 'ShowTextAttributes'];
       if (translatableCommands.includes(commandType)) {
-         tempBlocks.push({ text: commandText, type: commandType, originalIdx: idx, line: line, trailingContent: trailingContent });
+        tempBlocks.push({ text: commandText, type: commandType, originalIdx: idx, line: line, trailingContent: trailingContent });
       }
     } else if ((match = line.match(nameValueRegex))) {
       const commandType = match[1];
       const commandText = match[2];
-      if (commandType === 'Name'){
-          tempBlocks.push({ text: commandText, type: commandType, originalIdx: idx, line: line });
+      if (commandType === 'Name') {
+        tempBlocks.push({ text: commandText, type: commandType, originalIdx: idx, line: line });
       }
     }
   });
@@ -241,176 +241,176 @@ window.checkForLineLevelErrors = function(ruLines) {
 
     // --- Check for long dialogues ---
     if (block.type === 'ShowText' && !checkedIndices_long.has(i)) {
-        let lineCount = 0;
-        let blockIndices = [];
-        let counterIndex = i;
-        while (counterIndex < textBlocks.length) {
-            const currentDialogueBlock = textBlocks[counterIndex];
-            if (counterIndex > i) {
-                const prevBlock = textBlocks[counterIndex - 1];
-                if ( currentDialogueBlock.type !== 'ShowText' || window.isNameBlock(currentDialogueBlock.text) || (currentDialogueBlock.idx !== undefined && prevBlock.idx !== undefined && (currentDialogueBlock.idx - prevBlock.idx > 1))) {
-                    break;
-                }
-            }
-            lineCount++;
-            blockIndices.push(counterIndex);
-            checkedIndices_long.add(counterIndex);
-            counterIndex++;
+      let lineCount = 0;
+      let blockIndices = [];
+      let counterIndex = i;
+      while (counterIndex < textBlocks.length) {
+        const currentDialogueBlock = textBlocks[counterIndex];
+        if (counterIndex > i) {
+          const prevBlock = textBlocks[counterIndex - 1];
+          if (currentDialogueBlock.type !== 'ShowText' || window.isNameBlock(currentDialogueBlock.text) || (currentDialogueBlock.idx !== undefined && prevBlock.idx !== undefined && (currentDialogueBlock.idx - prevBlock.idx > 1))) {
+            break;
+          }
         }
-        if (lineCount >= 5) {
-            blockIndices.forEach(errorIndex => {
-                const errorBlock = textBlocks[errorIndex];
-                errors.push({
-                    label: `строка ${errorBlock.idx + 1}`,
-                    type: 'Ошибка компоновки',
-                    reason: `Часть слишком длинного диалога (${lineCount} строк). Требуется вставка ShowTextAttributes.`
-                });
-            });
-        }
+        lineCount++;
+        blockIndices.push(counterIndex);
+        checkedIndices_long.add(counterIndex);
+        counterIndex++;
+      }
+      if (lineCount >= 5) {
+        blockIndices.forEach(errorIndex => {
+          const errorBlock = textBlocks[errorIndex];
+          errors.push({
+            label: `строка ${errorBlock.idx + 1}`,
+            type: 'Ошибка компоновки',
+            reason: `Часть слишком длинного диалога (${lineCount} строк). Требуется вставка ShowTextAttributes.`
+          });
+        });
+      }
     }
 
     // --- Проверка на Ошибку 1: Тег есть, префикса ∾\n нет ---
     if (block.type === 'ShowText') {
-        const text = block.text;
-        const hasNameTag = /<∾∾C\[6\].*?∾∾C\[0\]>/.test(text);
-        if (hasNameTag) {
-            // Запоминаем последний тег на случай Ошибки 2
-            const nameMatch = text.match(/(<∾∾C\[6\].*?∾∾C\[0\]>)/);
-            if (nameMatch) lastKnownNameTag = nameMatch[1];
-            
-            // Проверяем префикс
-            const isMissingPrefix = !/^∾\n/.test(text);
-            if (isMissingPrefix) {
-                errors.push({
-                    label: `строка ${block.idx + 1}`,
-                    type: 'Ошибка тега имени',
-                    reason: 'Тег имени должен начинаться с префикса `\\n` (в редакторе `∾` и перенос строки).'
-                });
-            }
+      const text = block.text;
+      const hasNameTag = /<∾∾C\[6\].*?∾∾C\[0\]>/.test(text);
+      if (hasNameTag) {
+        // Запоминаем последний тег на случай Ошибки 2
+        const nameMatch = text.match(/(<∾∾C\[6\].*?∾∾C\[0\]>)/);
+        if (nameMatch) lastKnownNameTag = nameMatch[1];
+
+        // Проверяем префикс
+        const isMissingPrefix = !/^∾\n/.test(text);
+        if (isMissingPrefix) {
+          errors.push({
+            label: `строка ${block.idx + 1}`,
+            type: 'Ошибка тега имени',
+            reason: 'Тег имени должен начинаться с префикса `\\n` (в редакторе `∾` и перенос строки).'
+          });
         }
+      }
     }
 
     // --- Проверка на Ошибку 2 (Добавить тег) и Ошибку 3 (Удалить STA) ---
     if (block.type === 'ShowTextAttributes' && block.manualPlus) {
-        
-        let nextRelevantBlock = null;
-        let nextRelevantBlockIndex = -1;
-        for (let j = i + 1; j < textBlocks.length; j++) {
-            // (Парсер в main_script.js не имеет 'isDeleted', поэтому мы проверяем все блоки)
-            if (textBlocks[j].type === 'ShowText') { nextRelevantBlock = textBlocks[j]; nextRelevantBlockIndex = j; break; }
-            if (textBlocks[j].type !== 'ShowText' && textBlocks[j].type !== 'ShowTextAttributes') { break; }
-        }
-        
-        if (!nextRelevantBlock || window.isNameBlock(nextRelevantBlock.text)) {
-          // STA стоит перед именем или в конце, ошибки нет
-          return; 
-        }
 
-        // --- Ищем предыдущий блок (аналог getPreviousVisibleBlock) ---
-        let prevBlock = null;
-        let k = i - 1;
-        while (k >= 0) {
-            // (Пропускаем 'isDeleted' т.к. его здесь нет)
-            prevBlock = textBlocks[k];
-            if (prevBlock) break; // Нашли первый предыдущий блок
-            k--;
-        }
+      let nextRelevantBlock = null;
+      let nextRelevantBlockIndex = -1;
+      for (let j = i + 1; j < textBlocks.length; j++) {
+        // (Парсер в main_script.js не имеет 'isDeleted', поэтому мы проверяем все блоки)
+        if (textBlocks[j].type === 'ShowText') { nextRelevantBlock = textBlocks[j]; nextRelevantBlockIndex = j; break; }
+        if (textBlocks[j].type !== 'ShowText' && textBlocks[j].type !== 'ShowTextAttributes') { break; }
+      }
 
-        if (prevBlock && prevBlock.type === 'ShowText') {
-            // --- Проверка на Ошибку 3 (Мусорный STA) ---
-            if (prevBlock.manualPlus && nextRelevantBlock.manualPlus) {
-                if (!block.generated) {
-                    errors.push({
-                        label: `строка ${block.idx + 1}`,
-                        type: 'Ошибка компоновки',
-                        reason: 'Этот ShowTextAttributes (#+) находится между двумя строками-продолжениями (#+) и будет удален.'
-                    });
-                }
-            }
+      if (!nextRelevantBlock || window.isNameBlock(nextRelevantBlock.text)) {
+        // STA стоит перед именем или в конце, ошибки нет
+        return;
+      }
 
-            // --- Проверка на Ошибку 1 (Фаза 1 Очистки) ---
-            if (window.isNameBlock(prevBlock.text)) {
-                errors.push({
-                    label: `строка ${block.idx + 1}`,
-                    type: 'Ошибка компоновки',
-                    reason: 'Этот ShowTextAttributes (#+) находится сразу после строки с именем и будет удален.'
-                });
-            }
-        }
+      // --- Ищем предыдущий блок (аналог getPreviousVisibleBlock) ---
+      let prevBlock = null;
+      let k = i - 1;
+      while (k >= 0) {
+        // (Пропускаем 'isDeleted' т.к. его здесь нет)
+        prevBlock = textBlocks[k];
+        if (prevBlock) break; // Нашли первый предыдущий блок
+        k--;
+      }
 
-        // --- Проверка на Ошибку 2 (Нет тега) v17 ---
-        
-        // <<< ИЗМЕНЕНИЕ: УДАЛЕНО "УМНОЕ" ИСКЛЮЧЕНИЕ >>>
-        // **ПОЯСНЕНИЕ ДЛЯ РАЗРАБОТЧИКОВ:**
-        // Причина: Любой STA#+ (вручную или сгенерированный),
-        // который обновляет окно диалога (например, с портретом персонажа),
-        // ДОЛЖЕН сопровождаться ShowText с тегом имени, если это диалог.
-        // Старая логика ошибочно пропускала эту проверку.
-        
-        // --- Теперь эта проверка выполняется ДЛЯ ВСЕХ STA#+ ---
-        
-        // --- Проверка на Ошибку 2 (v25 - Жесткое правило якоря STA) ---
-        let isNarrationBlock = true; // По умолчанию считаем, что это повествование
-
-        // 1. Ищем "якорь" - последний STA (без #+) строго перед текущим STA#+
-        let anchorStaIndex = -1;
-        k = i - 1;
-        while (k >= 0) {
-            const prev = textBlocks[k];
-
-            if (prev.type === 'ShowTextAttributes') {
-                if (!prev.manualPlus && !prev.generated) {
-                    anchorStaIndex = k;
-                    break;
-                }
-                k--;
-                continue;
-            }
-            if (prev.type === 'ShowText') {
-                k--;
-                continue;
-            }
-            break;
-        }
-        
-        // 2. Ищем "родителя" - первый ShowText (без #+) ПОСЛЕ найденного якоря
-        let parentBlock = null;
-        if (anchorStaIndex !== -1) {
-            k = anchorStaIndex + 1;
-            
-            while (k < i) {
-                const block = textBlocks[k];
-
-                if (block.type === 'ShowText' && !block.manualPlus && !block.generated) {
-                    parentBlock = block;
-                    break;
-                }
-                
-                if (block.type === 'ShowTextAttributes' && block.manualPlus) {
-                     k++;
-                     continue;
-                }
-
-                break;
-            }
-        }
-        // (Если якорь не найден — повествование)
-
-        if (parentBlock) {
-            if (window.isNameBlock(parentBlock.text)) {
-                isNarrationBlock = false; // Это диалог
-            } else {
-                isNarrationBlock = true; // Это повествование
-            }
-        }
-        
-        if (!isNarrationBlock) {
+      if (prevBlock && prevBlock.type === 'ShowText') {
+        // --- Проверка на Ошибку 3 (Мусорный STA) ---
+        if (prevBlock.manualPlus && nextRelevantBlock.manualPlus) {
+          if (!block.generated) {
             errors.push({
-                label: `строка ${nextRelevantBlock.idx + 1}`,
-                type: 'Ошибка компоновки',
-                reason: 'Эта строка должна содержать тег имени (\\n<\\C[6]Имя\\C[0]>), так как она идет после отмеченной (#+) ShowTextAttributes.'
+              label: `строка ${block.idx + 1}`,
+              type: 'Ошибка компоновки',
+              reason: 'Этот ShowTextAttributes (#+) находится между двумя строками-продолжениями (#+) и будет удален.'
             });
+          }
         }
+
+        // --- Проверка на Ошибку 1 (Фаза 1 Очистки) ---
+        if (window.isNameBlock(prevBlock.text)) {
+          errors.push({
+            label: `строка ${block.idx + 1}`,
+            type: 'Ошибка компоновки',
+            reason: 'Этот ShowTextAttributes (#+) находится сразу после строки с именем и будет удален.'
+          });
+        }
+      }
+
+      // --- Проверка на Ошибку 2 (Нет тега) v17 ---
+
+      // <<< ИЗМЕНЕНИЕ: УДАЛЕНО "УМНОЕ" ИСКЛЮЧЕНИЕ >>>
+      // **ПОЯСНЕНИЕ ДЛЯ РАЗРАБОТЧИКОВ:**
+      // Причина: Любой STA#+ (вручную или сгенерированный),
+      // который обновляет окно диалога (например, с портретом персонажа),
+      // ДОЛЖЕН сопровождаться ShowText с тегом имени, если это диалог.
+      // Старая логика ошибочно пропускала эту проверку.
+
+      // --- Теперь эта проверка выполняется ДЛЯ ВСЕХ STA#+ ---
+
+      // --- Проверка на Ошибку 2 (v25 - Жесткое правило якоря STA) ---
+      let isNarrationBlock = true; // По умолчанию считаем, что это повествование
+
+      // 1. Ищем "якорь" - последний STA (без #+) строго перед текущим STA#+
+      let anchorStaIndex = -1;
+      k = i - 1;
+      while (k >= 0) {
+        const prev = textBlocks[k];
+
+        if (prev.type === 'ShowTextAttributes') {
+          if (!prev.manualPlus && !prev.generated) {
+            anchorStaIndex = k;
+            break;
+          }
+          k--;
+          continue;
+        }
+        if (prev.type === 'ShowText') {
+          k--;
+          continue;
+        }
+        break;
+      }
+
+      // 2. Ищем "родителя" - первый ShowText (без #+) ПОСЛЕ найденного якоря
+      let parentBlock = null;
+      if (anchorStaIndex !== -1) {
+        k = anchorStaIndex + 1;
+
+        while (k < i) {
+          const block = textBlocks[k];
+
+          if (block.type === 'ShowText' && !block.manualPlus && !block.generated) {
+            parentBlock = block;
+            break;
+          }
+
+          if (block.type === 'ShowTextAttributes' && block.manualPlus) {
+            k++;
+            continue;
+          }
+
+          break;
+        }
+      }
+      // (Если якорь не найден — повествование)
+
+      if (parentBlock) {
+        if (window.isNameBlock(parentBlock.text)) {
+          isNarrationBlock = false; // Это диалог
+        } else {
+          isNarrationBlock = true; // Это повествование
+        }
+      }
+
+      if (!isNarrationBlock) {
+        errors.push({
+          label: `строка ${nextRelevantBlock.idx + 1}`,
+          type: 'Ошибка компоновки',
+          reason: 'Эта строка должна содержать тег имени (\\n<\\C[6]Имя\\C[0]>), так как она идет после отмеченной (#+) ShowTextAttributes.'
+        });
+      }
     }
 
     // --- Other checks (length, Japanese text, etc.) ---
