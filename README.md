@@ -1,4 +1,4 @@
-# MGQP Map Editor v1.4.90
+# MGQP Map Editor v1.5.00
 
 **A modern web-based tool for editing and batch-fixing RPG Maker XP map/event files, with advanced support for translation workflows (RU/JP), structure validation, and mass error correction.**
 
@@ -163,6 +163,24 @@
 -   **Japanese Text Ignore Marker:** Use `##` at the end of ShowText lines to exclude them from Japanese text error detection.
 -   **Empty ShowText Processing:** Empty ShowText blocks are properly matched with Japanese counterparts but hidden from the editor interface.
 -   **Special Template Recognition:** Automatic detection and handling of special text patterns for improved translation workflow.
+
+---
+
+## Changelog (v1.5.00)
+
+### Indentation Synchronization
+- **New Detection Tool:** Automatically detects and flags indentation errors in `Page X` lines (must be exactly 2 spaces) and lines marked with `#+` (must match preceding line).
+- **Auto-Fix Button:** A new "Fix Indents" button automatically corrects all detected indentation errors with a single click.
+- **Save Enforcement:** Indentation for `Page X` lines is now forcibly corrected to 2 spaces whenever the file is saved or code is generated, ensuring consistent formatting.
+
+### Batch Processing Improvements
+- **Automated Fix:** The batch processing tool now includes an explicit step to detect and fix indentation errors before proceeding with other checks.
+- **Detailed Reporting:** Batch logs now clearly indicate the number of indentation errors corrected per file.
+
+### Bug Fixes
+- **UI Visibility:** Fixed an issue where the "Fix Indents" button would not appear immediately after auto-loading a Japanese file (race condition resolved).
+- **State Synchronization:** Fixed a critical bug where fixing errors caused the editor to lose track of block mapping ("orphaned lines"), by implementing a full re-sync of Russian and Japanese blocks after every fix operation.
+- **NaN Indent Error:** Resolved `NaN` values appearing in error logs by adding stricter checks in the indentation logic.
 
 ---
 
