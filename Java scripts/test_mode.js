@@ -790,6 +790,13 @@ setTimeout(function () {
       }
     });
 
+    // === ШАГ 5: ПРИНУДИТЕЛЬНОЕ ИСПРАВЛЕНИЕ ОТСТУПОВ PAGE ===
+    for (let i = 0; i < exportLines.length; i++) {
+      if (/^\s*Page\s+\d+/.test(exportLines[i])) {
+        exportLines[i] = exportLines[i].replace(/^\s*(Page\s+\d+)/, '  $1');
+      }
+    }
+
     return exportLines;
   };
 
@@ -851,8 +858,6 @@ setInterval(function () {
 
 // 1. Создаем функцию для добавления кнопок
 window.addChangeItemsButtons = function () {
-  // Только для CommonEvent файлов
-  // (Логика определения имени файла та же, что и для индикатора)
   let fileName = window.loadedFileName;
   if (!fileName) {
     const input = document.getElementById('fileInput');
@@ -861,108 +866,106 @@ window.addChangeItemsButtons = function () {
     }
   }
 
-  if (!fileName || !/CommonEvent\d+/i.test(fileName)) {
+  if (!fileName || !/(CommonEvent|Map)\d+/i.test(fileName)) {
     return;
   }
 
   const lines = window.originalLines || [];
   if (lines.length === 0) return;
 
-  // Итерируемся по блокам
   window.textBlocks.forEach((block, index) => {
     if (block.type !== 'ShowText' || !block.dom || !block.dom.rusInput) return;
-    if (block.idx === undefined) return; // Только для оригинальных блоков
+    if (block.idx === undefined) return;
 
-    // --- ЛОГИКА ПОИСКА ChangeItems С ПРИОРИТЕТАМИ ---
-
-    // 1. Хелпер для определения, похожа ли строка на "получение предмета"
     const isItemGetPattern = (text) => {
-      return /ii\[|を手に入れた|Obtained|Got|Найдено|Получено/.test(text);
+      // Ищем шаблоны i[iaw][...] или японские ключевые слова получения предмета
+      return /i[iaw]\[|手に入れた|入手|獲得|拾った|授かった|Obtained|Got|Найдено|Получено/i.test(text);
     };
 
     const currentIsPattern = isItemGetPattern(block.text);
 
-    // 2. Ищем ChangeItems сверху
-    const searchDepth = 20;
+    // --- Улучшенная логика поиска ---
+    const searchDepth = 15; // Немного уменьшили глубину
     let itemId = null;
-    let interveningShowTexts = 0; // Считаем, сколько ShowText мы пропустили
+    let itemAmount = '1';
+    let itemType = 'ii'; // По умолчанию предмет (Item)
+    let interveningShowTexts = 0;
 
     for (let i = block.idx - 1; i >= Math.max(0, block.idx - searchDepth); i--) {
-      const line = lines[i];
+      const line = lines[i].trim();
 
-      // Если встретили другой ShowText
-      if (/^\s*ShowText\(/.test(line)) {
+      // Если встретили конец ветвления, начало другого условия или технические прерывания - ПРЕКРАЩАЕМ
+      // Это предотвратит "просачивание" кнопок в не связанный диалог
+      if (/^(BranchEnd|Else|ConditionalBranch|TransferPlayer|CallCommonEvent|Script|ExitEventProcessing|Label|JumpToLabel)/.test(line)) {
+        break;
+      }
+
+      if (/^ShowText\(/.test(line)) {
         interveningShowTexts++;
-        // Если мы пропустили уже много текста (например > 2), то ChangeItems слишком далеко
         if (interveningShowTexts > 2) break;
-        // Если текущий блок НЕ похож на паттерн, а мы уже встретили другой текст - скорее всего ChangeItems относится к тому, верхнему тексту
-        // НО! Мы продолжаем поиск, чтобы оценить ситуацию в целом.
-        // Реальный стоп - это itemId.
       }
 
-      const match = line.match(/ChangeItems\(\[\s*(\d+),/);
-      if (match) {
-        itemId = match[1];
-        break; // Нашли
+      // Парсинг ChangeItems, ChangeWeapons, ChangeArmor
+      const matchFull = line.match(/(ChangeItems|ChangeWeapons|ChangeArmor)\(\[\s*(\d+),\s*\d+,\s*(\d+),\s*(\d+).*?\]\)/);
+      const matchSimple = line.match(/(ChangeItems|ChangeWeapons|ChangeArmor)\(\[\s*(\d+),/);
+
+      if (matchFull) {
+        const command = matchFull[1];
+        itemId = matchFull[2];
+        const typeOp = matchFull[3];
+        const amount = matchFull[4];
+        itemAmount = (typeOp === '1') ? `∾∾V[${amount}]` : amount;
+
+        if (command === 'ChangeWeapons') itemType = 'iw';
+        else if (command === 'ChangeArmor') itemType = 'ia';
+        else itemType = 'ii';
+
+        break;
+      } else if (matchSimple) {
+        const command = matchSimple[1];
+        itemId = matchSimple[2];
+        itemAmount = '1';
+
+        if (command === 'ChangeWeapons') itemType = 'iw';
+        else if (command === 'ChangeArmor') itemType = 'ia';
+        else itemType = 'ii';
+
+        break;
       }
     }
 
-    if (!itemId) return; // Не нашли ChangeItems рядом
+    if (!itemId) return;
 
-    // 3. Принимаем решение: показывать кнопку здесь или нет?
-    let shouldShow = false;
-
+    // Решаем, показывать ли кнопку
+    // Теперь показываем ТОЛЬКО если текст совпадает с паттерном получения предмета.
+    // Это исключает ложные срабатывания на обычном диалоге, который просто идет после команды.
     if (currentIsPattern) {
-      // Если текущая строка ЯВНО похожа на item get - показываем (даже если были промежуточные строки)
-      shouldShow = true;
-    } else {
-      // Если текущая строка ОБЫЧНАЯ (не паттерн)
-
-      // а) Если она ПЕРВАЯ после ChangeItems (interveningShowTexts === 0)
-      if (interveningShowTexts === 0) {
-        // Проверяем Lookahead: есть ли дальше (в пределах пары блоков) строка, которая ЛУЧШЕ подходит?
-        let betterCandidateFound = false;
-        // Смотрим следующие блоки в window.textBlocks
-        for (let j = index + 1; j < Math.min(window.textBlocks.length, index + 3); j++) {
-          const nextBlock = window.textBlocks[j];
-          if (nextBlock.type === 'ShowText' && isItemGetPattern(nextBlock.text)) {
-            betterCandidateFound = true;
-            break;
-          }
-        }
-
-        // Если лучшего кандидата нет - показываем здесь (дефолтное поведение для первой строки)
-        if (!betterCandidateFound) {
-          shouldShow = true;
-        }
-      }
-      // б) Если interveningShowTexts > 0, и мы не паттерн - точно НЕ показываем (это "дальняя" обычная строка)
-    }
-
-    if (shouldShow) {
-      // Проверяем, не была ли кнопка уже добавлена и находится ли она в DOM
       if (block.dom.changeItemsBtn && block.dom.changeItemsBtn.isConnected) return;
 
-      // Создаем кнопку
       const btn = document.createElement('button');
-      btn.textContent = 'ChangeItems';
+
+      // Настраиваем текст и стиль в зависимости от типа
+      let typeLabel = 'Item';
+      let btnBg = '#e6ccff'; // Фиолетовый для предметов
+      if (itemType === 'iw') { typeLabel = 'Weapon'; btnBg = '#ffe0cc'; }
+      else if (itemType === 'ia') { typeLabel = 'Armor'; btnBg = '#ccf2ff'; }
+
+      btn.textContent = `${typeLabel}[${itemId}] x${itemAmount}`;
       btn.className = 'control-btn';
-      btn.style.fontSize = '11px';
-      btn.style.marginLeft = '10px';
-      btn.style.padding = '2px 6px';
-      btn.style.background = '#e6ccff';
-      btn.title = `Заменить текст на получение предмета ID ${itemId}`;
+      btn.style.cssText = `font-size:11px; margin-left:10px; padding:2px 6px; background:${btnBg}; cursor:pointer;`;
+      btn.title = `Заменить на шаблон получения (${typeLabel}) ID ${itemId}`;
 
       btn.onclick = function () {
-        const newText = `∾∾ii[${itemId}] × 1 получено!`;
+        const newText = `∾∾${itemType}[${itemId}] × ${itemAmount} получено!`;
         if (block.dom.rusInput.value === newText) return;
 
         block.dom.rusInput.value = newText;
         block.text = newText;
         block.dom.rusInput.dispatchEvent(new Event('input', { bubbles: true }));
 
+        const oldLabel = btn.textContent;
         btn.textContent = 'Done!';
-        setTimeout(() => { btn.textContent = 'ChangeItems'; }, 1000);
+        setTimeout(() => { btn.textContent = oldLabel; }, 1000);
       };
 
       const blockDiv = block.dom.rusInput.closest('.block');
@@ -975,6 +978,69 @@ window.addChangeItemsButtons = function () {
       }
     }
   });
+
+  // Обновляем глобальную кнопку после добавления локальных
+  if (typeof window.updateGlobalChangeItemsBtn === 'function') {
+    window.updateGlobalChangeItemsBtn();
+  }
+};
+
+// --- ЛОГИКА ГЛОБАЛЬНОЙ КНОПКИ ChangeItems ---
+window.updateGlobalChangeItemsBtn = function () {
+  const existingGlobalBtn = document.getElementById('globalChangeItemsBtn');
+
+  // Ищем все красные блоки, у которых есть кнопка ChangeItems
+  // Используем несколько признаков "красности" для надежности
+  const redBlocksWithBtn = (window.textBlocks || []).filter((block, blIdx) => {
+    if (!block.dom || !block.dom.changeItemsBtn) return false;
+
+    // 1. Проверка на японский текст
+    const isJapanese = /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.text);
+
+    // 2. Проверка на наличие в общем списке ошибок (если он есть)
+    const hasError = window.allErrorIndices && window.allErrorIndices.has(blIdx);
+
+    // 3. Проверка на CSS класс ошибки
+    const hasRedClass = block.dom.rusInput && block.dom.rusInput.parentElement.classList.contains('error-red');
+
+    // 4. Проверка на цвет фона (через computed style)
+    let hasRedColor = false;
+    if (block.dom.rusInput) {
+      const bg = window.getComputedStyle(block.dom.rusInput).backgroundColor;
+      // rgb(255, 204, 204) - #FFCCCC, rgb(255, 214, 214) - #FFD6D6
+      if (bg.includes('255') && (bg.includes('204') || bg.includes('214'))) {
+        hasRedColor = true;
+      }
+    }
+
+    return (isJapanese || hasError || hasRedClass || hasRedColor);
+  });
+
+  if (redBlocksWithBtn.length > 0) {
+    const globalBtn = existingGlobalBtn || document.createElement('button');
+    globalBtn.id = 'globalChangeItemsBtn';
+    globalBtn.textContent = `Применить ChangeItems ко всем красным (${redBlocksWithBtn.length})`;
+    globalBtn.className = 'control-btn';
+    globalBtn.style.cssText = 'margin-left:10px; background:#9933ff; color:white; font-weight:bold; cursor:pointer; vertical-align: middle;';
+
+    globalBtn.onclick = function () {
+      redBlocksWithBtn.forEach(block => {
+        if (block.dom.changeItemsBtn && block.dom.changeItemsBtn.isConnected) {
+          block.dom.changeItemsBtn.click();
+        }
+      });
+      this.remove(); // Скрываем кнопку после нажатия
+    };
+
+    if (!existingGlobalBtn) {
+      const controls = document.querySelector('.control-panel') || document.querySelector('.controls') || document.getElementById('batchCheckBtn')?.parentElement;
+      if (controls) {
+        controls.appendChild(globalBtn);
+      }
+    }
+  } else if (existingGlobalBtn) {
+    existingGlobalBtn.remove();
+  }
 };
 
 // --- Функция для добавления кнопок "Fix Name" ---
@@ -993,8 +1059,14 @@ window.addFixNameButtons = function () {
     // Проверка, исправлена ли уже строка
     const isAlreadyFixed = /^∾\n<∾∾C\[6\].*?∾∾C\[0\]>/.test(text);
 
-    if (nameMatch) totalFixable++;
-    if (isAlreadyFixed) fixedCount++;
+    // ИСПРАВЛЕНИЕ: Считаем только блоки, которые имеют отношение к именам
+    // (либо нуждаются в исправлении, либо уже исправлены)
+    if (nameMatch || isAlreadyFixed) {
+      totalFixable++;
+      if (isAlreadyFixed) {
+        fixedCount++;
+      }
+    }
 
     if (!nameMatch && !isAlreadyFixed) return;
 
@@ -1140,7 +1212,7 @@ setTimeout(function () {
 
     if (!lines || lines.length === 0) return errors;
 
-    // 2. Добавляем проверку отступов
+    // 2. Добавляем проверку отступов для строк с #+
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
 
@@ -1171,6 +1243,30 @@ setTimeout(function () {
               isFixableIndent: true // Важный флаг для фильтрации
             });
           }
+        }
+      }
+    }
+
+    // 3. Добавляем проверку отступов для строк "Page X"
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const pageMatch = line.match(/^(\s*)Page\s+\d+/);
+
+      if (pageMatch) {
+        const indent = pageMatch[1];
+        const indentLength = indent.length;
+
+        // Page должен иметь ровно 2 пробела отступа
+        if (indentLength !== 2) {
+          errors.push({
+            label: `строка ${i + 1}`,
+            type: 'Ошибка отступа Page',
+            reason: `Неверный отступ для Page (ожидается: 2 пробела, найдено: ${indentLength})`,
+            line: i,
+            msg: `Неверный отступ для Page (ожидается: 2 пробела, найдено: ${indentLength})`,
+            expectedIndent: '  ', // Ровно 2 пробела
+            isFixableIndent: true
+          });
         }
       }
     }
@@ -1226,9 +1322,26 @@ setTimeout(function () {
 
         const fixBtn = document.getElementById('fixIndentBtn');
         if (fixBtn) {
-          fixBtn.style.display = 'inline-block';
+          fixBtn.style.setProperty('display', 'inline-block', 'important');
           fixBtn.textContent = `Исправить отступы (${indentErrors.length})`;
+
+          // Убедимся что родительский контейнер тоже видим
+          const parent = fixBtn.parentElement;
+          if (parent && parent.style.display === 'none') {
+            parent.style.display = '';
+          }
         }
+      } else {
+        // Скрываем кнопку если ошибок нет
+        const fixBtn = document.getElementById('fixIndentBtn');
+        if (fixBtn) {
+          fixBtn.style.setProperty('display', 'none', 'important');
+        }
+      }
+
+      // Обновляем глобальную кнопку ChangeItems (если есть блоки с красным фоном и локальными кнопками)
+      if (typeof window.updateGlobalChangeItemsBtn === 'function') {
+        window.updateGlobalChangeItemsBtn();
       }
     };
     console.log("window.updateMatchLamp успешно расширена (с фильтрацией NaN).");
@@ -1257,10 +1370,27 @@ setTimeout(function () {
     }
 
     if (fixedCount > 0) {
+      // === БАГ-ФИКС: Полная синхронизация состояния ===
       window.originalLines = lines;
+      window.fullRusLines = lines.slice(); // Обновляем fullRusLines!
+
+      // Пересоздаём textBlocks из обновлённых строк
       if (typeof window.extractTexts === 'function') window.extractTexts();
+
+      // === КРИТИЧНО: Восстанавливаем связи RU-JP блоков ===
+      if (window.fullJapLines && window.fullJapLines.length > 0) {
+        if (typeof window.extractJapaneseTexts === 'function') {
+          window.extractJapaneseTexts(window.fullJapLines);
+        }
+      }
+
+      // Перерисовываем редактор
       if (typeof window.renderTextBlocks === 'function') window.renderTextBlocks();
+
+      // Обновляем лампу и индексы ошибок
       if (typeof window.updateMatchLamp === 'function') window.updateMatchLamp();
+      if (typeof window.updateRedIndices === 'function') window.updateRedIndices();
+
       alert(`Исправлено ошибок отступов: ${fixedCount}.`);
     }
   };

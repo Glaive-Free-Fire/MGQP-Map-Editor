@@ -14,21 +14,21 @@ function addBatchReportLine(text, type = 'info') {
   const reportPanel = document.getElementById('batchReportPanel');
   const reportContent = document.getElementById('batchReportContent');
   if (!reportContent) return;
-  
+
   // Показываем панель при первом добавлении строки
   if (reportPanel && reportPanel.style.display === 'none') {
     reportPanel.style.display = 'block';
   }
-  
+
   const line = document.createElement('div');
-  
+
   // Для пустых строк делаем минимальную высоту, для остальных - отступ
   if (text.trim() === '') {
     line.style.height = '8px';
   } else {
     line.style.marginBottom = '4px';
   }
-  
+
   // Цвет в зависимости от типа сообщения
   if (type === 'error') {
     line.style.color = '#d00';
@@ -40,10 +40,10 @@ function addBatchReportLine(text, type = 'info') {
   } else {
     line.style.color = '#333';
   }
-  
+
   line.textContent = text;
   reportContent.appendChild(line);
-  
+
   // Автопрокрутка вниз
   reportContent.scrollTop = reportContent.scrollHeight;
 }
@@ -62,22 +62,22 @@ function renderBatchFileList() {
   const listDiv = document.getElementById('batchFileList');
   if (!listDiv) return;
   listDiv.innerHTML = '';
-  
+
   // Собираем все уникальные имена файлов из обеих папок
   const allFileNames = new Set();
   Object.keys(ruFiles).forEach(name => allFileNames.add(name));
   Object.keys(jpFiles).forEach(name => allFileNames.add(name));
-  
+
   // Сортируем и отображаем все файлы
   Array.from(allFileNames).sort().forEach(fileName => {
     const hasRU = !!ruFiles[fileName];
     const hasJP = !!jpFiles[fileName];
-    
+
     const div = document.createElement('div');
     div.style.padding = '4px 8px';
     div.style.marginBottom = '2px';
     div.style.borderRadius = '4px';
-    
+
     if (hasRU && hasJP) {
       // Файл есть в обеих папках
       div.textContent = fileName;
@@ -97,15 +97,15 @@ function renderBatchFileList() {
       div.style.background = '#fff0f0';
       div.style.border = '1px solid #e66';
     }
-    
+
     listDiv.appendChild(div);
   });
-  
+
   // Добавляем статистику
   const ruCount = Object.keys(ruFiles).length;
   const jpCount = Object.keys(jpFiles).length;
   const matchedCount = Array.from(allFileNames).filter(name => ruFiles[name] && jpFiles[name]).length;
-  
+
   const statsDiv = document.createElement('div');
   statsDiv.style.marginTop = '15px';
   statsDiv.style.padding = '10px';
@@ -153,13 +153,13 @@ function getFileText(file) {
 // Функция для создания элементов управления исправлением
 function createFixControls() {
   const batchContent = document.getElementById('tabContentBatch');
-  
+
   // Удаляем старые элементы управления если они есть
   const oldFixControls = document.getElementById('batchFixControls');
   if (oldFixControls) {
     oldFixControls.remove();
   }
-  
+
   // Создаем контейнер для элементов управления исправлением
   const fixControls = document.createElement('div');
   fixControls.id = 'batchFixControls';
@@ -168,14 +168,14 @@ function createFixControls() {
   fixControls.style.background = '#f0f8ff';
   fixControls.style.border = '1px solid #ccc';
   fixControls.style.borderRadius = '8px';
-  
+
   // Заголовок
   const title = document.createElement('h3');
   title.textContent = 'Исправление файлов с ошибками';
   title.style.margin = '0 0 15px 0';
   title.style.color = '#333';
   fixControls.appendChild(title);
-  
+
   // Кнопка исправления
   const fixBtn = document.createElement('button');
   fixBtn.textContent = 'Исправить все файлы с ошибками';
@@ -190,9 +190,9 @@ function createFixControls() {
   fixBtn.style.borderRadius = '6px';
   fixBtn.style.cursor = 'pointer';
   fixBtn.onclick = batchFixAllFiles;
-  
+
   fixControls.appendChild(fixBtn);
-  
+
   // Создаем панель отчета внутри контейнера исправления
   const reportPanel = document.createElement('div');
   reportPanel.id = 'batchReportPanel';
@@ -204,23 +204,23 @@ function createFixControls() {
   reportPanel.style.borderRadius = '6px';
   reportPanel.style.maxHeight = '300px';
   reportPanel.style.overflowY = 'auto';
-  
+
   const reportTitle = document.createElement('h4');
   reportTitle.textContent = 'Отчет об исправлении файлов';
   reportTitle.style.margin = '0 0 8px 0';
   reportTitle.style.color = '#333';
   reportTitle.style.fontSize = '14px';
-  
+
   const reportContent = document.createElement('div');
   reportContent.id = 'batchReportContent';
   reportContent.style.fontFamily = 'monospace';
   reportContent.style.fontSize = '12px';
   reportContent.style.lineHeight = '1.6';
-  
+
   reportPanel.appendChild(reportTitle);
   reportPanel.appendChild(reportContent);
   fixControls.appendChild(reportPanel);
-  
+
   // Добавляем элементы управления в начало контейнера (вверху)
   batchContent.insertBefore(fixControls, batchContent.firstChild);
 }
@@ -229,29 +229,29 @@ function createFixControls() {
 async function batchFixAllFiles() {
   // --- ЭТАП 0: Получаем ВСЕ файлы с ошибками (и структурными, И линейными) ---
   const filesWithErrors = batchResults.filter(result => result.isError);
-  
+
   if (filesWithErrors.length === 0) {
     clearBatchReport();
     addBatchReportLine('Нет файлов с ошибками для исправления!', 'warning');
     return;
   }
-  
+
   // Очищаем панель отчета и начинаем новый отчет
   clearBatchReport();
   addBatchReportLine(`=== Начало пакетного исправления ===`);
   addBatchReportLine(`Всего файлов для обработки: ${filesWithErrors.length}`);
-  
+
   // Отключаем кнопку на время обработки
   const fixBtn = document.getElementById('batchFixBtn');
   const originalText = fixBtn.textContent;
   fixBtn.textContent = 'Исправление... (0%)';
   fixBtn.disabled = true;
-  
+
   let fixedCount = 0;
   let errorCount = 0;
   const fixedFiles = []; // Массив для хранения исправленных файлов
   const totalFiles = filesWithErrors.length;
-  
+
   try {
     for (let i = 0; i < totalFiles; i++) {
       const result = filesWithErrors[i];
@@ -263,18 +263,18 @@ async function batchFixAllFiles() {
       try {
         const ruFile = ruFiles[fileName];
         const jpFile = jpFiles[fileName];
-        
+
         if (!ruFile || !jpFile) {
           console.error(`Пропускаем ${fileName}: отсутствует один из файлов`);
           addBatchReportLine(`✗ ${fileName}: отсутствует один из файлов`, 'error');
           errorCount++;
           continue;
         }
-        
+
         // Читаем содержимое файлов
         const ruLines = await readFileAsLines(ruFile);
         const jpLines = await readFileAsLines(jpFile);
-        
+
         let currentFixedLines = ruLines.slice(); // Начинаем с оригинальных RU строк
 
         // === ЭТАП 1: Исправляем СТРУКТУРНЫЕ ошибки (если они есть) ===
@@ -282,7 +282,7 @@ async function batchFixAllFiles() {
           console.log(`[Этап 1] Исправление структуры для: ${fileName}`);
           addBatchReportLine(`→ ${fileName}: исправление структуры...`, 'info');
           const checkResult = window.checkMapStructureMatch(jpLines.join('\n'), ruLines.join('\n'));
-          
+
           let mismatchedNums = [];
           if (checkResult.grouped) {
             checkResult.grouped.forEach(ev => {
@@ -293,7 +293,7 @@ async function batchFixAllFiles() {
               });
             });
           }
-          
+
           if (mismatchedNums.length > 0) {
             mismatchedNums = [...new Set(mismatchedNums)];
             // Запускаем структурный фиксер
@@ -315,8 +315,35 @@ async function batchFixAllFiles() {
 
         // 2b. Запускаем парсеры (они заполняют window.textBlocks и window.mapDisplayName)
         // Эти функции взяты прямо из твоего HTML-файла
-        window.extractTexts(); 
+        window.extractTexts();
         window.extractJapaneseTexts(window.fullJapLines); // Это связывает блоки, что критично для autoFixNameTagErrors
+
+        // === ЭТАП 2.1: Исправляем ОШИБКИ ОТСТУПОВ (НОВОЕ!) ===
+        addBatchReportLine(`  → ${fileName}: проверка отступов...`, 'info');
+        const indentErrors = window.checkForLineLevelErrors(currentFixedLines).filter(e => e.isFixableIndent);
+
+        if (indentErrors.length > 0) {
+          addBatchReportLine(`    Обнаружено ${indentErrors.length} ошибок отступов, исправляем...`, 'info');
+
+          // Исправляем отступы в обратном порядке (чтобы индексы не сбивались)
+          for (let i = indentErrors.length - 1; i >= 0; i--) {
+            const err = indentErrors[i];
+            if (currentFixedLines[err.line] !== undefined) {
+              currentFixedLines[err.line] = currentFixedLines[err.line].replace(/^\s*/, err.expectedIndent);
+            }
+          }
+
+          // Обновляем глобальное состояние после исправления отступов
+          window.originalLines = currentFixedLines.slice();
+          window.fullRusLines = currentFixedLines.slice();
+
+          // Перепарсим файл с исправленными отступами
+          window.textBlocks = [];
+          window.extractTexts();
+          window.extractJapaneseTexts(window.fullJapLines);
+
+          addBatchReportLine(`    ✓ Исправлено ${indentErrors.length} ошибок отступов`, 'success');
+        }
 
         // 2c. Запускаем фиксеры в цикле, пока они вносят изменения
         addBatchReportLine(`  → ${fileName}: запуск цикла исправления...`, 'info');
@@ -333,9 +360,9 @@ async function batchFixAllFiles() {
           // --- Проверка 1: Ищем ошибки длинных диалогов ---
           // Для этого нам нужно сгенерировать текущее состояние файла в строки
           // и прогнать через парсер ошибок.
-          let currentLines = window.generateFinalFileLines(); 
+          let currentLines = window.generateFinalFileLines();
           let lineLevelErrors = window.checkForLineLevelErrors(currentLines);
-          
+
           // Ищем ОСОБЫЙ тип ошибки, который исправляет fixLongDialogues
           errorsFoundThisPass.longDialogues = lineLevelErrors.some(
             err => err.type === 'Ошибка компоновки' && err.reason.includes('слишком длинного диалога')
@@ -344,7 +371,7 @@ async function batchFixAllFiles() {
           // --- Проверка 2: Ищем ошибки тегов имён ---
           // Эта функция работает напрямую с window.textBlocks
           errorsFoundThisPass.nameTags = window.hasNameTagErrors();
-          
+
           // --- Выход из цикла, если ошибок нет ---
           if (!errorsFoundThisPass.longDialogues && !errorsFoundThisPass.nameTags) {
             if (pass > 1) {
@@ -362,7 +389,7 @@ async function batchFixAllFiles() {
             addBatchReportLine(`    [Проход ${pass}]... исправляем длинные диалоги...`, 'info');
             window.fixLongDialogues(true);
           }
-          
+
           // Запускаем исправление тегов, *только* если есть ошибки тегов
           // (или если мы только что исправили диалоги, что могло породить ошибки тегов)
           if (errorsFoundThisPass.nameTags || errorsFoundThisPass.longDialogues) {
@@ -373,7 +400,7 @@ async function batchFixAllFiles() {
             }
             window.autoFixNameTagErrors(true);
           }
-          
+
           // После исправления, цикл пойдет на новую итерацию и
           // заново проверит, не появились ли новые ошибки
         } // Конец while
@@ -384,14 +411,14 @@ async function batchFixAllFiles() {
 
         // 2d. Генерируем финальный контент файла из ИТОГОВОГО состояния
         const finalLines = window.generateFinalFileLines();
-        
+
         // === ЭТАП 3: Добавляем в ZIP ===
         const fixedFileName = fileName.replace('.txt', '_fixed.txt');
         fixedFiles.push({
           name: fixedFileName,
           content: finalLines.join('\n')
         });
-        
+
         fixedCount++;
         console.log(`[Этап 3] Завершено исправление: ${fileName}`);
         addBatchReportLine(`✓ ${fileName}: успешно исправлен`, 'success');
@@ -402,7 +429,7 @@ async function batchFixAllFiles() {
         errorCount++;
       }
     }
-    
+
     // Если есть исправленные файлы, создаем ZIP архив
     if (fixedFiles.length > 0) {
       try {
@@ -410,28 +437,28 @@ async function batchFixAllFiles() {
         addBatchReportLine('=== Создание ZIP архива ===', 'info');
         // Создаем ZIP архив
         const zip = new JSZip();
-        
+
         // Добавляем все исправленные файлы в архив
         fixedFiles.forEach(file => {
           zip.file(file.name, file.content);
         });
-        
+
         // Генерируем ZIP файл
-        const zipBlob = await zip.generateAsync({type: 'blob'});
-        
+        const zipBlob = await zip.generateAsync({ type: 'blob' });
+
         // Создаем ссылку для скачивания
         const a = document.createElement('a');
         a.href = URL.createObjectURL(zipBlob);
         a.download = 'fixed_files.zip';
         a.click();
-        
+
         // Показываем результат в отчете
         addBatchReportLine('', 'info'); // Пустая строка
         addBatchReportLine('=== ИТОГО ===', 'success');
         addBatchReportLine(`Исправлено файлов: ${fixedCount}`, 'success');
         addBatchReportLine(`Ошибок при обработке: ${errorCount}`, errorCount > 0 ? 'error' : 'success');
         addBatchReportLine(`Создан архив 'fixed_files.zip'`, 'success');
-        
+
       } catch (zipError) {
         console.error('Ошибка при создании ZIP архива:', zipError);
         addBatchReportLine('', 'info'); // Пустая строка
@@ -446,7 +473,7 @@ async function batchFixAllFiles() {
       addBatchReportLine(`Не удалось исправить ни одного файла`, 'error');
       addBatchReportLine(`Ошибок при обработке: ${errorCount}`, 'error');
     }
-    
+
   } catch (error) {
     console.error('Ошибка при массовом исправлении:', error);
     addBatchReportLine('', 'info'); // Пустая строка
@@ -462,26 +489,26 @@ async function batchFixAllFiles() {
 async function batchCheckAllFiles() {
   const batchListDiv = document.getElementById('batchFileList');
   batchListDiv.innerHTML = '';
-  
+
   // Очищаем панель отчета при новой проверке
   clearBatchReport();
-  
+
   // Собираем все уникальные имена файлов из обеих папок
   const allFileNames = new Set();
   Object.keys(ruFiles).forEach(name => allFileNames.add(name));
   Object.keys(jpFiles).forEach(name => allFileNames.add(name));
   const sortedFileNames = Array.from(allFileNames).sort();
-  
+
   const showOnlyErrorLines = document.getElementById('batchShowOnlyErrorLines')?.checked;
   const showOkFiles = document.getElementById('batchShowOkFiles')?.checked;
-  
+
   // Очищаем предыдущие результаты
   batchResults = [];
-  
+
   // Сохраняем результаты для фильтрации
   const results = [];
   let hasErrors = false;
-  
+
   for (const fileName of sortedFileNames) {
     const hasRU = !!ruFiles[fileName];
     const hasJP = !!jpFiles[fileName];
@@ -493,32 +520,32 @@ async function batchCheckAllFiles() {
     fileDiv.style.lineHeight = '1.6';
     let isError = false;
     let isOkFile = false;
-    
+
     if (!hasRU || !hasJP) {
       // Файл отсутствует в одной из папок
       fileDiv.style.background = '#fff0f0';
       fileDiv.style.border = '1.5px solid #e66';
       fileDiv.style.color = '#b00';
-      
+
       if (!hasRU && hasJP) {
         fileDiv.textContent = fileName + ' — нет русского файла для сопоставления';
       } else if (hasRU && !hasJP) {
         fileDiv.textContent = fileName + ' — нет японского файла для сопоставления';
       }
-      
+
       isError = true;
       hasErrors = true;
-      results.push({fileDiv, isError, isOkFile, fileName});
-      batchResults.push({isError, isOkFile, fileName, hasStructError: false});
+      results.push({ fileDiv, isError, isOkFile, fileName });
+      batchResults.push({ isError, isOkFile, fileName, hasStructError: false });
       continue;
     }
-    
+
     // Файл есть в обеих папках - проверяем структуру
     fileDiv.style.background = '#f9f9f9';
     fileDiv.style.border = '1.5px solid #bbb';
     fileDiv.style.color = '#222';
     fileDiv.textContent = fileName;
-    
+
     // <<< НАЧАЛО ИЗМЕНЕНИЯ >>>
     let ruLines, jpText;
     try {
@@ -532,18 +559,18 @@ async function batchCheckAllFiles() {
       fileDiv.style.color = '#b00';
       isError = true;
       hasErrors = true;
-      results.push({fileDiv, isError, isOkFile, fileName});
-      batchResults.push({isError, isOkFile, fileName, hasStructError: false});
+      results.push({ fileDiv, isError, isOkFile, fileName });
+      batchResults.push({ isError, isOkFile, fileName, hasStructError: false });
       continue;
     }
-    
+
     // 1. Проверяем ошибки на уровне строк с помощью новой функции
     const lineLevelErrors = window.checkForLineLevelErrors(ruLines);
 
     // 2. Проверяем ошибки структуры, как и раньше
     const ruText = ruLines.join('\n');
     const structResult = window.checkMapStructureMatch(jpText, ruText);
-    
+
     const structErrorCount = structResult.grouped ? structResult.grouped.reduce((acc, ev) => acc + ev.pages.reduce((a, p) => a + (p.errors ? p.errors.length : 0), 0), 0) : 0;
     const totalErrorCount = structErrorCount + lineLevelErrors.length;
 
@@ -553,7 +580,7 @@ async function batchCheckAllFiles() {
     summary.style.color = totalErrorCount === 0 ? '#226922' : '#b00';
     summary.textContent = totalErrorCount === 0 ? 'Ошибок нет, 100% совпадение' : `Обнаружено ${totalErrorCount} ошибок`;
     fileDiv.appendChild(summary);
-    
+
     let statHtml = '';
     // Отображаем ошибки на уровне строк
     if (lineLevelErrors.length > 0) {
@@ -578,37 +605,37 @@ async function batchCheckAllFiles() {
         });
       });
     }
-    
+
     if (statHtml) {
-        const statDiv = document.createElement('div');
-        statDiv.innerHTML = statHtml;
-        fileDiv.appendChild(statDiv);
+      const statDiv = document.createElement('div');
+      statDiv.innerHTML = statHtml;
+      fileDiv.appendChild(statDiv);
     }
-    
+
     isError = totalErrorCount > 0;
     isOkFile = totalErrorCount === 0;
-    
+
     // Определяем, есть ли структурные ошибки
     const hasStructError = structErrorCount > 0;
     // <<< КОНЕЦ ИЗМЕНЕНИЯ >>>
-    
+
     if (isError) {
       hasErrors = true;
     }
-    
-    results.push({fileDiv, isError, isOkFile, fileName});
-    batchResults.push({isError, isOkFile, fileName, hasStructError});
+
+    results.push({ fileDiv, isError, isOkFile, fileName });
+    batchResults.push({ isError, isOkFile, fileName, hasStructError });
   }
-  
+
   // --- Фильтрация вывода ---
-  results.forEach(({fileDiv, isError, isOkFile}) => {
+  results.forEach(({ fileDiv, isError, isOkFile }) => {
     if ((!showOkFiles && isOkFile) || (showOkFiles && false)) {
       // скрываем исправные файлы если чекбокс выключен
       return;
     }
     batchListDiv.appendChild(fileDiv);
   });
-  
+
   // Добавляем общую статистику
   const ruCount = Object.keys(ruFiles).length;
   const jpCount = Object.keys(jpFiles).length;
@@ -616,7 +643,7 @@ async function batchCheckAllFiles() {
   const missingCount = allFileNames.size - matchedCount;
   const structureErrorCount = results.filter(r => r.isError && ruFiles[r.fileName] && jpFiles[r.fileName]).length;
   const okCount = results.filter(r => r.isOkFile).length;
-  
+
   const statsDiv = document.createElement('div');
   statsDiv.style.marginTop = '20px';
   statsDiv.style.padding = '15px';
@@ -634,7 +661,7 @@ async function batchCheckAllFiles() {
     • Файлов без ошибок: ${okCount}
   `;
   batchListDiv.appendChild(statsDiv);
-  
+
   // Показываем элементы управления исправлением только если есть ошибки
   if (hasErrors) {
     createFixControls();
@@ -644,7 +671,7 @@ async function batchCheckAllFiles() {
     if (oldFixControls) {
       oldFixControls.remove();
     }
-    
+
     // Показываем зелёную надпись если все файлы исправны и чекбокс "Показывать исправные файлы" выключен
     if (!showOkFiles && results.length > 0 && results.every(r => r.isOkFile)) {
       const congratulationsDiv = document.createElement('div');
@@ -663,7 +690,7 @@ async function batchCheckAllFiles() {
   }
 }
 
-document.addEventListener('DOMContentLoaded', function() {
+document.addEventListener('DOMContentLoaded', function () {
   document.getElementById('batchRuFolder').addEventListener('change', e => handleFolderInput(e, 'ru'));
   document.getElementById('batchJpFolder').addEventListener('change', e => handleFolderInput(e, 'jp'));
   const checkBtn = document.getElementById('batchCheckBtn');

@@ -1,9 +1,9 @@
 // restore-mode.js
-(function(global) {
+(function (global) {
   // === Функция экранирования первых трёх управляющих последовательностей ===
   function escapeFirstThree(str) {
     let count = 0;
-    let result = str.replace(/\\n|<\\?C\[6\]|\\?C\[0\]>/g, function(match) {
+    let result = str.replace(/\\n|<\\?C\[6\]|\\?C\[0\]>/g, function (match) {
       count++;
       if (count === 1 && match === '\\n') return '\\\\n';
       if (count === 2 && (match === '<\\C[6]' || match === '<C[6]')) return '<\\\\C[6]';
@@ -22,18 +22,18 @@
       if (str.includes('\\\\I[') && str.includes('\\\\C[')) {
         return str; // Уже правильно экранировано, не изменяем
       }
-      
+
       // Обрабатываем управляющие последовательности для навыков
       let result = str;
-      
+
       // Заменяем одиночные слеши на двойные для управляющих последовательностей навыков
       result = result.replace(/\\([IC])\[/g, '\\\\$1[');
       result = result.replace(/\\C\[(\d+)\]/g, '\\\\C[$1]');
       result = result.replace(/\\I\[(\d+)\]/g, '\\\\I[$1]');
-      
+
       return result;
     }
-    
+
     return str;
   }
 
@@ -73,7 +73,7 @@
     }
     return events;
   }
-  
+
   // Экспортируем функцию для отладки
   global.parseCommonEvents = parseCommonEvents;
 
@@ -102,16 +102,16 @@
         const name = nameMatch[1];
         const text = textMatch[1];
         const indent = currentLine.match(/^(\s*)/) ? currentLine.match(/^(\s*)/)[1] : '';
-        
+
         // Собираем строку в русском формате: \n<\\C[6]Имя\\C[0]>Текст
         let mergedContent = `\\n<\\C[6]${name}\\C[0]>${text}`;
-        
+
         // Экранируем кавычки и обратные слеши для вставки в команду ShowText(["..."])
         mergedContent = mergedContent.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        
+
         const mergedLine = `${indent}ShowText(["${mergedContent}"])`;
         resultLines.push(mergedLine);
-        
+
         j += 2; // Пропускаем обе обработанные японские строки
       } else {
         // Если пара не найдена, просто добавляем текущую строку
@@ -129,7 +129,7 @@
    * @param {string[]} jpLines - Массив строк японского файла.
    * @returns {string[] | null} - Массив строк исправленного файла или null в случае отсутствия ошибок.
    */
-  global.fixOnlyMismatchedEvents = function(ruLines, jpLines) {
+  global.fixOnlyMismatchedEvents = function (ruLines, jpLines) {
     const ruContent = ruLines.join('\n');
     const jpContent = jpLines.join('\n');
     const checkResult = window.checkMapStructureMatch(jpContent, ruContent);
@@ -194,7 +194,7 @@
   };
 
   // Главная функция старого восстановления
-  global.restoreRussianStructure = function(ruLines, jpLines, replaceNums) {
+  global.restoreRussianStructure = function (ruLines, jpLines, replaceNums) {
     const ruEvents = parseCommonEvents(ruLines);
     const jpEvents = parseCommonEvents(jpLines);
     let resultLines = [];
@@ -248,10 +248,10 @@
                 let text = contentMatch[2] || '';
                 name = name.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
                 text = text.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-                
+
                 // Применяем специальную обработку для строк с характеристиками
                 text = escapeSkillAttributes(text);
-                
+
                 // --- Применяем escapeFirstThree для правильного экранирования ---
                 const escapedContent = escapeFirstThree(`\\n<\\C[6]${name}\\C[0]>${text}`);
                 finalMerged = `${indent}ShowText(["${escapedContent}"])`;
@@ -290,17 +290,17 @@
   };
 
   // === Новый алгоритм восстановления структуры по ошибкам ===
-  global.restoreStructureByErrors = function(rusLines, japLines, compareResult) {
+  global.restoreStructureByErrors = function (rusLines, japLines, compareResult) {
     let ru = rusLines.slice();
     let jp = japLines.slice();
     if (!compareResult || !compareResult.grouped) return ru;
     function buildEventPageMap(lines) {
       const map = {};
       let currentEvent = null, currentPage = null;
-    for (let i = 0; i < lines.length; i++) {
+      for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         const ce = line.match(/^CommonEvent (\d+)/);
-      if (ce) {
+        if (ce) {
           currentEvent = ce[1];
           if (!map[currentEvent]) map[currentEvent] = {};
           currentPage = null;
@@ -330,15 +330,15 @@
             const ruLines = ruMap[eid] && ruMap[eid][pg];
             const jpLines = jpMap[eid] && jpMap[eid][pg];
             if (!ruLines || !jpLines) return;
-            let ruStartIdx = ruLines[line-1];
+            let ruStartIdx = ruLines[line - 1];
             let ruEndIdx = ruStartIdx;
-            while (ruEndIdx < ruLines[ruLines.length-1]) {
+            while (ruEndIdx < ruLines[ruLines.length - 1]) {
               if (/^\s*Empty\(\[\]\)/.test(ru[ruEndIdx])) break;
               ruEndIdx++;
             }
-            let jpStartIdx = jpLines[line-1];
+            let jpStartIdx = jpLines[line - 1];
             let jpEndIdx = jpStartIdx;
-            while (jpEndIdx < jpLines[jpLines.length-1]) {
+            while (jpEndIdx < jpLines[jpLines.length - 1]) {
               if (/^\s*Empty\(\[\]\)/.test(jp[jpEndIdx])) break;
               jpEndIdx++;
             }
@@ -361,7 +361,7 @@
       if (merged.length === 0) {
         merged.push(cur);
       } else {
-        let last = merged[merged.length-1];
+        let last = merged[merged.length - 1];
         // Если перекрываются или смежные
         if (cur.ruStart <= last.ruEnd) {
           // Объединяем диапазон
@@ -375,56 +375,56 @@
     // Заменяем с конца, чтобы не сбивать индексы
     for (let i = merged.length - 1; i >= 0; i--) {
       const r = merged[i];
-      const jpBlock = jp.slice(r.jpStart, r.jpEnd+1);
+      const jpBlock = jp.slice(r.jpStart, r.jpEnd + 1);
       ru.splice(r.ruStart, r.ruEnd - r.ruStart + 1, ...jpBlock);
     }
-    
+
     // Временное решение: удаляем все строки выше Display Name
     const displayNameIndex = ru.findIndex(line => /^\s*Display Name\s*=/.test(line));
     if (displayNameIndex > 0) {
       ru.splice(0, displayNameIndex);
     }
-    
+
     return ru;
   };
 
   // === Новая функция для восстановления структуры с добавлением пропущенных CommonEvent ===
-  global.restoreRussianStructureWithMissing = function(ruLines, jpLines, replaceNums) {
+  global.restoreRussianStructureWithMissing = function (ruLines, jpLines, replaceNums) {
     const ruEvents = parseCommonEvents(ruLines);
     const jpEvents = parseCommonEvents(jpLines);
-    
+
     let resultLines = [];
-    
+
     // Создаем карты событий
     let ruMap = {};
     ruEvents.forEach(ev => { ruMap[ev.num] = ev; });
     let jpMap = {};
     jpEvents.forEach(ev => { jpMap[ev.num] = ev; });
-    
+
     // Собираем все номера CommonEvent из обоих файлов
     let allEventNums = new Set();
     ruEvents.forEach(ev => allEventNums.add(ev.num));
     jpEvents.forEach(ev => allEventNums.add(ev.num));
     allEventNums = Array.from(allEventNums).sort((a, b) => a - b);
-    
+
     // --- Новый алгоритм: сохраняем все строки вне CommonEvent ---
     // 1. Собираем индексы начала всех CommonEvent в ruLines
     let ceIndices = [];
     for (let i = 0; i < ruLines.length; i++) {
       if (/^CommonEvent \d+/.test(ruLines[i])) ceIndices.push(i);
     }
-    
+
     // 2. Добавляем все строки до первого CommonEvent
     let firstCE = ceIndices.length > 0 ? ceIndices[0] : ruLines.length;
     for (let i = 0; i < firstCE; i++) {
       resultLines.push(ruLines[i]);
     }
-    
+
     // 3. Обрабатываем все CommonEvent по порядку номеров
     for (let eventNum of allEventNums) {
       const ruEv = ruMap[eventNum];
       const jpEv = jpMap[eventNum];
-      
+
       if (ruEv && jpEv) {
         // Оба события существуют - применяем обычную логику
         if (Array.isArray(replaceNums) && replaceNums.includes(eventNum)) {
@@ -459,10 +459,10 @@
                   let text = contentMatch[2] || '';
                   name = name.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
                   text = text.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-                  
+
                   // Применяем специальную обработку для строк с характеристиками
                   text = escapeSkillAttributes(text);
-                  
+
                   // --- Применяем escapeFirstThree для правильного экранирования ---
                   const escapedContent = escapeFirstThree(`\\n<\\C[6]${name}\\C[0]>${text}`);
                   finalMerged = `${indent}ShowText(["${escapedContent}"])`;
@@ -512,10 +512,10 @@
                 let text = contentMatch[2] || '';
                 name = name.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
                 text = text.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-                
+
                 // Применяем специальную обработку для строк с характеристиками
                 text = escapeSkillAttributes(text);
-                
+
                 // --- Применяем escapeFirstThree для правильного экранирования ---
                 const escapedContent = escapeFirstThree(`\\n<\\C[6]${name}\\C[0]>${text}`);
                 finalMerged = `${indent}ShowText(["${escapedContent}"])`;
@@ -534,7 +534,7 @@
         resultLines.push(...ruEv.lines);
       }
     }
-    
+
     // 4. Добавляем все строки после последнего CommonEvent в русском файле
     let lastEv = ruEvents[ruEvents.length - 1];
     if (lastEv) {
@@ -543,7 +543,7 @@
         resultLines.push(ruLines[i]);
       }
     }
-    
+
     // --- Финальное выравнивание пустых строк между Page N и Empty([]) ---
     for (let i = 0; i < jpLines.length - 2; i++) {
       if (
@@ -567,12 +567,12 @@
         }
       }
     }
-    
+
     return resultLines;
   };
 
   // === Функция для безопасного восстановления только проблемных строк ===
-  global.safeRestoreStructure = function() {
+  global.safeRestoreStructure = function () {
     if (!window.fullRusLines || !window.fullJapLines || window.fullRusLines.length === 0 || window.fullJapLines.length === 0) {
       alert('Сначала загрузите русский и японский файлы!');
       return;
@@ -582,7 +582,7 @@
     const jpContent = window.fullJapLines.join('\n');
     const ruContent = window.fullRusLines.join('\n');
     const result = window.checkMapStructureMatch(jpContent, ruContent);
-    
+
     // Собираем конкретные ошибки для восстановления
     let errorsToFix = [];
     if (result.grouped) {
@@ -591,9 +591,9 @@
           if (!page.ok && page.errors && page.errors.length > 0) {
             page.errors.forEach(error => {
               // Добавляем только ошибки, которые можно безопасно исправить
-              if (error.msg.includes('Несовпадение содержимого команды') || 
-                  error.msg.includes('Нарушение форматирования команды') ||
-                  error.msg.includes('тип команды не совпадает')) {
+              if (error.msg.includes('Несовпадение содержимого команды') ||
+                error.msg.includes('Нарушение форматирования команды') ||
+                error.msg.includes('тип команды не совпадает')) {
                 errorsToFix.push({
                   eid: parseInt(ev.eid),
                   page: page.page,
@@ -608,67 +608,67 @@
         });
       });
     }
-    
+
     if (errorsToFix.length === 0) {
       alert('Нет ошибок, которые можно безопасно исправить.');
       return;
     }
 
     // Показываем пользователю, что будет исправлено
-    const errorList = errorsToFix.map(err => 
+    const errorList = errorsToFix.map(err =>
       `CommonEvent ${err.eid}, Page ${err.page}, строка ${err.line}: ${err.msg}`
     ).join('\n');
-    
+
     const confirmed = confirm(
       `Найдено ${errorsToFix.length} ошибок для безопасного исправления:\n\n${errorList}\n\n` +
       'Это заменит только проблемные строки на их японские аналоги, не затрагивая стабильные части файла.\n\n' +
       'Продолжить?'
     );
-    
+
     if (!confirmed) return;
 
     // Создаем копию русского файла для безопасного восстановления
     let restoredLines = window.fullRusLines.slice();
-    
-          // === БЫСТРАЯ ПРОВЕРКА КОМАНД EMPTY ===
-      // Ищем и исправляем команды Empty([""]) на Empty([]) без замедления парсинга
-      for (let i = 0; i < restoredLines.length; i++) {
-        const line = restoredLines[i];
-        const trimmedLine = line.trim();
-        
-        // Ищем команды Empty([""]) и заменяем их на Empty([])
-        if (trimmedLine === 'Empty([""])') {
-          restoredLines[i] = line.replace('Empty([""])', 'Empty([])');
-        }
-        
-        // Ищем команды BranchEnd([""]) и заменяем их на BranchEnd([])
-        if (trimmedLine === 'BranchEnd([""])') {
-          restoredLines[i] = line.replace('BranchEnd([""])', 'BranchEnd([])');
-        }
-        
-        // Ищем команды ExitEventProcessing([""]) и заменяем их на ExitEventProcessing([])
-        if (trimmedLine === 'ExitEventProcessing([""])') {
-          restoredLines[i] = line.replace('ExitEventProcessing([""])', 'ExitEventProcessing([])');
-        }
+
+    // === БЫСТРАЯ ПРОВЕРКА КОМАНД EMPTY ===
+    // Ищем и исправляем команды Empty([""]) на Empty([]) без замедления парсинга
+    for (let i = 0; i < restoredLines.length; i++) {
+      const line = restoredLines[i];
+      const trimmedLine = line.trim();
+
+      // Ищем команды Empty([""]) и заменяем их на Empty([])
+      if (trimmedLine === 'Empty([""])') {
+        restoredLines[i] = line.replace('Empty([""])', 'Empty([])');
       }
-    
+
+      // Ищем команды BranchEnd([""]) и заменяем их на BranchEnd([])
+      if (trimmedLine === 'BranchEnd([""])') {
+        restoredLines[i] = line.replace('BranchEnd([""])', 'BranchEnd([])');
+      }
+
+      // Ищем команды ExitEventProcessing([""]) и заменяем их на ExitEventProcessing([])
+      if (trimmedLine === 'ExitEventProcessing([""])') {
+        restoredLines[i] = line.replace('ExitEventProcessing([""])', 'ExitEventProcessing([])');
+      }
+    }
+
     // Исправляем каждую ошибку
     errorsToFix.forEach(error => {
       // Находим позицию строки в файле по содержимому
       let lineFound = false;
-      
+
       // Ищем строку по содержимому (error.ru содержит проблемную строку)
       for (let i = 0; i < restoredLines.length; i++) {
         const line = restoredLines[i];
         const trimmedLine = line.trim();
-        
+
         // Сравниваем содержимое строки с проблемной строкой
         if (trimmedLine === error.ru.trim()) {
           // Находим соответствующую строку в японском файле
           for (let j = 0; j < window.fullJapLines.length; j++) {
             const jpLine = window.fullJapLines[j];
             const jpTrimmedLine = jpLine.trim();
-            
+
             // Сравниваем содержимое строки с японской строкой
             if (jpTrimmedLine === error.jp.trim()) {
               // Заменяем русскую строку на японскую
@@ -680,34 +680,34 @@
           break;
         }
       }
-      
+
       // Если не нашли по точному содержимому, пробуем найти по команде и аргументам
       if (!lineFound && error.msg.includes('Несовпадение содержимого команды')) {
         const ruMatch = error.ru.trim().match(/^(\w+)\(\[(.*)\]\)/);
         const jpMatch = error.jp.trim().match(/^(\w+)\(\[(.*)\]\)/);
-        
+
         if (ruMatch && jpMatch && ruMatch[1] === jpMatch[1]) {
           const command = ruMatch[1];
           const ruArgs = ruMatch[2];
           const jpArgs = jpMatch[2];
-          
+
           // Ищем строку с той же командой и похожими аргументами
           for (let i = 0; i < restoredLines.length; i++) {
             const line = restoredLines[i];
             const trimmedLine = line.trim();
-            
+
             const lineMatch = trimmedLine.match(/^(\w+)\(\[(.*)\]\)/);
             if (lineMatch && lineMatch[1] === command) {
               // Проверяем, похожи ли аргументы (например, Empty([""]) vs Empty([]))
-              if (lineMatch[2] === ruArgs || 
-                  (ruArgs === '""' && lineMatch[2] === '') ||
-                  (ruArgs === '' && lineMatch[2] === '""')) {
-                
+              if (lineMatch[2] === ruArgs ||
+                (ruArgs === '""' && lineMatch[2] === '') ||
+                (ruArgs === '' && lineMatch[2] === '""')) {
+
                 // Находим соответствующую строку в японском файле
                 for (let j = 0; j < window.fullJapLines.length; j++) {
                   const jpLine = window.fullJapLines[j];
                   const jpTrimmedLine = jpLine.trim();
-                  
+
                   const jpLineMatch = jpTrimmedLine.match(/^(\w+)\(\[(.*)\]\)/);
                   if (jpLineMatch && jpLineMatch[1] === command && jpLineMatch[2] === jpArgs) {
                     // Заменяем русскую строку на японскую
@@ -722,7 +722,7 @@
           }
         }
       }
-      
+
       if (!lineFound) {
         // Строка не найдена для исправления
       }
@@ -732,7 +732,7 @@
     window.fullRusLines = restoredLines.slice();
     window.originalLines = restoredLines.slice();
     window.japaneseLines = window.fullJapLines;
-    
+
     // Устанавливаем флаг для правильного сохранения
     window.restoreModeEnabled = true;
 
@@ -747,7 +747,7 @@
     if (typeof window.updatePreviewArea === 'function') {
       window.updatePreviewArea();
     }
-    
+
     // Обновляем состояние кнопки сохранения
     setTimeout(() => {
       if (typeof window.updateRedIndices === 'function') {
@@ -760,7 +760,7 @@
         saveBtn.style.color = '#333';
         saveBtn.title = 'Структура восстановлена. Можно сохранить файл.';
       }
-      
+
       // Обновляем лампочку совпадения
       if (typeof window.updateMatchLamp === 'function') {
         window.updateMatchLamp();
@@ -771,7 +771,7 @@
   };
 
   // === Функция для немедленного восстановления структуры ===
-  global.immediateRestoreStructure = function() {
+  global.immediateRestoreStructure = function () {
     if (!window.fullRusLines || !window.fullJapLines || window.fullRusLines.length === 0 || window.fullJapLines.length === 0) {
       alert('Сначала загрузите русский и японский файлы!');
       return;
@@ -781,7 +781,7 @@
     const jpContent = window.fullJapLines.join('\n');
     const ruContent = window.fullRusLines.join('\n');
     const result = window.checkMapStructureMatch(jpContent, ruContent);
-    
+
     // Собираем номера CommonEvent с ошибками
     let mismatchedNums = [];
     if (result.grouped) {
@@ -793,7 +793,7 @@
         });
       });
     }
-    
+
     if (mismatchedNums.length === 0) {
       alert('Структура CommonEvent полностью совпадает. Восстановление не требуется.');
       return;
@@ -801,18 +801,18 @@
 
     // Убираем дубликаты номеров
     mismatchedNums = [...new Set(mismatchedNums)];
-    
+
     // Выполняем восстановление с новой функцией
     const restoredLines = window.restoreRussianStructureWithMissing(window.fullRusLines, window.fullJapLines, mismatchedNums);
-    
+
     // Автоматически исправляем ошибки Script после восстановления структуры
     const fixedLines = window.fixScriptQuotes(restoredLines);
-    
+
     // Обновляем глобальные переменные
     window.fullRusLines = fixedLines.slice();
     window.originalLines = fixedLines.slice();
     window.japaneseLines = window.fullJapLines; // для совместимости
-    
+
     // Устанавливаем флаг для правильного сохранения
     window.restoreModeEnabled = true;
 
@@ -843,7 +843,7 @@
       window.japaneseLines = window.fullJapLines;
       window.restoreModeEnabled = true;
     }
-    
+
     // НЕ синхронизируем редактор автоматически!
     // Показываем кнопку синхронизации после восстановления
     const syncBtn = document.getElementById('syncEditorBtn');
@@ -856,7 +856,7 @@
     if (typeof window.updatePreviewArea === 'function') {
       window.updatePreviewArea();
     }
-    
+
     // Принудительно обновляем состояние кнопки сохранения
     setTimeout(() => {
       if (typeof window.updateRedIndices === 'function') {
@@ -869,7 +869,7 @@
         saveBtn.style.color = '#333';
         saveBtn.title = 'Структура восстановлена. Можно сохранить файл.';
       }
-      
+
       // Обновляем видимость кнопок после восстановления
       if (typeof window.updateFixButtonsVisibility === 'function') {
         window.updateFixButtonsVisibility();
@@ -880,10 +880,10 @@
   };
 
   // === Функция для исправления кавычек в командах Script ===
-  global.fixScriptQuotes = function(lines) {
+  global.fixScriptQuotes = function (lines) {
     let fixedLines = lines.slice();
     let fixedCount = 0;
-    
+
     for (let i = 0; i < fixedLines.length; i++) {
       const line = fixedLines[i];
       // Проверяем, является ли это командой Script без кавычек
@@ -896,16 +896,16 @@
         fixedCount++;
       }
     }
-    
+
     if (fixedCount > 0) {
       console.log(`Исправлено ${fixedCount} команд Script без кавычек`);
     }
-    
+
     return fixedLines;
   };
 
   // === Функция для автоматического исправления всех ошибок Script ===
-  global.autoFixScriptErrors = function() {
+  global.autoFixScriptErrors = function () {
     if (!window.fullRusLines || window.fullRusLines.length === 0) {
       alert('Сначала загрузите русский файл!');
       return;
@@ -913,11 +913,11 @@
 
     // Исправляем кавычки в командах Script
     const fixedLines = window.fixScriptQuotes(window.fullRusLines);
-    
+
     // Обновляем глобальные переменные
     window.fullRusLines = fixedLines.slice();
     window.originalLines = fixedLines.slice();
-    
+
     // Устанавливаем флаг для правильного сохранения
     window.restoreModeEnabled = true;
 
@@ -932,7 +932,7 @@
     if (typeof window.updatePreviewArea === 'function') {
       window.updatePreviewArea();
     }
-    
+
     // Принудительно обновляем состояние кнопки сохранения
     setTimeout(() => {
       if (typeof window.updateRedIndices === 'function') {
@@ -958,7 +958,7 @@
   };
 
   // === Функция для проверки наличия ошибок Script ===
-  global.hasScriptErrors = function() {
+  global.hasScriptErrors = function () {
     if (!window.fullJapLines || window.fullJapLines.length === 0) return false;
     const jpContent = window.fullJapLines.join('\n');
     const ruContent = getActualRuContent();
@@ -968,7 +968,7 @@
   };
 
   // === Функция для проверки наличия ошибок структуры CommonEvent ===
-  global.hasStructureErrors = function() {
+  global.hasStructureErrors = function () {
     if (!window.fullJapLines || window.fullJapLines.length === 0) return false;
     const jpContent = window.fullJapLines.join('\n');
     const ruContent = getActualRuContent();
@@ -978,7 +978,7 @@
   };
 
   // === Функция для проверки наличия любых ошибок ===
-  global.hasAnyErrors = function() {
+  global.hasAnyErrors = function () {
     if (!window.fullJapLines || window.fullJapLines.length === 0) return false;
     const jpContent = window.fullJapLines.join('\n');
     const ruContent = getActualRuContent();
@@ -988,7 +988,7 @@
   };
 
   // === Функция для проверки наличия ошибок отступов ===
-  global.hasIndentErrors = function() {
+  global.hasIndentErrors = function () {
     if (!window.fullJapLines || window.fullJapLines.length === 0) return false;
     const jpContent = window.fullJapLines.join('\n');
     const ruContent = getActualRuContent();
@@ -998,16 +998,16 @@
   };
 
   // === Функция для автоматического исправления ошибок отступов ===
-  global.autoFixIndentErrors = function() {
+  global.autoFixIndentErrors = function () {
     if (!window.fullRusLines || !window.fullJapLines) {
       alert('Сначала загрузите русский и японский файлы!');
       return;
     }
-    
+
     const ruContent = window.fullRusLines.join('\n');
     const jpContent = window.fullJapLines.join('\n');
     const checkResult = window.checkMapStructureMatch(jpContent, ruContent);
-    
+
     // Собираем ТОЛЬКО ИСПРАВИМЫЕ ошибки отступов
     let indentErrors = [];
     if (checkResult.grouped) {
@@ -1024,16 +1024,16 @@
         });
       });
     }
-    
+
     if (indentErrors.length === 0) {
       alert('Исправимых ошибок отступов не найдено.');
       if (typeof window.updateMatchLamp === 'function') window.updateMatchLamp();
       return;
     }
-    
+
     let fixedLines = window.fullRusLines.slice();
     let fixedCount = 0;
-    
+
     indentErrors.forEach(err => {
       const lineNum = err.ruLineNum;
       // Убеждаемся, что все данные для исправления существуют
@@ -1043,7 +1043,7 @@
         fixedCount++;
       }
     });
-    
+
     if (fixedCount === 0) {
       alert('Не удалось применить исправления отступов.');
       return;
@@ -1054,9 +1054,9 @@
     alert(`Исправлено ${fixedCount} ошибок отступов.\n\nРедактор будет автоматически обновлен.`);
 
     if (typeof window.syncEditorWithRestored === 'function') {
-        window.syncEditorWithRestored();
+      window.syncEditorWithRestored();
     } else {
-        alert('Критическая ошибка: syncEditorWithRestored не найдена. Обновите страницу.');
+      alert('Критическая ошибка: syncEditorWithRestored не найдена. Обновите страницу.');
     }
   };
 
@@ -1074,7 +1074,7 @@
   // === Функции для работы с тегами имён ===
 
   // Функция для ПРОВЕРКИ наличия ошибок тегов (ОБНОВЛЕНО v17)
-  global.hasNameTagErrors = function() {
+  global.hasNameTagErrors = function () {
     if (!window.textBlocks) return false;
 
     for (let i = 0; i < textBlocks.length; i++) {
@@ -1093,129 +1093,129 @@
 
       // --- Проверка на Ошибку 2 (Добавить тег) и Ошибку 3 (Удалить STA) ---
       if (block.type === 'ShowTextAttributes' && block.manualPlus) {
-          
-          let nextRelevantBlock = null;
-          for (let j = i + 1; j < textBlocks.length; j++) {
-              if (textBlocks[j].isDeleted) continue;
-              if (textBlocks[j].type === 'ShowText') { nextRelevantBlock = textBlocks[j]; break; }
-              if (textBlocks[j].type !== 'ShowText' && textBlocks[j].type !== 'ShowTextAttributes' && textBlocks[j].type !== undefined) { break; }
-          }
-          
-          if (!nextRelevantBlock || window.isNameBlock(nextRelevantBlock.text)) {
-            continue; // STA стоит перед именем или в конце, ошибки нет
-          }
 
-          const prevBlock = getPreviousVisibleBlock(window.textBlocks, i);
-          if (!prevBlock) continue;
+        let nextRelevantBlock = null;
+        for (let j = i + 1; j < textBlocks.length; j++) {
+          if (textBlocks[j].isDeleted) continue;
+          if (textBlocks[j].type === 'ShowText') { nextRelevantBlock = textBlocks[j]; break; }
+          if (textBlocks[j].type !== 'ShowText' && textBlocks[j].type !== 'ShowTextAttributes' && textBlocks[j].type !== undefined) { break; }
+        }
 
-          // --- Проверка на Ошибку 3 (Мусорный STA) v16 ---
-          // STA - мусор, ТОЛЬКО ЕСЛИ он между ДВУМЯ строками-продолжениями.
-          if (prevBlock.type === 'ShowText' && prevBlock.manualPlus && nextRelevantBlock.manualPlus) {
-            // prevBlock - продолжение (#+), nextBlock - тоже продолжение (#+)
-            
-            // <<< ИСПРАВЛЕНИЕ: Игнорируем, если STA был сгенерирован (generated: true) >>>
-            if (!block.generated) {
-                return true; // Нашли Ошибку 3
+        if (!nextRelevantBlock || window.isNameBlock(nextRelevantBlock.text)) {
+          continue; // STA стоит перед именем или в конце, ошибки нет
+        }
+
+        const prevBlock = getPreviousVisibleBlock(window.textBlocks, i);
+        if (!prevBlock) continue;
+
+        // --- Проверка на Ошибку 3 (Мусорный STA) v16 ---
+        // STA - мусор, ТОЛЬКО ЕСЛИ он между ДВУМЯ строками-продолжениями.
+        if (prevBlock.type === 'ShowText' && prevBlock.manualPlus && nextRelevantBlock.manualPlus) {
+          // prevBlock - продолжение (#+), nextBlock - тоже продолжение (#+)
+
+          // <<< ИСПРАВЛЕНИЕ: Игнорируем, если STA был сгенерирован (generated: true) >>>
+          if (!block.generated) {
+            return true; // Нашли Ошибку 3
+          }
+        }
+
+        // --- Проверка на Ошибку 1 (Фаза 1 Очистки) v16 ---
+        // STA стоит сразу после имени
+        if (prevBlock.type === 'ShowText' && window.isNameBlock(prevBlock.text)) {
+          return true; // Нашли Ошибку 1 (Фаза 1)
+        }
+
+        // --- Проверка на Ошибку 2 (Нет тега) v17 ---
+
+        // <<< ИЗМЕНЕНИЕ: УДАЛЕНО "УМНОЕ" ИСКЛЮЧЕНИЕ >>>
+        // [ЗДЕСЬ БЫЛ БЛОК if (block.generated) { ... continue; }]
+        //
+        // **ПОЯСНЕНИЕ ДЛЯ РАЗРАБОТЧИКОВ:**
+        // Причина удаления: Любой STA#+ (вручную или сгенерированный),
+        // который обновляет окно диалога (например, с портретом персонажа),
+        // ДОЛЖЕН сопровождаться ShowText с тегом имени, если это диалог.
+        //
+        // Старая логика ошибочно пропускала проверку для паттерна
+        // [Сгенерированный STA#+] -> [ShowText#+], что приводило к
+        // визуальному багу: исчезновению портрета персонажа при
+        // обновлении окна диалога.
+        //
+        // Новая логика: Проверка выполняется ВСЕГДА.
+
+        // --- Теперь эта проверка выполняется ДЛЯ ВСЕХ STA#+ ---
+
+        // --- Проверка на Ошибку 2 (v25 - Жесткое правило якоря STA) ---
+        let isNarrationBlock = true; // По умолчанию считаем, что это повествование
+
+        // 1. Ищем "якорь" - последний STA (без #+) строго перед текущим STA#+
+        let anchorStaIndex = -1;
+        let k = i - 1;
+        while (k >= 0) {
+          const prev = textBlocks[k];
+          if (prev.isDeleted) { k--; continue; }
+
+          if (prev.type === 'ShowTextAttributes') {
+            if (!prev.manualPlus && !prev.generated) {
+              anchorStaIndex = k; // Нашли якорь
+              break;
             }
+            k--;
+            continue;
           }
 
-          // --- Проверка на Ошибку 1 (Фаза 1 Очистки) v16 ---
-          // STA стоит сразу после имени
-          if (prevBlock.type === 'ShowText' && window.isNameBlock(prevBlock.text)) {
-            return true; // Нашли Ошибку 1 (Фаза 1)
+          if (prev.type === 'ShowText') {
+            k--;
+            continue;
           }
 
-          // --- Проверка на Ошибку 2 (Нет тега) v17 ---
-          
-          // <<< ИЗМЕНЕНИЕ: УДАЛЕНО "УМНОЕ" ИСКЛЮЧЕНИЕ >>>
-          // [ЗДЕСЬ БЫЛ БЛОК if (block.generated) { ... continue; }]
-          //
-          // **ПОЯСНЕНИЕ ДЛЯ РАЗРАБОТЧИКОВ:**
-          // Причина удаления: Любой STA#+ (вручную или сгенерированный),
-          // который обновляет окно диалога (например, с портретом персонажа),
-          // ДОЛЖЕН сопровождаться ShowText с тегом имени, если это диалог.
-          //
-          // Старая логика ошибочно пропускала проверку для паттерна
-          // [Сгенерированный STA#+] -> [ShowText#+], что приводило к
-          // визуальному багу: исчезновению портрета персонажа при
-          // обновлении окна диалога.
-          //
-          // Новая логика: Проверка выполняется ВСЕГДА.
-          
-          // --- Теперь эта проверка выполняется ДЛЯ ВСЕХ STA#+ ---
-          
-          // --- Проверка на Ошибку 2 (v25 - Жесткое правило якоря STA) ---
-          let isNarrationBlock = true; // По умолчанию считаем, что это повествование
+          break; // Любая другая команда прерывает поиск
+        }
 
-          // 1. Ищем "якорь" - последний STA (без #+) строго перед текущим STA#+
-          let anchorStaIndex = -1;
-          let k = i - 1;
-          while (k >= 0) {
-              const prev = textBlocks[k];
-              if (prev.isDeleted) { k--; continue; }
+        // 2. Ищем "родителя" - первый ShowText (без #+) ПОСЛЕ найденного якоря
+        let parentBlock = null;
+        if (anchorStaIndex !== -1) {
+          k = anchorStaIndex + 1;
+          while (k < i) { // Ищем между якорем и нашей STA#+
+            const block = textBlocks[k];
+            if (block.isDeleted) { k++; continue; }
 
-              if (prev.type === 'ShowTextAttributes') {
-                  if (!prev.manualPlus && !prev.generated) {
-                      anchorStaIndex = k; // Нашли якорь
-                      break;
-                  }
-                  k--;
-                  continue;
-              }
+            if (block.type === 'ShowText' && !block.manualPlus && !block.generated) {
+              parentBlock = block;
+              break;
+            }
 
-              if (prev.type === 'ShowText') {
-                  k--;
-                  continue;
-              }
+            if (block.type === 'ShowTextAttributes' && block.manualPlus) {
+              k++;
+              continue;
+            }
 
-              break; // Любая другая команда прерывает поиск
+            break;
           }
-          
-          // 2. Ищем "родителя" - первый ShowText (без #+) ПОСЛЕ найденного якоря
-          let parentBlock = null;
-          if (anchorStaIndex !== -1) {
-              k = anchorStaIndex + 1;
-              while (k < i) { // Ищем между якорем и нашей STA#+
-                  const block = textBlocks[k];
-                  if (block.isDeleted) { k++; continue; }
+        }
+        // (Если якорь не найден — считаем повествованием)
 
-                  if (block.type === 'ShowText' && !block.manualPlus && !block.generated) {
-                      parentBlock = block;
-                      break;
-                  }
-                  
-                  if (block.type === 'ShowTextAttributes' && block.manualPlus) {
-                       k++;
-                       continue;
-                  }
-                  
-                  break;
-              }
+        if (parentBlock) {
+          if (window.isNameBlock(parentBlock.text)) {
+            isNarrationBlock = false; // Это диалог
+          } else {
+            isNarrationBlock = true; // Это повествование
           }
-          // (Если якорь не найден — считаем повествованием)
+        }
 
-          if (parentBlock) {
-              if (window.isNameBlock(parentBlock.text)) {
-                  isNarrationBlock = false; // Это диалог
-              } else {
-                  isNarrationBlock = true; // Это повествование
-              }
-          }
-          
-          if (!isNarrationBlock) {
-              return true; // Нашли Ошибку 2 (отсутствует тег)
-          }
+        if (!isNarrationBlock) {
+          return true; // Нашли Ошибку 2 (отсутствует тег)
+        }
       }
     } // Конец цикла for
     return false; // Ошибок не найдено
   };
 
   // Функция для ИСПРАВЛЕНИЯ ошибок тегов (ОБНОВЛЕНО v17)
-  global.autoFixNameTagErrors = function(silent = false) {
+  global.autoFixNameTagErrors = function (silent = false) {
     if (!window.textBlocks) return;
 
     if (typeof pushUndo === 'function') pushUndo();
-    
+
     let blocksToFix_Prefix = [];
     let blocksToFix_MissingTag = [];
     let lastKnownNameTag = null;
@@ -1230,38 +1230,38 @@
       if (block.isDeleted) continue;
 
       if (block.type === 'ShowTextAttributes' && block.manualPlus) {
-        
+
         let nextRelevantBlock = null;
         for (let j = i + 1; j < window.textBlocks.length; j++) {
-            if (window.textBlocks[j].isDeleted) continue;
-            if (window.textBlocks[j].type === 'ShowText') { nextRelevantBlock = window.textBlocks[j]; break; }
-            if (window.textBlocks[j].type !== 'ShowText' && window.textBlocks[j].type !== 'ShowTextAttributes' && window.textBlocks[j].type !== undefined) { break; }
+          if (window.textBlocks[j].isDeleted) continue;
+          if (window.textBlocks[j].type === 'ShowText') { nextRelevantBlock = window.textBlocks[j]; break; }
+          if (window.textBlocks[j].type !== 'ShowText' && window.textBlocks[j].type !== 'ShowTextAttributes' && window.textBlocks[j].type !== undefined) { break; }
         }
-        
+
         const prevBlock = getPreviousVisibleBlock(window.textBlocks, i);
         if (prevBlock && prevBlock.type === 'ShowText') {
 
           // Правило 1 (Фаза 1): STA #+ после имени
-          if (window.isNameBlock(prevBlock.text)) { 
-            blocksToPreClean.push(block); 
-            continue; 
+          if (window.isNameBlock(prevBlock.text)) {
+            blocksToPreClean.push(block);
+            continue;
           }
 
           // Правило 2 (Ошибка 3): STA #+ в середине предложения #+
           if (prevBlock.manualPlus && nextRelevantBlock && nextRelevantBlock.manualPlus) {
             // <<< ИСПРАВЛЕНИЕ: Игнорируем, если STA был сгенерирован (generated: true) >>>
             if (!block.generated) {
-                blocksToPreClean.push(block);
-                continue; 
+              blocksToPreClean.push(block);
+              continue;
             }
           }
         }
       }
     }
-    
+
     if (blocksToPreClean.length > 0) {
       blocksToPreClean.forEach(block => {
-        block.isDeleted = true; 
+        block.isDeleted = true;
         preCleanedCount++;
       });
     }
@@ -1271,7 +1271,7 @@
     // === Шаг 2: Ищем ошибки (v17) на *полном*, но помеченном массиве ===
     for (let i = 0; i < window.textBlocks.length; i++) {
       const block = window.textBlocks[i];
-      if (block.isDeleted) continue; 
+      if (block.isDeleted) continue;
 
       if (block.type === 'ShowText') {
         const text = block.text;
@@ -1285,130 +1285,130 @@
           }
         }
       }
-      
+
       if (block.type === 'ShowTextAttributes' && block.manualPlus) {
-          
-          let nextRelevantBlock = null;
-          for (let j = i + 1; j < window.textBlocks.length; j++) {
-              if (window.textBlocks[j].isDeleted) continue;
-              if (window.textBlocks[j].type === 'ShowText') { nextRelevantBlock = window.textBlocks[j]; break; }
-              if (window.textBlocks[j].type !== 'ShowText' && window.textBlocks[j].type !== 'ShowTextAttributes' && window.textBlocks[j].type !== undefined) { break; }
-          }
-          
-          if (!nextRelevantBlock || window.isNameBlock(nextRelevantBlock.text)) {
+
+        let nextRelevantBlock = null;
+        for (let j = i + 1; j < window.textBlocks.length; j++) {
+          if (window.textBlocks[j].isDeleted) continue;
+          if (window.textBlocks[j].type === 'ShowText') { nextRelevantBlock = window.textBlocks[j]; break; }
+          if (window.textBlocks[j].type !== 'ShowText' && window.textBlocks[j].type !== 'ShowTextAttributes' && window.textBlocks[j].type !== undefined) { break; }
+        }
+
+        if (!nextRelevantBlock || window.isNameBlock(nextRelevantBlock.text)) {
+          continue;
+        }
+
+        // (Ошибка 3 и Ошибка 1 (Фаза 1) уже обработаны и помечены isDeleted)
+
+        // <<< ИЗМЕНЕНИЕ: УДАЛЕНО "УМНОЕ" ИСКЛЮЧЕНИЕ >>>
+        // [ЗДЕСЬ БЫЛ БЛОК if (block.generated) { ... }]
+        // [И if (!shouldCheck) { continue; }]
+        //
+        // **ПОЯСНЕНИЕ ДЛЯ РАЗРАБОТЧИКОВ:**
+        // Причина удаления: см. комментарий в hasNameTagErrors.
+        // Нам нужно, чтобы фиксер (эта функция) находил те же
+        // ошибки, что и детектор (hasNameTagErrors), и исправлял их.
+
+        // --- Проверка на Ошибку 2 (v25 - Жесткое правило якоря STA) ---
+        let isNarrationBlock = true; // По умолчанию считаем, что это повествование
+        let foundNameTag = null;
+
+        // 1. Ищем "якорь" - последний STA (без #+)
+        let anchorStaIndex = -1;
+        let k = i - 1;
+        while (k >= 0) {
+          const prev = textBlocks[k];
+          if (prev.isDeleted) { k--; continue; }
+
+          if (prev.type === 'ShowTextAttributes') {
+            if (!prev.manualPlus && !prev.generated) {
+              anchorStaIndex = k; // Нашли якорь
+              break;
+            }
+            k--;
             continue;
           }
+          if (prev.type === 'ShowText') {
+            k--;
+            continue;
+          }
+          break;
+        }
 
-          // (Ошибка 3 и Ошибка 1 (Фаза 1) уже обработаны и помечены isDeleted)
-          
-          // <<< ИЗМЕНЕНИЕ: УДАЛЕНО "УМНОЕ" ИСКЛЮЧЕНИЕ >>>
-          // [ЗДЕСЬ БЫЛ БЛОК if (block.generated) { ... }]
-          // [И if (!shouldCheck) { continue; }]
-          //
-          // **ПОЯСНЕНИЕ ДЛЯ РАЗРАБОТЧИКОВ:**
-          // Причина удаления: см. комментарий в hasNameTagErrors.
-          // Нам нужно, чтобы фиксер (эта функция) находил те же
-          // ошибки, что и детектор (hasNameTagErrors), и исправлял их.
-          
-          // --- Проверка на Ошибку 2 (v25 - Жесткое правило якоря STA) ---
-          let isNarrationBlock = true; // По умолчанию считаем, что это повествование
-          let foundNameTag = null; 
+        // 2. Ищем "родителя" - первый ShowText (без #+) ПОСЛЕ якоря
+        let parentBlock = null;
+        if (anchorStaIndex !== -1) {
+          k = anchorStaIndex + 1;
 
-          // 1. Ищем "якорь" - последний STA (без #+)
-          let anchorStaIndex = -1;
-          let k = i - 1;
-          while (k >= 0) {
-              const prev = textBlocks[k];
-              if (prev.isDeleted) { k--; continue; }
+          while (k < i) { // Ищем между якорем и нашей STA#+
+            const block = textBlocks[k];
+            if (block.isDeleted) { k++; continue; }
 
-              if (prev.type === 'ShowTextAttributes') {
-                  if (!prev.manualPlus && !prev.generated) {
-                      anchorStaIndex = k; // Нашли якорь
-                      break;
-                  }
-                  k--;
-                  continue;
-              }
-              if (prev.type === 'ShowText') {
-                  k--;
-                  continue;
-              }
+            if (block.type === 'ShowText' && !block.manualPlus && !block.generated) {
+              parentBlock = block;
               break;
-          }
-          
-          // 2. Ищем "родителя" - первый ShowText (без #+) ПОСЛЕ якоря
-          let parentBlock = null;
-          if (anchorStaIndex !== -1) {
-              k = anchorStaIndex + 1;
-              
-              while (k < i) { // Ищем между якорем и нашей STA#+
-                  const block = textBlocks[k];
-                  if (block.isDeleted) { k++; continue; }
+            }
 
-                  if (block.type === 'ShowText' && !block.manualPlus && !block.generated) {
-                      parentBlock = block;
-                      break;
-                  }
-                  
-                  if (block.type === 'ShowTextAttributes' && block.manualPlus) {
-                       k++;
-                       continue;
-                  }
-                  
-                  break;
-              }
-          }
-          // (Если якорь не найден - повествование)
+            if (block.type === 'ShowTextAttributes' && block.manualPlus) {
+              k++;
+              continue;
+            }
 
-          if (parentBlock) {
-              if (window.isNameBlock(parentBlock.text)) {
-                  isNarrationBlock = false; // Это диалог
-                  const nameMatch = parentBlock.text.match(/(<∾∾C\[6\].*?∾∾C\[0\]>)/);
-                  if (nameMatch) foundNameTag = nameMatch[1];
-              } else {
-                  isNarrationBlock = true; // Это повествование
-              }
+            break;
           }
+        }
+        // (Если якорь не найден - повествование)
 
-          if (!isNarrationBlock) {
-               blocksToFix_MissingTag.push({
-                   block: nextRelevantBlock,
-                   nameTag: foundNameTag // Используем тег, найденный у "родителя"
-               }); // Нашли Ошибку 2
+        if (parentBlock) {
+          if (window.isNameBlock(parentBlock.text)) {
+            isNarrationBlock = false; // Это диалог
+            const nameMatch = parentBlock.text.match(/(<∾∾C\[6\].*?∾∾C\[0\]>)/);
+            if (nameMatch) foundNameTag = nameMatch[1];
+          } else {
+            isNarrationBlock = true; // Это повествование
           }
+        }
+
+        if (!isNarrationBlock) {
+          blocksToFix_MissingTag.push({
+            block: nextRelevantBlock,
+            nameTag: foundNameTag // Используем тег, найденный у "родителя"
+          }); // Нашли Ошибку 2
+        }
       }
     } // Конец Шага 2
 
     // === Шаг 3: Применяем исправления ===
     const totalFixes = blocksToFix_Prefix.length + blocksToFix_MissingTag.length;
-    
+
     if (totalFixes === 0 && preCleanedCount === 0) {
       if (!silent) alert('Ошибок в тегах имён для исправления не найдено.');
       if (typeof window.undoStack === 'object' && window.undoStack.length > 0) {
         window.undoStack.pop();
         if (typeof document.getElementById === 'function' && document.getElementById('undoBtn')) {
-           document.getElementById('undoBtn').disabled = window.undoStack.length === 0;
+          document.getElementById('undoBtn').disabled = window.undoStack.length === 0;
         }
       }
       return;
     }
-    
+
     // --- ПОТОМ Исправляем Ошибку 1 (Добавляем префикс ∾\n) ---
     blocksToFix_Prefix.forEach(block => {
       // ИСПРАВЛЕНО: Находим сам тег и ЗАМЕНЯЕМ все, что было до него,
       // вместо простого добавления префикса.
-      
+
       // Ищем начало тега и весь текст после него
       const nameTagMatch = block.text.match(/(<∾∾C\[6\].*?∾∾C\[0\]>[\s\S]*)$/);
-      
+
       if (nameTagMatch) {
         // Нашли тег. Берем его и весь текст после него (match[1])
-        const tagAndRest = nameTagMatch[1]; 
+        const tagAndRest = nameTagMatch[1];
         // Собираем строку заново с ПРАВИЛЬНЫМ префиксом
-        block.text = '∾\n' + tagAndRest; 
+        block.text = '∾\n' + tagAndRest;
       } else {
         // Запасной вариант, если тег не нашелся (хотя hasNameTag не должен был этого допустить)
-        block.text = '∾\n' + block.text.trim(); 
+        block.text = '∾\n' + block.text.trim();
       }
       fixedCount++;
     });
@@ -1428,9 +1428,9 @@
     if (preCleanedCount > 0) alertMsg += `• Удалено "мусорных" ShowTextAttributes: ${preCleanedCount}\n`;
     if (fixedCount > 0) alertMsg += `• Исправлено тегов имён: ${fixedCount}\n`;
     if (failedCount > 0) alertMsg += `• Ошибок (не найден тег): ${failedCount}\n`;
-    
+
     if (!silent) alert(alertMsg);
-    
+
     // --- Шаг 4: Перерисовываем редактор и обновляем все ошибки ---
     if (typeof renderTextBlocks === 'function') renderTextBlocks();
     if (typeof window.updateMatchLamp === 'function') window.updateMatchLamp();
@@ -1438,7 +1438,7 @@
   };
 
   // === Функция для запоминания строк-огрызков ===
-  global.memorizeOrphanedLines = function() {
+  global.memorizeOrphanedLines = function () {
     if (!window.textBlocks || textBlocks.length === 0) return;
 
     // Находим ВСЕ ShowText без пары (не имя, не сгенерированы)
@@ -1446,10 +1446,10 @@
     textBlocks.forEach((block, i) => {
       if (block.isDeleted) return;
       if (block.type === 'ShowText' &&
-          window.japBlocks && window.japBlocks.length > 0 &&
-          !window.isNameBlock(block.text) &&
-          !block.japaneseLink &&
-          !block.generated) {
+        window.japBlocks && window.japBlocks.length > 0 &&
+        !window.isNameBlock(block.text) &&
+        !block.japaneseLink &&
+        !block.generated) {
         orphanedIndices.push(i);
       }
     });
@@ -1495,31 +1495,31 @@
   };
 
   // === Функция для обновления видимости кнопок исправления ===
-  global.updateFixButtonsVisibility = function() {
+  global.updateFixButtonsVisibility = function () {
     const restoreBtn = document.getElementById('restoreStructBtn');
     const fixScriptBtn = document.getElementById('fixScriptBtn');
     const fixIndentBtn = document.getElementById('fixIndentBtn');
     const fixNameTagsBtn = document.getElementById('fixNameTagsBtn');
-      const fixAffectionBtn = document.getElementById('fixAffectionBtn'); // <<< ИЗМЕНЕНИЕ 1
-  const clearOrphanedBtn = document.getElementById('clearOrphanedBtn');
-  const memorizeOrphanedBtn = document.getElementById('memorizeOrphanedBtn');
-  
-  if (!restoreBtn || !fixScriptBtn || !fixIndentBtn || !clearOrphanedBtn || !memorizeOrphanedBtn || !fixNameTagsBtn || !fixAffectionBtn) return;
-    
+    const fixAffectionBtn = document.getElementById('fixAffectionBtn'); // <<< ИЗМЕНЕНИЕ 1
+    const clearOrphanedBtn = document.getElementById('clearOrphanedBtn');
+    const memorizeOrphanedBtn = document.getElementById('memorizeOrphanedBtn');
+
+    if (!restoreBtn || !fixScriptBtn || !fixIndentBtn || !clearOrphanedBtn || !memorizeOrphanedBtn || !fixNameTagsBtn || !fixAffectionBtn) return;
+
     // Определяем, какие типы ошибок присутствуют
     const hasStructureErrors = window.hasStructureErrors();
     const hasScriptErrors = window.hasScriptErrors();
     const hasIndentErrors = window.hasIndentErrors();
     const hasTagsErrors = window.hasNameTagErrors();
 
-      // <<< ИЗМЕНЕНИЕ 2: Новая, полная логика проверки шаблонов >>>
-  const templateRegex = /(<∾∾C\[6\].*?)(∾∾C\[0\]>)\s*\((Уровень симпатии:|Привязанность:)\s*(∾+)(V\[\d+\])\)([\s\S]*)$/;
-  let hasAffectionErrors = false;
-  if (window.textBlocks) {
+    // <<< ИЗМЕНЕНИЕ 2: Новая, полная логика проверки шаблонов >>>
+    const templateRegex = /(<∾∾C\[6\].*?)(∾∾C\[0\]>)\s*\((Уровень симпатии:|Привязанность:)\s*(∾+)(V\[\d+\])\)([\s\S]*)$/;
+    let hasAffectionErrors = false;
+    if (window.textBlocks) {
       for (let i = 0; i < window.textBlocks.length; i++) {
         const block = window.textBlocks[i];
         if (block.type !== 'ShowText' || block.isDeleted) continue;
-        
+
         const match = block.text.match(templateRegex);
         if (!match) continue; // Не шаблон
 
@@ -1528,57 +1528,56 @@
           hasAffectionErrors = true;
           break; // Нашли ошибку, выходим
         }
-        
+
         // Проверяем на ошибки СЛИЯНИЯ
         const dialoguePart = match[6];
         if (dialoguePart.trim() === '') { // Блок не объединен
           if ((i + 1) < window.textBlocks.length) {
-            const nextBlock = window.textBlocks[i+1];
-            if (nextBlock.type === 'ShowText' && 
-                !nextBlock.isDeleted && 
-                !window.isNameBlock(nextBlock.text) &&
-                !nextBlock.manualPlus && 
-                !nextBlock.generated) 
-            {
+            const nextBlock = window.textBlocks[i + 1];
+            if (nextBlock.type === 'ShowText' &&
+              !nextBlock.isDeleted &&
+              !window.isNameBlock(nextBlock.text) &&
+              !nextBlock.manualPlus &&
+              !nextBlock.generated) {
               hasAffectionErrors = true; // Нашли блок для слияния
               break; // Нашли ошибку, выходим
             }
           }
         }
       }
-  }
-  // <<< КОНЕЦ ИЗМЕНЕНИЯ 2 >>>
-    
+    }
+    // <<< КОНЕЦ ИЗМЕНЕНИЯ 2 >>>
+
     // Считаем количество "строк-огрызков"
     let orphanedCount = 0;
     if (window.textBlocks && window.japBlocks && window.japBlocks.length > 0) {
       textBlocks.forEach((block) => {
-        if (!block.isDeleted && block.type === 'ShowText' && 
-            !window.isNameBlock(block.text) && !block.japaneseLink && !block.generated && !block.manualPlus) {
+        if (!block.isDeleted && block.type === 'ShowText' &&
+          !window.isNameBlock(block.text) && !block.japaneseLink && !block.generated && !block.manualPlus) {
           orphanedCount++;
         }
       });
     }
 
-      // --- НАЧАЛО ИЗМЕНЕНИЯ: Новая логика отображения ---
-  fixNameTagsBtn.style.display = hasTagsErrors ? '' : 'none';
-  fixAffectionBtn.style.display = hasAffectionErrors ? '' : 'none'; // <<< ИЗМЕНЕНИЕ 3
-    
+    // --- НАЧАЛО ИЗМЕНЕНИЯ: Новая логика отображения ---
+    fixNameTagsBtn.style.display = hasTagsErrors ? '' : 'none';
+    fixAffectionBtn.style.display = hasAffectionErrors ? '' : 'none'; // <<< ИЗМЕНЕНИЕ 3
+
     // Показываем кнопки для "сирот" только если есть сироты И НЕТ структурных ошибок
     const showOrphaned = (orphanedCount > 0 && !hasStructureErrors);
 
     clearOrphanedBtn.style.display = showOrphaned ? '' : 'none';
     memorizeOrphanedBtn.style.display = showOrphaned ? '' : 'none';
-    
+
     // Кнопка "Безопасно исправить" теперь показывается только при наличии структурных ошибок
     restoreBtn.style.display = hasStructureErrors ? '' : 'none';
     // --- КОНЕЦ ИЗМЕНЕНИЯ ---
-    
-      // Остальные кнопки работают как раньше
-  fixScriptBtn.style.display = hasScriptErrors ? '' : 'none';
-  fixIndentBtn.style.display = hasIndentErrors ? '' : 'none';
 
-  if (orphanedCount > 0) {
+    // Остальные кнопки работают как раньше
+    fixScriptBtn.style.display = hasScriptErrors ? '' : 'none';
+    fixIndentBtn.style.display = hasIndentErrors ? '' : 'none';
+
+    if (orphanedCount > 0) {
       clearOrphanedBtn.title = `Удалить ${orphanedCount} строк без сопоставления с японским файлом`;
       memorizeOrphanedBtn.title = `Пометить ${orphanedCount} строк как строки-продолжения, добавив в конец #+`;
     }
@@ -1588,7 +1587,7 @@
    * Новая функция для исправления шаблонов "Привязанности".
    * Находит блоки, меняет текст, исправляет `∾` И ОБЪЕДИНЯЕТ их со следующей строкой диалога.
    */
-  global.fixAffectionTemplates = function() {
+  global.fixAffectionTemplates = function () {
     if (!window.textBlocks) return;
 
     // <<< ИЗМЕНЕНИЕ 1: Regex теперь захватывает и диалог в конце ([\s\S]*)$ >>>
@@ -1601,7 +1600,7 @@
     // Мы должны итерировать в обратном порядке, так как можем удалять элементы
     for (let i = window.textBlocks.length - 1; i >= 0; i--) {
       const block = window.textBlocks[i];
-      
+
       if (block.type !== 'ShowText' || block.isDeleted) continue;
 
       const match = block.text.match(templateRegex);
@@ -1614,93 +1613,92 @@
       const slashes = match[4];
       const variable = match[5];
       let dialoguePart = match[6]; // Диалог, который УЖЕ в этом блоке
-      
+
       let nextBlockToDelete = null;
 
-          // Проверяем, нужно ли слияние
-    let nextBlockJapLink = null; // Для сохранения японской связи следующего блока
-    if (dialoguePart.trim() === '') {
-      if ((i + 1) < window.textBlocks.length) {
-        const nextBlock = window.textBlocks[i+1];
-        if (nextBlock.type === 'ShowText' && 
-            !nextBlock.isDeleted && 
+      // Проверяем, нужно ли слияние
+      let nextBlockJapLink = null; // Для сохранения японской связи следующего блока
+      if (dialoguePart.trim() === '') {
+        if ((i + 1) < window.textBlocks.length) {
+          const nextBlock = window.textBlocks[i + 1];
+          if (nextBlock.type === 'ShowText' &&
+            !nextBlock.isDeleted &&
             !window.isNameBlock(nextBlock.text) &&
-            !nextBlock.manualPlus && 
-            !nextBlock.generated) 
-        {
-          // Нашли блок для слияния
-          dialoguePart = nextBlock.text; // Берем его текст
-          nextBlockJapLink = nextBlock.japaneseLink; // Сохраняем японскую связь
-          nextBlockToDelete = nextBlock; // Помечаем на удаление
+            !nextBlock.manualPlus &&
+            !nextBlock.generated) {
+            // Нашли блок для слияния
+            dialoguePart = nextBlock.text; // Берем его текст
+            nextBlockJapLink = nextBlock.japaneseLink; // Сохраняем японскую связь
+            nextBlockToDelete = nextBlock; // Помечаем на удаление
+          }
         }
       }
-    }
-    
-    // Определяем, нужно ли что-то делать с этим блоком
-    const needsFixing = (
-      oldText === 'Уровень симпатии:' || // 1. Текст "Уровень симпатии"
-      slashes !== '∾∾' ||                 // 2. Неправильное число ∾
-      nextBlockToDelete                   // 3. Есть блок для слияния
-    );
 
-    if (needsFixing) {
-      fixedCount++;
-      
-      // Сохраняем оригинальный префикс (∾\n), если он был
-      const prefixMatch = block.text.match(/^(∾\n)\s*/);
-      const prefix = prefixMatch ? prefixMatch[1] : '';
-      
-      // Если диалог был в этом же блоке, убираем \n
-      if (!nextBlockToDelete && dialoguePart.startsWith('\n')) {
-        dialoguePart = dialoguePart.substring(1);
-      }
+      // Определяем, нужно ли что-то делать с этим блоком
+      const needsFixing = (
+        oldText === 'Уровень симпатии:' || // 1. Текст "Уровень симпатии"
+        slashes !== '∾∾' ||                 // 2. Неправильное число ∾
+        nextBlockToDelete                   // 3. Есть блок для слияния
+      );
 
-      // Собираем новую, исправленную и объединенную строку
-      block.text = `${prefix}${tagStart} (Привязанность: ∾∾${variable})${tagEnd}${dialoguePart}`;
-      
-      // Объединяем японские связи: если у следующего блока есть japaneseLink, объединяем его с текущим
-      if (nextBlockJapLink && nextBlockJapLink.text) {
-        // Если у текущего блока уже есть японская связь, объединяем тексты
-        if (block.japaneseLink && block.japaneseLink.text) {
-          // Объединяем японские тексты через перенос строки
-          block.japaneseLink.text = block.japaneseLink.text + '\n' + nextBlockJapLink.text;
-        } else {
-          // Если у текущего блока нет японской связи, просто копируем из следующего
-          block.japaneseLink = nextBlockJapLink;
+      if (needsFixing) {
+        fixedCount++;
+
+        // Сохраняем оригинальный префикс (∾\n), если он был
+        const prefixMatch = block.text.match(/^(∾\n)\s*/);
+        const prefix = prefixMatch ? prefixMatch[1] : '';
+
+        // Если диалог был в этом же блоке, убираем \n
+        if (!nextBlockToDelete && dialoguePart.startsWith('\n')) {
+          dialoguePart = dialoguePart.substring(1);
+        }
+
+        // Собираем новую, исправленную и объединенную строку
+        block.text = `${prefix}${tagStart} (Привязанность: ∾∾${variable})${tagEnd}${dialoguePart}`;
+
+        // Объединяем японские связи: если у следующего блока есть japaneseLink, объединяем его с текущим
+        if (nextBlockJapLink && nextBlockJapLink.text) {
+          // Если у текущего блока уже есть японская связь, объединяем тексты
+          if (block.japaneseLink && block.japaneseLink.text) {
+            // Объединяем японские тексты через перенос строки
+            block.japaneseLink.text = block.japaneseLink.text + '\n' + nextBlockJapLink.text;
+          } else {
+            // Если у текущего блока нет японской связи, просто копируем из следующего
+            block.japaneseLink = nextBlockJapLink;
+          }
+        }
+
+        // Помечаем следующий блок как "удаленный"
+        if (nextBlockToDelete) {
+          nextBlockToDelete.isDeleted = true;
+          // Очищаем японскую связь у удаляемого блока, чтобы она не отображалась
+          nextBlockToDelete.japaneseLink = null;
         }
       }
-      
-      // Помечаем следующий блок как "удаленный"
-      if (nextBlockToDelete) {
-        nextBlockToDelete.isDeleted = true;
-        // Очищаем японскую связь у удаляемого блока, чтобы она не отображалась
-        nextBlockToDelete.japaneseLink = null;
-      }
-    }
     } // Конец цикла for
     // <<< КОНЕЦ ИЗМЕНЕНИЯ 2 >>>
 
-      if (fixedCount > 0) {
-    alert(`Исправлено и объединено ${fixedCount} шаблонов привязанности.`);
-    
-    // Если были загружены оба файла, нужно пересоздать японские связи
-    // так как объединение блоков могло изменить структуру
-    if (window.japBlocks && window.japBlocks.length > 0 && typeof linkAndRender === 'function') {
-      linkAndRender(); // Пересоздаем связи с японскими блоками
+    if (fixedCount > 0) {
+      alert(`Исправлено и объединено ${fixedCount} шаблонов привязанности.`);
+
+      // Если были загружены оба файла, нужно пересоздать японские связи
+      // так как объединение блоков могло изменить структуру
+      if (window.japBlocks && window.japBlocks.length > 0 && typeof linkAndRender === 'function') {
+        linkAndRender(); // Пересоздаем связи с японскими блоками
+      } else {
+        // Если японский файл не загружен, просто перерисовываем
+        if (typeof renderTextBlocks === 'function') renderTextBlocks();
+      }
+
+      if (typeof window.updateMatchLamp === 'function') window.updateMatchLamp();
+      if (typeof updateRedIndices === 'function') updateRedIndices();
     } else {
-      // Если японский файл не загружен, просто перерисовываем
-      if (typeof renderTextBlocks === 'function') renderTextBlocks();
-    }
-    
-    if (typeof window.updateMatchLamp === 'function') window.updateMatchLamp();
-    if (typeof updateRedIndices === 'function') updateRedIndices();
-  } else {
       alert('Шаблоны для исправления или объединения не найдены.');
       // Отменяем добавление в историю, если ничего не изменилось
       if (typeof window.undoStack === 'object' && window.undoStack.length > 0) {
         window.undoStack.pop();
         if (typeof document.getElementById === 'function' && document.getElementById('undoBtn')) {
-           document.getElementById('undoBtn').disabled = window.undoStack.length === 0;
+          document.getElementById('undoBtn').disabled = window.undoStack.length === 0;
         }
       }
     }
