@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8">
-  <title>MGQP Map Editor v1.4.90</title>
+  <title>MGQP Map Editor v1.5.00</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="Java scripts/main_script.js"></script>
   <script src="Java scripts/restore-mode.js"></script>
@@ -206,9 +206,14 @@
       <input type="file" id="fileInput" accept=".txt">
     </div>
     <div>
-      <label for="japaneseFileInput">2. Загрузить японский файл (Опционально):</label><br>
-      <input type="file" id="japaneseFileInput" accept=".txt">
+      <label for="japaneseFolderInput" style="color:#0033cc; cursor:pointer;">2. Выбрать ПАПКУ с японскими файлами (для
+        Авто-загрузки):</label><br>
+      <input type="file" id="japaneseFolderInput" webkitdirectory directory multiple>
+      <span id="jpFolderStatus" style="font-size:12px; margin-left:10px;"></span>
+      <div id="jpAutoLoadStatus" style="display:none; color:green; font-weight:bold; font-size:12px; margin-top:4px;">
+      </div>
     </div>
+
   </div>
 
   <!-- Вкладки редактора и предпросмотра -->
@@ -784,6 +789,27 @@
     // КОНЕЦ ЗАМЕНЫ
     // =================================================================================
 
+    // Кэш для файлов из папки японского языка
+    window.japaneseFilesCache = {};
+
+    document.getElementById('japaneseFolderInput').addEventListener('change', function (e) {
+      const files = e.target.files;
+      let count = 0;
+      window.japaneseFilesCache = {};
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i];
+        // Сохраняем по имени файла (например, Map001.txt)
+        // Если нужно учитывать структуру папок, можно использовать f.webkitRelativePath
+        window.japaneseFilesCache[f.name] = f;
+        count++;
+      }
+      const status = document.getElementById('jpFolderStatus');
+      if (status) {
+        status.textContent = `Закешировано файлов: ${count}`;
+        status.style.color = '#008800';
+      }
+    });
+
     document.getElementById('fileInput').addEventListener('change', function (e) {
       const file = e.target.files[0];
       if (!file) return;
@@ -795,41 +821,59 @@
         window.originalLines = lines.slice();
         originalLines = lines.slice();
         extractTexts();
-        updateMatchLamp();
-        updateRedIndices();
-        // Обновляем видимость кнопок исправления
-        if (typeof window.updateFixButtonsVisibility === 'function') {
-          window.updateFixButtonsVisibility();
-        }
-      };
-      reader.readAsText(file, 'utf-8');
-    });
-    document.getElementById('japaneseFileInput').addEventListener('change', function (e) {
-      const file = e.target.files[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = function (evt) {
-        window.fullJapLines = evt.target.result.split('\n');
-        window.japaneseLines = window.fullJapLines; // для совместимости
 
-        // Проверяем, загружен ли русский файл
-        if (textBlocks.length === 0) {
-          // Если русский файл не загружен, работаем только с японским
-          extractJapaneseTextsOnly(window.japaneseLines);
+        // --- АВТОЗАГРУЗКА ЯПОНСКОГО ФАЙЛА ---
+        if (window.japaneseFilesCache && window.japaneseFilesCache[loadedFileName]) {
+          const japFile = window.japaneseFilesCache[loadedFileName];
+          console.log(`Автоматически найден японский файл: ${japFile.name}`);
+
+          const japReader = new FileReader();
+          japReader.onload = function (jEvt) {
+            window.fullJapLines = jEvt.target.result.split('\n');
+            window.japaneseLines = window.fullJapLines;
+
+            // Пересчитываем всё
+            if (textBlocks.length === 0) {
+              extractJapaneseTextsOnly(window.japaneseLines);
+            } else {
+              extractJapaneseTexts(window.japaneseLines);
+            }
+            updateMatchLamp();
+            updateRedIndices();
+            if (typeof window.updateFixButtonsVisibility === 'function') {
+              window.updateFixButtonsVisibility();
+            }
+
+            // Визуальное уведомление
+            const status = document.getElementById('jpAutoLoadStatus');
+            if (status) {
+              status.textContent = `Авто-загружен: ${japFile.name}`;
+              status.style.display = 'block';
+              setTimeout(() => { status.style.display = 'none'; }, 5000);
+            }
+
+            // === ИСПРАВЛЕНИЕ: Форсируем обновление UI (лампочка и кнопки) с небольшой задержкой ===
+            setTimeout(() => {
+              if (typeof window.updateMatchLamp === 'function') window.updateMatchLamp();
+            }, 100);
+          };
+          japReader.readAsText(japFile, 'utf-8');
         } else {
-          // Если русский файл загружен, работаем как обычно
-          extractJapaneseTexts(window.japaneseLines);
-        }
-
-        updateMatchLamp();
-        updateRedIndices();
-        // Обновляем видимость кнопок исправления
-        if (typeof window.updateFixButtonsVisibility === 'function') {
-          window.updateFixButtonsVisibility();
+          console.log("Японский файл не найден в кэше.");
+          // Если нет автофайла, просто обновляем лампу (вдруг японский был загружен вручную ранее? 
+          // Хотя логично, что новый файл сбрасывает контекст. Но старая логика не сбрасывала fullJapLines.
+          // Оставим как есть: updateMatchLamp() вызовется и покажет, что японский не подходит по структуре, если он старый
+          updateMatchLamp();
+          updateRedIndices();
+          if (typeof window.updateFixButtonsVisibility === 'function') {
+            window.updateFixButtonsVisibility();
+          }
         }
       };
       reader.readAsText(file, 'utf-8');
     });
+
+
 
     function resetJapaneseBlockMapping() {
       let used = new Array(textBlocks.length).fill(false);
@@ -1615,7 +1659,7 @@
           try {
             let origIdx = -1;
 
-            // Если есть японский файл, ищем по japaneseLink
+            // Если есть японский файл, ищем ТОЛЬКО по japaneseLink
             if (block.japaneseLink && block.japaneseLink.text) {
               const currentJap = block.japaneseLink.text.trim();
               origIdx = textBlocks.findIndex((b, idx2) =>
@@ -1625,16 +1669,15 @@
                 b.japaneseLink.text.trim() === currentJap
               );
             }
-
-            // Если не нашли по japaneseLink или японского файла нет, ищем по block.text
-            if (origIdx === -1) {
+            // ИНАЧЕ (если японского файла нет), ищем по русскому тексту
+            else {
               const currentText = block.text.trim();
               origIdx = textBlocks.findIndex((b, idx2) =>
                 idx2 < i &&
                 b.type === 'ShowText' &&
                 b.text &&
                 b.text.trim() === currentText &&
-                b.idx !== undefined // Только блоки из оригинального файла
+                b.idx !== undefined
               );
             }
 
