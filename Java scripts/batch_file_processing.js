@@ -565,7 +565,12 @@ async function batchCheckAllFiles() {
     }
 
     // 1. Проверяем ошибки на уровне строк с помощью новой функции
-    const lineLevelErrors = window.checkForLineLevelErrors(ruLines);
+    // Важно: передаем японские строки для корректной синхронизации отступов
+    let jpLines = null;
+    if (typeof jpText === 'string') {
+      jpLines = jpText.split(/\r?\n/);
+    }
+    const lineLevelErrors = window.checkForLineLevelErrors(ruLines, jpLines);
 
     // 2. Проверяем ошибки структуры, как и раньше
     const ruText = ruLines.join('\n');

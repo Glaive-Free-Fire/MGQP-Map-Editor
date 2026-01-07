@@ -1202,7 +1202,7 @@ setTimeout(function () {
   const originalCheckForLineLevelErrors = window.checkForLineLevelErrors;
 
   // Расширяем функцию проверки ошибок
-  window.checkForLineLevelErrors = function (lines) {
+  window.checkForLineLevelErrors = function (lines, optionalJpLines) {
     let errors = [];
 
     // 1. Вызываем базовые проверки (Японский текст, длина строк и т.д.)
@@ -1270,8 +1270,168 @@ setTimeout(function () {
         }
       }
     }
+
+    // 4. Логическая проверка и Синхронизация (Sync/Nesting Check)
+    // Определяем контекст японских строк: аргумент имеет приоритет над глобальной переменной
+    const validJpLines = optionalJpLines || (window.fullJapLines && window.fullJapLines.length > 0 ? window.fullJapLines : null);
+
+    if (validJpLines && validJpLines.length > 0) {
+      // === ВАРИАНТ А: СИНХРОНИЗАЦИЯ С ЯПОНСКИМ ФАЙЛОМ ===
+      const jLines = validJpLines;
+      let j = 0;
+
+      // Хелпер для получения сигнатуры строки
+      function getSig(line) {
+        const t = line.trim();
+        if (!t) return 'BLK';
+        if (/^CommonEvent/.test(t)) return 'CE ' + (t.match(/\d+/) || [])[0];
+        if (/^Page/.test(t)) return 'PG ' + (t.match(/\d+/) || [])[0];
+        if (/^ShowTextAttributes/.test(t)) return 'ATTR';
+        if (/^ShowText/.test(t)) return 'TXT';
+        if (/^Empty/.test(t)) return 'EMPTY';
+        if (/^Comment/.test(t)) return 'CMT';
+        // Для остальных команд берем первое слово
+        const m = t.match(/^([a-zA-Z]+)/);
+        return m ? m[1] : 'UNK';
+      }
+
+      for (let i = 0; i < lines.length; i++) {
+        const rLine = lines[i];
+        const rSig = getSig(rLine);
+        if (rSig === 'BLK') continue;
+
+        // Ищем следующую непустую строку в JP
+        let tempJ = j;
+        while (tempJ < jLines.length && getSig(jLines[tempJ]) === 'BLK') tempJ++;
+
+        // Если JP кончился, прекращаем проверки
+        if (tempJ >= jLines.length) break;
+
+        const jLine = jLines[tempJ];
+        const jSig = getSig(jLine);
+
+        // 1. Полное совпадение сигнатуры
+        if (rSig === jSig) {
+          const rIndent = (rLine.match(/^\s*/) || [''])[0].length;
+          const jIndent = (jLine.match(/^\s*/) || [''])[0].length;
+
+          if (rIndent !== jIndent) {
+            const alreadyHasError = errors.some(e => e.line === i);
+            if (!alreadyHasError) {
+              errors.push({
+                label: `строка ${i + 1}`,
+                type: 'Ошибка отступа (JP)',
+                reason: `Отступ не совпадает с JP (RU: ${rIndent}, JP: ${jIndent})`,
+                line: i,
+                msg: `Отступ не совпадает с JP (ожидался: ${jIndent}, найден: ${rIndent})`,
+                expectedIndent: ' '.repeat(jIndent),
+                isFixableIndent: true
+              });
+            }
+          }
+          j = tempJ + 1; // Продвигаем JP курсор
+          continue;
+        }
+
+        // 2. Рассинхрон из-за текста (RU текст, которого нет в JP или наоборот)
+        // EMPTY не считается "текстом", это структурный элемент, который должен совпадать или пропускаться строгой логикой
+        const isFluidR = ['TXT', 'ATTR', 'CMT'].includes(rSig);
+        const isFluidJ = ['TXT', 'ATTR', 'CMT'].includes(jSig);
+
+        if (isFluidR && !isFluidJ) {
+          // Лишняя строка в RU (расширенный перевод). Пропускаем проверку для i.
+          // Не продвигаем j.
+          continue;
+        }
+
+        if (isFluidJ && !isFluidR) {
+          // Лишняя строка в JP. Продвигаем j, пробуем снова для текущего i.
+          j = tempJ + 1;
+          i--;
+          continue;
+        }
+
+        // 3. Структурный рассинхрон (разные команды)
+        // В этом случае мы не можем гарантировать корректность проверки, 
+        // поэтому просто пропускаем проверку для текущей строки и надеемся на ресинк на следующем Page/CommonEvent
+        // Можно попытаться найти CE/Page в JP
+        if (rSig.startsWith('CE') || rSig.startsWith('PG')) {
+          // Попытка найти эту секцию в JP
+          let scanJ = tempJ;
+          while (scanJ < jLines.length) {
+            if (getSig(jLines[scanJ]) === rSig) {
+              j = scanJ; // Нашли!
+              i--; // Повторяем проверку с синхронизированным j
+              break;
+            }
+            scanJ++;
+          }
+          // Если не нашли - просто идем дальше
+        }
+      }
+
+    } else {
+      // === ВАРИАНТ Б: ГРАММАТИЧЕСКАЯ ПРОВЕРКА (FALLBACK) ===
+      let expectedLevel = 0;
+      let inPage = false;
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (!line.trim()) continue;
+
+        const indentMatch = line.match(/^\s*/);
+        const currentIndent = indentMatch ? indentMatch[0].length : 0;
+        const trimmed = line.trim();
+
+        if (/^CommonEvent\s+\d+/.test(trimmed) || /^Name\s*=/.test(trimmed)) {
+          expectedLevel = 0; inPage = false; continue;
+        }
+        if (/^Page\s+\d+/.test(trimmed)) {
+          inPage = true; expectedLevel = 4; continue;
+        }
+        if (!inPage) continue;
+
+        let targetIndent = expectedLevel;
+
+        // Блоки, уменьшающие отступ (закрывающие) ИЛИ "When/Else" (которые выравниваются по родителю)
+        const isCloser = /^BranchEnd/.test(trimmed) || /^RepeatAbove/.test(trimmed) || /^LoopEnd/.test(trimmed);
+        const isMidBlock = /^Else/.test(trimmed) || /^When/.test(trimmed); // Добавили When
+
+        if (isCloser || isMidBlock) {
+          targetIndent = Math.max(4, expectedLevel - 2);
+        }
+
+        const alreadyHasError = errors.some(e => e.line === i);
+        if (!alreadyHasError && currentIndent !== targetIndent) {
+          errors.push({
+            label: `строка ${i + 1}`,
+            type: 'Ошибка вложенности',
+            reason: `Ожидался отступ ${targetIndent}, найдено ${currentIndent}`,
+            line: i,
+            msg: `Неверная вложенность (ожидался отступ ${targetIndent}, найдено ${currentIndent})`,
+            expectedIndent: ' '.repeat(targetIndent),
+            isFixableIndent: true
+          });
+        }
+
+        // Обновление уровня для следующих строк
+        if (isCloser) {
+          expectedLevel = Math.max(4, expectedLevel - 2);
+        } else if (/^ConditionalBranch/.test(trimmed) || /^Loop/.test(trimmed) || /^ShowChoices/.test(trimmed)) {
+          expectedLevel += 2;
+        }
+      }
+    }
+
+    // Обновляем глобальную кнопку ChangeItems (если есть блоки с красным фоном и локальными кнопками)
+    if (typeof window.updateGlobalChangeItemsBtn === 'function') {
+      window.updateGlobalChangeItemsBtn();
+    }
+
     return errors;
   };
+
+  console.log("window.checkForLineLevelErrors расширена с JP Sync.");
   console.log("window.checkForLineLevelErrors расширена с защитой от NaN.");
 
   // Переопределяем отображение ошибок (лампочка)
