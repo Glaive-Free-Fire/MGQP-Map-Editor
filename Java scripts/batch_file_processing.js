@@ -63,6 +63,9 @@ function renderBatchFileList() {
   if (!listDiv) return;
   listDiv.innerHTML = '';
 
+  // Получаем значение чекбокса "Скрывать файлы без сопоставления"
+  const hideUnmatchedFiles = document.getElementById('batchHideUnmatchedFiles')?.checked;
+
   // Собираем все уникальные имена файлов из обеих папок
   const allFileNames = new Set();
   Object.keys(ruFiles).forEach(name => allFileNames.add(name));
@@ -72,6 +75,11 @@ function renderBatchFileList() {
   Array.from(allFileNames).sort().forEach(fileName => {
     const hasRU = !!ruFiles[fileName];
     const hasJP = !!jpFiles[fileName];
+
+    // Если чекбокс активен и файл без сопоставления — пропускаем
+    if (hideUnmatchedFiles && (!hasRU || !hasJP)) {
+      return;
+    }
 
     const div = document.createElement('div');
     div.style.padding = '4px 8px';
@@ -249,6 +257,8 @@ async function batchFixAllFiles() {
 
   let fixedCount = 0;
   let errorCount = 0;
+  let totalHighPriorityErrorsFixed = 0;
+  let totalLowPriorityErrorsFixed = 0;
   const fixedFiles = []; // Массив для хранения исправленных файлов
   const totalFiles = filesWithErrors.length;
 
@@ -301,8 +311,8 @@ async function batchFixAllFiles() {
           }
         }
 
-        // === ЭТАП 2: Исправляем ЛИНЕЙНЫЕ ошибки ===
-        // Загружаем строки (оригинальные или исправленные на этапе 1) 
+        // === ЭТАП 2: Исправляем ЛИНЕЙНЫЕ ошибки с ПРИОРИТЕТОМ ===
+        // Загружаем строки (оригинальные или исправленные на этапе 1)
         // в "виртуальный редактор" для запуска линейных фиксеров.
         console.log(`[Этап 2] Исправление линейных ошибок для: ${fileName}`);
 
@@ -318,8 +328,122 @@ async function batchFixAllFiles() {
         window.extractTexts();
         window.extractJapaneseTexts(window.fullJapLines); // Это связывает блоки, что критично для autoFixNameTagErrors
 
-        // === ЭТАП 2.1: Исправляем ОШИБКИ ОТСТУПОВ (НОВОЕ!) ===
-        addBatchReportLine(`  → ${fileName}: проверка отступов...`, 'info');
+        // === ПРИОРИТЕТ 1: Исправляем ОШИБКИ С ВЫСОКИМ ПРИОРИТЕТОМ (лишние пробелы в конце строки) ===
+        addBatchReportLine(`  → ${fileName}: проверка ошибок высокого приоритета...`, 'info');
+
+        let highPriorityErrorsFixed = 0;
+        let maxHighPriorityPasses = 3;
+        let highPriorityPass = 0;
+
+        while (highPriorityPass < maxHighPriorityPasses) {
+          highPriorityPass++;
+
+          // Проверяем ошибки высокого приоритета (лишние пробелы в конце строки)
+          const highPriorityErrors = window.checkForLineLevelErrors(currentFixedLines).filter(e =>
+            e.type === 'Ошибка форматирования' && e.reason.includes('лишние пробелы в конце строки')
+          );
+
+          if (highPriorityErrors.length === 0) {
+            if (highPriorityPass > 1) {
+              addBatchReportLine(`    ✓ Ошибки высокого приоритета исправлены за ${highPriorityPass - 1} проход(а)`, 'success');
+            } else {
+              addBatchReportLine(`    ✓ Ошибок высокого приоритета не обнаружено`, 'success');
+            }
+            break;
+          }
+
+          addBatchReportLine(`    [Проход ${highPriorityPass}] Обнаружено ${highPriorityErrors.length} ошибок высокого приоритета`, 'info');
+
+          // Исправляем ошибки высокого приоритета
+          for (let i = highPriorityErrors.length - 1; i >= 0; i--) {
+            const err = highPriorityErrors[i];
+            if (currentFixedLines[err.line] !== undefined) {
+              // Убираем пробелы в конце строки
+              let line = currentFixedLines[err.line].trimEnd();
+              currentFixedLines[err.line] = line;
+              highPriorityErrorsFixed++;
+              totalHighPriorityErrorsFixed++;
+            }
+          }
+
+          // Обновляем глобальное состояние после исправления
+          window.originalLines = currentFixedLines.slice();
+          window.fullRusLines = currentFixedLines.slice();
+
+          // Перепарсим файл с исправленными ошибками
+          window.textBlocks = [];
+          window.extractTexts();
+          window.extractJapaneseTexts(window.fullJapLines);
+        }
+
+        if (highPriorityPass >= maxHighPriorityPasses) {
+          addBatchReportLine(`    [ПРЕДУПРЕЖДЕНИЕ] Достигнут лимит проходов для ошибок высокого приоритета (${maxHighPriorityPasses})`, 'warning');
+        }
+
+        // === ПРИОРИТЕТ 2: Исправляем ОШИБКИ С НИЗКИМ ПРИОРИТЕТОМ (ошибки шаблона) ===
+        addBatchReportLine(`  → ${fileName}: проверка ошибок низкого приоритета...`, 'info');
+
+        // Проверяем наличие ошибок шаблона
+        const templateErrors = window.checkForLineLevelErrors(currentFixedLines).filter(e =>
+          e.type === 'Ошибка шаблона'
+        );
+
+        if (templateErrors.length > 0) {
+          addBatchReportLine(`    Обнаружено ${templateErrors.length} ошибок шаблона, исправляем...`, 'info');
+
+          // Используем настоящую функцию исправления шаблонов из restore-mode.js
+          // Для этого нужно временно установить глобальные переменные и вызвать функцию
+          try {
+            // Устанавливаем глобальные переменные для работы fixAffectionTemplates
+            window.originalLines = currentFixedLines.slice();
+            window.fullRusLines = currentFixedLines.slice();
+            window.fullJapLines = jpLines.slice();
+
+            // Очищаем и пересоздаем textBlocks
+            window.textBlocks = [];
+            window.extractTexts();
+            window.extractJapaneseTexts(window.fullJapLines);
+
+            // Проверяем, есть ли функция fixAffectionTemplates
+            if (typeof window.fixAffectionTemplates === 'function') {
+              // Сохраняем текущее состояние для подсчета изменений
+              const initialTextBlocksLength = window.textBlocks ? window.textBlocks.length : 0;
+
+              // Вызываем функцию исправления шаблонов
+              window.fixAffectionTemplates();
+
+              // Подсчитываем количество исправленных шаблонов
+              let fixedTemplates = 0;
+              if (window.textBlocks) {
+                // Считаем количество удаленных блоков (isDeleted = true)
+                fixedTemplates = window.textBlocks.filter(block => block.isDeleted).length;
+              }
+
+              // Добавляем к общему счетчику
+              totalLowPriorityErrorsFixed += fixedTemplates;
+
+              if (fixedTemplates > 0) {
+                addBatchReportLine(`    ✓ Исправлено ${fixedTemplates} шаблонов привязанности`, 'success');
+              } else {
+                addBatchReportLine(`    ✓ Исправлены ошибки форматирования шаблонов`, 'success');
+              }
+
+              // Обновляем currentFixedLines из измененного состояния
+              const finalLines = window.generateFinalFileLines();
+              currentFixedLines = finalLines.slice();
+            } else {
+              addBatchReportLine(`    [ПРЕДУПРЕЖДЕНИЕ] Функция fixAffectionTemplates не найдена, пропускаем исправление шаблонов`, 'warning');
+            }
+          } catch (error) {
+            addBatchReportLine(`    [ОШИБКА] Не удалось исправить шаблоны: ${error.message}`, 'error');
+            console.error("Ошибка при исправлении шаблонов:", error);
+          }
+        } else {
+          addBatchReportLine(`    ✓ Ошибок низкого приоритета не обнаружено`, 'success');
+        }
+
+        // === ЭТАП 2.3: Исправляем ОСТАЛЬНЫЕ ОШИБКИ (отступы, длинные диалоги, теги имён) ===
+        addBatchReportLine(`  → ${fileName}: проверка остальных ошибок...`, 'info');
         const indentErrors = window.checkForLineLevelErrors(currentFixedLines).filter(e => e.isFixableIndent);
 
         if (indentErrors.length > 0) {
@@ -329,7 +453,17 @@ async function batchFixAllFiles() {
           for (let i = indentErrors.length - 1; i >= 0; i--) {
             const err = indentErrors[i];
             if (currentFixedLines[err.line] !== undefined) {
-              currentFixedLines[err.line] = currentFixedLines[err.line].replace(/^\s*/, err.expectedIndent);
+              // Убираем пробелы в конце строки
+              let line = currentFixedLines[err.line].trimEnd();
+
+              // Определяем целевой отступ: если expectedIndent не задан, сохраняем текущий
+              let targetIndent = err.expectedIndent;
+              if (targetIndent === undefined) {
+                const currentIndentMatch = currentFixedLines[err.line].match(/^\s*/);
+                targetIndent = currentIndentMatch ? currentIndentMatch[0] : '';
+              }
+
+              currentFixedLines[err.line] = line.replace(/^\s*/, targetIndent);
             }
           }
 
@@ -344,6 +478,45 @@ async function batchFixAllFiles() {
 
           addBatchReportLine(`    ✓ Исправлено ${indentErrors.length} ошибок отступов`, 'success');
         }
+
+        // === ПРИОРИТЕТ 3: Исправляем ОШИБКИ СКРИПТОВ (двойные слэши) ===
+        addBatchReportLine(`  → ${fileName}: проверка ошибок скриптов...`, 'info');
+        const scriptErrors = window.checkForLineLevelErrors(currentFixedLines).filter(e =>
+          e.type === 'Ошибка скрипта' && e.reason.includes('двойные слэши')
+        );
+
+        if (scriptErrors.length > 0) {
+          addBatchReportLine(`    Обнаружено ${scriptErrors.length} ошибок скриптов (двойные слэши), исправляем...`, 'info');
+          let fixedSlashes = 0;
+          for (let i = scriptErrors.length - 1; i >= 0; i--) {
+            const err = scriptErrors[i];
+            if (currentFixedLines[err.line] !== undefined) {
+              const line = currentFixedLines[err.line];
+              // Исправляем двойные слэши: \\\\ -> \\ 
+              // (в JS строке \\\\ это два слэша, мы меняем их на один, который пишется как \\)
+              // Но постойте, если в файле написано \\ (два слэша как текст), то readAsText вернет их как есть.
+              // В JS строке это будет "..." + "\\\\" + "..."
+              // Нам нужно заменить \\\\ на \\
+
+              if (line.includes('\\\\')) {
+                currentFixedLines[err.line] = line.replace(/\\\\/g, '\\');
+                fixedSlashes++;
+              }
+            }
+          }
+
+          if (fixedSlashes > 0) {
+            // Обновляем глобальное состояние
+            window.originalLines = currentFixedLines.slice();
+            window.fullRusLines = currentFixedLines.slice();
+            window.textBlocks = [];
+            window.extractTexts();
+            window.extractJapaneseTexts(window.fullJapLines);
+
+            addBatchReportLine(`    ✓ Исправлено ${fixedSlashes} строк с двойными слэшами`, 'success');
+          }
+        }
+
 
         // 2c. Запускаем фиксеры в цикле, пока они вносят изменения
         addBatchReportLine(`  → ${fileName}: запуск цикла исправления...`, 'info');
@@ -413,7 +586,8 @@ async function batchFixAllFiles() {
         const finalLines = window.generateFinalFileLines();
 
         // === ЭТАП 3: Добавляем в ZIP ===
-        const fixedFileName = fileName.replace('.txt', '_fixed.txt');
+        const keepOriginal = document.getElementById('keepOriginalName').checked;
+        const fixedFileName = keepOriginal ? fileName : fileName.replace('.txt', '_fixed.txt');
         fixedFiles.push({
           name: fixedFileName,
           content: finalLines.join('\n')
@@ -456,6 +630,8 @@ async function batchFixAllFiles() {
         addBatchReportLine('', 'info'); // Пустая строка
         addBatchReportLine('=== ИТОГО ===', 'success');
         addBatchReportLine(`Исправлено файлов: ${fixedCount}`, 'success');
+        addBatchReportLine(`Ошибок высокого приоритета: ${totalHighPriorityErrorsFixed}`, totalHighPriorityErrorsFixed > 0 ? 'success' : 'info');
+        addBatchReportLine(`Ошибок низкого приоритета: ${totalLowPriorityErrorsFixed}`, totalLowPriorityErrorsFixed > 0 ? 'success' : 'info');
         addBatchReportLine(`Ошибок при обработке: ${errorCount}`, errorCount > 0 ? 'error' : 'success');
         addBatchReportLine(`Создан архив 'fixed_files.zip'`, 'success');
 
@@ -471,6 +647,8 @@ async function batchFixAllFiles() {
       addBatchReportLine('', 'info'); // Пустая строка
       addBatchReportLine('=== ИТОГО ===', 'error');
       addBatchReportLine(`Не удалось исправить ни одного файла`, 'error');
+      addBatchReportLine(`Ошибок высокого приоритета: ${totalHighPriorityErrorsFixed}`, totalHighPriorityErrorsFixed > 0 ? 'success' : 'info');
+      addBatchReportLine(`Ошибок низкого приоритета: ${totalLowPriorityErrorsFixed}`, totalLowPriorityErrorsFixed > 0 ? 'success' : 'info');
       addBatchReportLine(`Ошибок при обработке: ${errorCount}`, 'error');
     }
 
@@ -501,6 +679,7 @@ async function batchCheckAllFiles() {
 
   const showOnlyErrorLines = document.getElementById('batchShowOnlyErrorLines')?.checked;
   const showOkFiles = document.getElementById('batchShowOkFiles')?.checked;
+  const hideUnmatchedFiles = document.getElementById('batchHideUnmatchedFiles')?.checked;
 
   // Очищаем предыдущие результаты
   batchResults = [];
@@ -633,9 +812,15 @@ async function batchCheckAllFiles() {
   }
 
   // --- Фильтрация вывода ---
-  results.forEach(({ fileDiv, isError, isOkFile }) => {
-    if ((!showOkFiles && isOkFile) || (showOkFiles && false)) {
-      // скрываем исправные файлы если чекбокс выключен
+  results.forEach(({ fileDiv, isError, isOkFile, fileName }) => {
+    // Скрываем исправные файлы если чекбокс выключен
+    if (!showOkFiles && isOkFile) {
+      return;
+    }
+    // Скрываем файлы без сопоставления если чекбокс активен
+    const hasRU = !!ruFiles[fileName];
+    const hasJP = !!jpFiles[fileName];
+    if (hideUnmatchedFiles && (!hasRU || !hasJP)) {
       return;
     }
     batchListDiv.appendChild(fileDiv);
@@ -709,5 +894,9 @@ document.addEventListener('DOMContentLoaded', function () {
   const showOkFilesBox = document.getElementById('batchShowOkFiles');
   if (showOkFilesBox) {
     showOkFilesBox.addEventListener('change', batchCheckAllFiles);
+  }
+  const hideUnmatchedFilesBox = document.getElementById('batchHideUnmatchedFiles');
+  if (hideUnmatchedFilesBox) {
+    hideUnmatchedFilesBox.addEventListener('change', batchCheckAllFiles);
   }
 });

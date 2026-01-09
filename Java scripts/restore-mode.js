@@ -989,6 +989,14 @@
 
   // === Функция для проверки наличия ошибок отступов ===
   global.hasIndentErrors = function () {
+    // 1. Проверка строчных ошибок (включая лишние пробелы и синхронизацию с JP)
+    const lines = window.originalLines || [];
+    if (lines.length > 0 && typeof window.checkForLineLevelErrors === 'function') {
+      const lineErrors = window.checkForLineLevelErrors(lines);
+      if (lineErrors.some(e => e.isFixableIndent)) return true;
+    }
+
+    // 2. Структурная проверка (старый метод)
     if (!window.fullJapLines || window.fullJapLines.length === 0) return false;
     const jpContent = window.fullJapLines.join('\n');
     const ruContent = getActualRuContent();
@@ -1561,10 +1569,29 @@
 
     // --- НАЧАЛО ИЗМЕНЕНИЯ: Новая логика отображения ---
     fixNameTagsBtn.style.display = hasTagsErrors ? '' : 'none';
-    fixAffectionBtn.style.display = hasAffectionErrors ? '' : 'none'; // <<< ИЗМЕНЕНИЕ 3
 
-    // Показываем кнопки для "сирот" только если есть сироты И НЕТ структурных ошибок
-    const showOrphaned = (orphanedCount > 0 && !hasStructureErrors);
+    // --- ПРИОРИТЕТИЗАЦИЯ: Исправить отступы важнее чем шаблоны привязанности ---
+    if (hasAffectionErrors) {
+      fixAffectionBtn.style.display = '';
+      if (hasIndentErrors) {
+        fixAffectionBtn.disabled = true;
+        fixAffectionBtn.style.opacity = '0.5';
+        fixAffectionBtn.style.filter = 'grayscale(1)';
+        fixAffectionBtn.style.cursor = 'not-allowed';
+        fixAffectionBtn.title = 'Сначала исправьте ошибки отступов (лампочка)!';
+      } else {
+        fixAffectionBtn.disabled = false;
+        fixAffectionBtn.style.opacity = '1';
+        fixAffectionBtn.style.filter = 'none';
+        fixAffectionBtn.style.cursor = 'pointer';
+        fixAffectionBtn.title = 'Исправить шаблоны привязанности и объединить строки';
+      }
+    } else {
+      fixAffectionBtn.style.display = 'none';
+    }
+
+    // Показываем кнопки для "сирот" только если есть сироты И НЕТ структурных ошибок И НЕТ ошибок шаблонов
+    const showOrphaned = (orphanedCount > 0 && !hasStructureErrors && !hasAffectionErrors);
 
     clearOrphanedBtn.style.display = showOrphaned ? '' : 'none';
     memorizeOrphanedBtn.style.display = showOrphaned ? '' : 'none';
@@ -1580,6 +1607,17 @@
     if (orphanedCount > 0) {
       clearOrphanedBtn.title = `Удалить ${orphanedCount} строк без сопоставления с японским файлом`;
       memorizeOrphanedBtn.title = `Пометить ${orphanedCount} строк как строки-продолжения, добавив в конец #+`;
+    }
+
+    // --- Обновление кнопки сохранения ---
+    // Это дублирует логику из updateRedIndices, но гарантирует, что кнопка
+    // всегда будет в правильном состоянии, даже если вызывается только эта функция.
+    const saveBtn = document.getElementById('saveBtn');
+    if (saveBtn && window.restoreModeEnabled && !hasStructureErrors) {
+      saveBtn.disabled = false;
+      saveBtn.style.background = '#cdf';
+      saveBtn.style.color = '#333';
+      saveBtn.title = 'Структура восстановлена. Можно сохранить файл.';
     }
   };
 

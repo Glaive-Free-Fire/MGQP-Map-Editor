@@ -69,12 +69,12 @@ document.addEventListener('DOMContentLoaded', function () {
             }
             break;
           case 'Script':
-            let scriptText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+            let scriptText = block.text.replace(/[∾∿]/g, '\\').replace(/\n/g, '\\n');
             let escapedScriptText = scriptText.replace(/(?<!\\)"/g, '\\"');
             formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedScriptText}"]`);
             break;
           case 'ScriptMore':
-            let scriptMoreText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+            let scriptMoreText = block.text.replace(/[∾∿]/g, '\\').replace(/\n/g, '\\n');
             let escapedScriptMoreText = scriptMoreText.replace(/(?<!\\)"/g, '\\"');
             formattedLine = originalLine.replace(/\[(.*)\]/, `["${escapedScriptMoreText}"]`);
             break;
@@ -144,7 +144,7 @@ document.addEventListener('DOMContentLoaded', function () {
             formattedLine = originalLine;
             break;
         }
-        previewLines.push(indent + formattedLine.trimStart());
+        previewLines.push((indent + formattedLine.trimStart()).trimEnd());
         originalIdxToPosMap.set(block.idx, previewLines.length - 1);
 
         // --- УМНЫЙ ПРОПУСК ДУБЛИКАТОВ ---
@@ -167,7 +167,7 @@ document.addEventListener('DOMContentLoaded', function () {
         }
         // --------------------------------
       } else {
-        previewLines.push(originalLine);
+        previewLines.push(originalLine.trimEnd());
       }
     }
 
@@ -688,13 +688,13 @@ setTimeout(function () {
             else { formattedLine = currentLineContent.replace(/\[(.*)\]/, `[${attrText}]`); }
             break;
           case 'Script':
-            let scriptText = block.text.replace(/∾/g, '\\\\').replace(/\n/g, '\\\\n');
-            let escapedScriptText = scriptText.replace(/(?<!\\)"/g, '\\\\"');
+            let scriptText = block.text.replace(/[∾∿]/g, '\\').replace(/\n/g, '\\n');
+            let escapedScriptText = scriptText.replace(/(?<!\\)"/g, '\\"');
             formattedLine = currentLineContent.replace(/\[(.*)\]/, `["${escapedScriptText}"]`);
             break;
           case 'ScriptMore':
-            let scriptMoreText = block.text.replace(/∾/g, '\\\\').replace(/\n/g, '\\\\n');
-            let escapedScriptMoreText = scriptMoreText.replace(/(?<!\\)"/g, '\\\\"');
+            let scriptMoreText = block.text.replace(/[∾∿]/g, '\\').replace(/\n/g, '\\n');
+            let escapedScriptMoreText = scriptMoreText.replace(/(?<!\\)"/g, '\\"');
             formattedLine = currentLineContent.replace(/\[(.*)\]/, `["${escapedScriptMoreText}"]`);
             break;
           case 'Label':
@@ -731,7 +731,7 @@ setTimeout(function () {
             formattedLine = currentLineContent;
             break;
         }
-        exportLines.push(formattedLine);
+        exportLines.push(formattedLine.trimEnd());
 
         // --- УМНЫЙ ПРОПУСК ДУБЛИКАТОВ ---
         if (block.type === 'ShowText') {
@@ -744,7 +744,7 @@ setTimeout(function () {
           }
         }
       } else {
-        exportLines.push(currentLineContent);
+        exportLines.push(currentLineContent.trimEnd());
       }
     }
 
@@ -778,7 +778,7 @@ setTimeout(function () {
             `${parentIndent}ShowTextAttributes([${block.text}]) #+` :
             `${parentIndent}ShowText(["${txt}"]) #+`;
 
-          exportLines.splice(lastMainBlockLine + 1, 0, lineToInsert);
+          exportLines.splice(lastMainBlockLine + 1, 0, lineToInsert.trimEnd());
 
           // Обновляем карту позиций для всех последующих элементов
           for (const [key, value] of originalIdxToExportPos.entries()) {
@@ -793,7 +793,7 @@ setTimeout(function () {
     // === ШАГ 5: ПРИНУДИТЕЛЬНОЕ ИСПРАВЛЕНИЕ ОТСТУПОВ PAGE ===
     for (let i = 0; i < exportLines.length; i++) {
       if (/^\s*Page\s+\d+/.test(exportLines[i])) {
-        exportLines[i] = exportLines[i].replace(/^\s*(Page\s+\d+)/, '  $1');
+        exportLines[i] = exportLines[i].trimEnd().replace(/^\s*(Page\s+\d+)/, '  $1');
       }
     }
 
@@ -1050,6 +1050,14 @@ window.addFixNameButtons = function () {
   let totalFixable = 0;
   let fixedCount = 0;
 
+  function extractNameFromBlock(text) {
+    const tagMatch = text.match(/<∾∾C\[6\](.*?)∾∾C\[0\]>/);
+    if (tagMatch) return tagMatch[1];
+    const bracketMatch = text.match(/^【(.+?)】/);
+    if (bracketMatch) return bracketMatch[1];
+    return null;
+  }
+
   window.textBlocks.forEach((block, index) => {
     if (block.type !== 'ShowText' || !block.dom || !block.dom.rusInput) return;
 
@@ -1059,16 +1067,78 @@ window.addFixNameButtons = function () {
     // Проверка, исправлена ли уже строка
     const isAlreadyFixed = /^∾\n<∾∾C\[6\].*?∾∾C\[0\]>/.test(text);
 
-    // ИСПРАВЛЕНИЕ: Считаем только блоки, которые имеют отношение к именам
-    // (либо нуждаются в исправлении, либо уже исправлены)
+    let suggestedName = null;
+    let isMissingTag = false;
+
     if (nameMatch || isAlreadyFixed) {
       totalFixable++;
       if (isAlreadyFixed) {
         fixedCount++;
       }
+    } else {
+      // ПРОВЕРКА НА ОТСУТСТВУЮЩИЙ ТЕГ (Ошибка компоновки v25)
+      // Ищем ближайший STA перед нами (аналог логики из main_script.js / restore-mode.js)
+      let k = index - 1;
+      while (k >= 0) {
+        const prev = window.textBlocks[k];
+        if (prev.isDeleted) { k--; continue; }
+        if (prev.type === 'ShowTextAttributes') {
+          if (prev.manualPlus || prev.generated) {
+            // Это STA #+, ищем якорь и родителя
+            let anchorIdx = -1;
+            let m = k - 1;
+            while (m >= 0) {
+              const p2 = window.textBlocks[m];
+              if (p2.isDeleted) { m--; continue; }
+              if (p2.type === 'ShowTextAttributes' && !p2.manualPlus && !p2.generated) {
+                anchorIdx = m;
+                break;
+              }
+              if (p2.type === 'ShowText') { m--; continue; }
+              break;
+            }
+
+            if (anchorIdx !== -1) {
+              let parent = null;
+              let n = anchorIdx + 1;
+              while (n < k) {
+                const p3 = window.textBlocks[n];
+                if (p3.isDeleted) { n++; continue; }
+                if (p3.type === 'ShowText' && !p3.manualPlus && !p3.generated) {
+                  parent = p3;
+                  break;
+                }
+                if (p3.type === 'ShowTextAttributes' && p3.manualPlus) { n++; continue; }
+                break;
+              }
+
+              if (parent) {
+                suggestedName = extractNameFromBlock(parent.text);
+                if (suggestedName) {
+                  isMissingTag = true;
+                  totalFixable++;
+                }
+              }
+            }
+          }
+          break; // Нашли STA (любой), поиск закончен
+        }
+        if (prev.type === 'ShowText') break; // Встретили текст раньше STA
+        k--;
+      }
     }
 
-    if (!nameMatch && !isAlreadyFixed) return;
+    if (!nameMatch && !isAlreadyFixed && !isMissingTag) {
+      if (block.dom.fixNameBtn) {
+        block.dom.fixNameBtn.remove();
+        block.dom.fixNameBtn = null;
+      }
+      return;
+    }
+
+    // Сохраняем информацию для исправления
+    block.isMissingTag = isMissingTag;
+    block.suggestedName = suggestedName;
 
     // Если кнопка уже есть, просто обновляем её состояние (цвета)
     if (block.dom.fixNameBtn && block.dom.fixNameBtn.isConnected) {
@@ -1083,23 +1153,27 @@ window.addFixNameButtons = function () {
     btn.style.marginLeft = '10px';
     btn.style.padding = '2px 6px';
     btn.style.background = isAlreadyFixed ? '#8f8' : '#eee';
-    btn.title = 'Оформить тег имени (∾\\n<∾∾C[6]...>)';
+    btn.title = isMissingTag ? `Добавить тег имени: ${suggestedName}` : 'Оформить тег имени (∾\\n<∾∾C[6]...>)';
 
     btn.onclick = function () {
       if (/^∾\n<∾∾C\[6\].*?∾∾C\[0\]>/.test(block.text)) return;
 
+      let newText = null;
       const match = block.text.match(/^【(.+?)】\s*\n?([\s\S]*)$/);
       if (match) {
         const name = match[1];
         const rest = match[2];
-        const newText = `∾\n<∾∾C[6]${name}∾∾C[0]>${rest}`;
+        newText = `∾\n<∾∾C[6]${name}∾∾C[0]>${rest}`;
+      } else if (block.isMissingTag && block.suggestedName) {
+        newText = `∾\n<∾∾C[6]${block.suggestedName}∾∾C[0]>${block.text}`;
+      }
 
+      if (newText) {
         block.dom.rusInput.value = newText;
         block.text = newText;
         block.dom.rusInput.dispatchEvent(new Event('input', { bubbles: true }));
         btn.style.background = '#8f8';
-
-        // Обновляем состояние глобальной кнопки (пересчет)
+        // Пересчёт состояния
         window.addFixNameButtons();
       }
     };
@@ -1154,16 +1228,12 @@ setTimeout(function () {
         if (!window.textBlocks) return;
         let count = 0;
         window.textBlocks.forEach(block => {
-          if (block.type !== 'ShowText' || !block.dom || !block.dom.rusInput) return;
-          const match = block.text.match(/^【(.+?)】\s*\n?([\s\S]*)$/);
-          if (match && !/^∾\n<∾∾C\[6\].*?∾∾C\[0\]>/.test(block.text)) {
-            const name = match[1];
-            const rest = match[2];
-            const newText = `∾\n<∾∾C[6]${name}∾∾C[0]>${rest}`;
-            block.dom.rusInput.value = newText;
-            block.text = newText;
-            block.dom.rusInput.dispatchEvent(new Event('input', { bubbles: true }));
-            count++;
+          if (block.dom && block.dom.fixNameBtn) {
+            const isAlreadyFixed = /^∾\n<∾∾C\[6\].*?∾∾C\[0\]>/.test(block.text);
+            if (!isAlreadyFixed) {
+              block.dom.fixNameBtn.click();
+              count++;
+            }
           }
         });
         if (count > 0) {
@@ -1206,8 +1276,10 @@ setTimeout(function () {
     let errors = [];
 
     // 1. Вызываем базовые проверки (Японский текст, длина строк и т.д.)
+    // Включаем проверку двойных слэшей из main_script.js
     if (typeof originalCheckForLineLevelErrors === 'function') {
-      errors = originalCheckForLineLevelErrors(lines);
+      const originalErrors = originalCheckForLineLevelErrors(lines);
+      errors = originalErrors.slice(); // Копируем все ошибки, включая двойные слэши
     }
 
     if (!lines || lines.length === 0) return errors;
@@ -1428,6 +1500,68 @@ setTimeout(function () {
       window.updateGlobalChangeItemsBtn();
     }
 
+    // --- НОВАЯ ПРОВЕРКА: Шаблоны привязанности ---
+    const affectionTemplateRegex = /(<[\\∾]{2}C\[6\].*?)([\\∾]{2}C\[0\]>)\s*\((Уровень симпатии:|Привязанность:)\s*([\\∾]+)(V\[\d+\])\)([\s\S]*)$/;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line.includes('ShowText([')) continue;
+
+      const startIdx = line.indexOf('["');
+      const endIdx = line.lastIndexOf('"]');
+      if (startIdx === -1 || endIdx === -1) continue;
+      const text = line.substring(startIdx + 2, endIdx);
+
+      const affMatch = text.match(affectionTemplateRegex);
+      if (affMatch) {
+        let isBroken = (affMatch[3] === 'Уровень симпатии:' || affMatch[4].length !== 2); // Проверяем на 2 символа (\\ или ∾∾)
+        const dialoguePart = affMatch[6];
+        if (!isBroken && dialoguePart.trim() === '') {
+          let nextIdx = i + 1;
+          while (nextIdx < lines.length && !lines[nextIdx].trim()) nextIdx++;
+          if (nextIdx < lines.length) {
+            const nextLine = lines[nextIdx];
+            if (nextLine.includes('ShowText([')) {
+              const nStart = nextLine.indexOf('["');
+              const nEnd = nextLine.lastIndexOf('"]');
+              if (nStart !== -1 && nEnd !== -1) {
+                const nextText = nextLine.substring(nStart + 2, nEnd);
+                const isNameBlock = /<[\\∾]{2}C\[6\].*?[\\∾]{2}C\[0\]>/.test(nextText);
+                const isMarked = nextLine.includes('#+');
+                if (!isNameBlock && !isMarked) isBroken = true;
+              }
+            }
+          }
+        }
+        if (isBroken) {
+          errors.push({
+            label: `строка ${i + 1}`,
+            type: 'Ошибка шаблона',
+            reason: 'Требуется исправить шаблон привязанности и объединить строки.',
+            line: i,
+            msg: 'Ошибка шаблона привязанности.'
+          });
+        }
+      }
+    }
+
+    // --- ПРОВЕРКА: Двойные слэши в Script/ScriptMore (уже обработано в main_script.js) ---
+    // Эта проверка уже выполняется в оригинальной функции checkForLineLevelErrors из main_script.js
+    // с логикой сравнения с японским оригиналом, поэтому здесь мы её не дублируем
+
+    // --- ПРОВЕРКА: Лишние пробелы в конце строк ---
+    for (let i = 0; i < lines.length; i++) {
+      if (/[ \t]+$/.test(lines[i])) {
+        errors.push({
+          label: `строка ${i + 1}`,
+          type: 'Ошибка форматирования',
+          reason: 'Обнаружены лишние пробелы в конце строки.',
+          line: i,
+          msg: 'Лишние пробелы в конце строки.',
+          isFixableIndent: true
+        });
+      }
+    }
+
     return errors;
   };
 
@@ -1439,69 +1573,123 @@ setTimeout(function () {
     window.updateMatchLampOriginalForIndent = window.updateMatchLamp;
 
     window.updateMatchLamp = function () {
-      // Вызываем оригинальную функцию
+      // 1. Вызываем оригинальную функцию (проверка структуры CommonEvent/Map)
       window.updateMatchLampOriginalForIndent.apply(this, arguments);
 
-      const lines = window.originalLines || [];
-      if (!lines || lines.length === 0) return;
-
-      // Получаем ВСЕ ошибки
-      const allErrors = window.checkForLineLevelErrors(lines);
-
-      // >>> ФИЛЬТРУЕМ: Берем только настоящие ошибки отступов, у которых есть isFixableIndent <<<
-      const indentErrors = allErrors.filter(e => e.isFixableIndent);
-
-      if (indentErrors.length > 0) {
-        // Подсвечиваем в редакторе (если есть textBlocks)
-        if (window.textBlocks) {
-          window.textBlocks.forEach((block, blIdx) => {
-            if (block.idx !== undefined) {
-              const hasErr = indentErrors.some(e => e.line === block.idx);
-              if (hasErr) window.allErrorIndices.add(blIdx);
-            }
-          });
-        }
-
-        const lamp = document.getElementById('matchLamp');
-        if (lamp) {
-          lamp.style.background = '#f66';
-          lamp.title += `\n + Обнаружено ${indentErrors.length} ошибок отступов.`;
-        }
-
-        const diffsDiv = document.getElementById('previewDiffs');
-        if (diffsDiv) {
-          let extraHtml = '<div style="margin-top:10px; border-top:1px solid #ccc; padding-top:5px;">';
-          extraHtml += '<b>Ошибки отступов (авто-детект):</b><ul style="color:#d00; margin-top:4px;">';
-          indentErrors.forEach(err => {
-            // Теперь здесь не будет undefined, так как мы отфильтровали массив
-            extraHtml += `<li><b>Строка ${err.line + 1}</b>: ${err.msg}</li>`;
-          });
-          extraHtml += '</ul></div>';
-          diffsDiv.innerHTML += extraHtml;
-        }
-
-        const fixBtn = document.getElementById('fixIndentBtn');
-        if (fixBtn) {
-          fixBtn.style.setProperty('display', 'inline-block', 'important');
-          fixBtn.textContent = `Исправить отступы (${indentErrors.length})`;
-
-          // Убедимся что родительский контейнер тоже видим
-          const parent = fixBtn.parentElement;
-          if (parent && parent.style.display === 'none') {
-            parent.style.display = '';
-          }
-        }
+      // 2. Генерируем АКТУАЛЬНЫЙ текст файла из редактора
+      // Это ключевой момент: мы проверяем не то, что было при загрузке, а то, что вы исправили
+      let currentLines = [];
+      if (typeof window.generateCurrentFileContentAsLines === 'function') {
+         currentLines = window.generateCurrentFileContentAsLines();
       } else {
-        // Скрываем кнопку если ошибок нет
-        const fixBtn = document.getElementById('fixIndentBtn');
-        if (fixBtn) {
-          fixBtn.style.setProperty('display', 'none', 'important');
-        }
+         currentLines = window.originalLines || [];
       }
 
-      // Обновляем глобальную кнопку ChangeItems (если есть блоки с красным фоном и локальными кнопками)
+      if (!currentLines || currentLines.length === 0) return;
+
+      // 3. Проверяем этот актуальный текст на ошибки
+      // Передаем также японские линии для сверки отступов (если есть)
+      const jpLines = (window.fullJapLines && window.fullJapLines.length > 0) ? window.fullJapLines : null;
+      const allErrors = window.checkForLineLevelErrors(currentLines, jpLines);
+
+      // 4. Обновляем список красных строк (allErrorIndices)
+      // Создаем карту соответствия между строками в сгенерированном файле и блоками в редакторе
+      const lineToBlockIndexMap = new Map();
+      if (window.textBlocks) {
+        window.textBlocks.forEach((block, blockIndex) => {
+          if (block.idx !== undefined) {
+            lineToBlockIndexMap.set(block.idx, blockIndex);
+          }
+        });
+      }
+      
+      let scriptErrorsCount = 0;
+      let indentErrorsCount = 0;
+      
+      // Фильтруем ошибки, которые нам интересны
+      allErrors.forEach(err => {
+         const fileLineIdx = err.line;
+         
+         // Находим соответствующий индекс блока в редакторе
+         const blockIndex = lineToBlockIndexMap.get(fileLineIdx);
+         
+         // Если блок не найден или удален, ошибку игнорируем
+         if (blockIndex === undefined || (window.textBlocks && window.textBlocks[blockIndex] && window.textBlocks[blockIndex].isDeleted)) return;
+
+         // Обработка ошибок скрипта (Двойные слэши)
+         if (err.type === 'Ошибка скрипта') {
+            window.allErrorIndices.add(blockIndex);
+            scriptErrorsCount++;
+         }
+         
+         // Обработка ошибок отступов
+         if (err.isFixableIndent) {
+            window.allErrorIndices.add(blockIndex);
+            indentErrorsCount++;
+         }
+      });
+
+      // 5. Обновляем интерфейс (Лампочка, Кнопки, Список ошибок)
+      const lamp = document.getElementById('matchLamp');
+      
+      if (scriptErrorsCount > 0 || indentErrorsCount > 0) {
+         if (lamp) {
+            lamp.style.background = '#f66';
+            let titleMsg = '';
+            if (scriptErrorsCount > 0) titleMsg += `\n + Ошибок скрипта: ${scriptErrorsCount}`;
+            if (indentErrorsCount > 0) titleMsg += `\n + Ошибок отступов: ${indentErrorsCount}`;
+            if (!lamp.title.includes('Ошибок скрипта') && !lamp.title.includes('Ошибок отступов')) {
+               lamp.title += titleMsg;
+            }
+         }
+      }
+
+      // Обновляем список ошибок под предпросмотром (previewDiffs)
+      // Чтобы сообщение об ошибке исчезало сразу после исправления
+      const diffsDiv = document.getElementById('previewDiffs');
+      if (diffsDiv) {
+         // Удаляем старые списки авто-детекта, чтобы не дублировать
+         const oldLists = diffsDiv.querySelectorAll('.auto-detect-errors');
+         oldLists.forEach(el => el.remove());
+
+         if (allErrors.length > 0) {
+            let extraHtml = '<div class="auto-detect-errors" style="margin-top:10px; border-top:1px solid #ccc; padding-top:5px;">';
+            extraHtml += '<b>Обнаруженные ошибки (Live):</b><ul style="color:#d00; margin-top:4px;">';
+            allErrors.forEach(err => {
+               // Показываем только скрипты и отступы в этом списке
+               if (err.type === 'Ошибка скрипта' || err.isFixableIndent) {
+                  extraHtml += `<li><b>Строка ${err.line + 1}</b>: ${err.msg}</li>`;
+               }
+            });
+            extraHtml += '</ul></div>';
+            
+            // Если мы нашли ошибки, добавляем их в div
+            if (indentErrorsCount > 0 || scriptErrorsCount > 0) {
+               diffsDiv.insertAdjacentHTML('beforeend', extraHtml);
+            }
+         }
+      }
+
+      // Управление кнопкой "Исправить отступы"
+      const fixIndentBtn = document.getElementById('fixIndentBtn');
+      if (fixIndentBtn) {
+         if (indentErrorsCount > 0) {
+            fixIndentBtn.style.setProperty('display', 'inline-block', 'important');
+            fixIndentBtn.textContent = `Исправить отступы (${indentErrorsCount})`;
+            if (fixIndentBtn.parentElement) fixIndentBtn.parentElement.style.display = '';
+         } else {
+            fixIndentBtn.style.setProperty('display', 'none', 'important');
+         }
+      }
+
+      // Обновляем глобальную кнопку ChangeItems
       if (typeof window.updateGlobalChangeItemsBtn === 'function') {
         window.updateGlobalChangeItemsBtn();
+      }
+      
+      // Принудительно обновляем цвета полей ввода, чтобы убрать красный цвет сразу
+      if (typeof window.updateRedIndices === 'function') {
+         window.updateRedIndices();
       }
     };
     console.log("window.updateMatchLamp успешно расширена (с фильтрацией NaN).");
@@ -1524,7 +1712,19 @@ setTimeout(function () {
     for (let i = indentErrors.length - 1; i >= 0; i--) {
       const err = indentErrors[i];
       if (lines[err.line] !== undefined) {
-        lines[err.line] = lines[err.line].replace(/^\s*/, err.expectedIndent);
+        // Убираем пробелы в конце
+        let line = lines[err.line].trimEnd();
+
+        // Определяем, какой отступ использовать
+        // Если в ошибке указан целевой отступ (expectedIndent) - используем его.
+        // Если нет (это была просто ошибка лишних пробелов) - сохраняем текущий отступ.
+        let targetIndent = err.expectedIndent;
+        if (targetIndent === undefined) {
+          const currentIndentMatch = lines[err.line].match(/^\s*/);
+          targetIndent = currentIndentMatch ? currentIndentMatch[0] : '';
+        }
+
+        lines[err.line] = line.replace(/^\s*/, targetIndent);
         fixedCount++;
       }
     }
