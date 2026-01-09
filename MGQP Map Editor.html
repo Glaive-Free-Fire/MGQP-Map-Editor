@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8">
-  <title>MGQP Map Editor v1.5.01</title>
+  <title>MGQP Map Editor v1.5.05</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="Java scripts/main_script.js"></script>
   <script src="Java scripts/restore-mode.js"></script>
@@ -167,8 +167,12 @@
     <span style="align-self:center; font-weight:bold; margin:0 6px;">Исправить</span>
     <button id="nextRedBtn" class="control-btn" title="Следующая красная строка">→</button>
 
-    <!-- новая кнопка для оборачивания выделения в ∿"..."∿ -->
     <button id="wrapSlashesBtn" class="control-btn" disabled title='Wrap selection in ∿"..."∿'>"\...\"</button>
+
+    <label id="keepOriginalNameLabel" style="align-self:center; font-size:13px; margin-left:10px; cursor:pointer;"
+      title="Если включено, файл будет сохранен под оригинальным именем. Если выключено — прибавится суффикс _edited.">
+      <input type="checkbox" id="keepOriginalName" checked> Сохранить Оригинальное имя
+    </label>
 
     <button id="saveBtn" class="control-btn" style="display:none;">Скачать изменённый файл</button>
     <button id="copyBtn" class="control-btn" style="display:none;">Скопировать всё извлечённое</button>
@@ -244,6 +248,10 @@
       <label style="font-size:15px; font-weight:normal; cursor:pointer;">
         <input type="checkbox" id="batchShowOkFiles" style="vertical-align:middle; margin-right:6px;">Показывать
         исправные файлы
+      </label>
+      <label style="font-size:15px; font-weight:normal; cursor:pointer;">
+        <input type="checkbox" id="batchHideUnmatchedFiles" checked
+          style="vertical-align:middle; margin-right:6px;">Скрывать файлы без сопоставления
       </label>
     </div>
     <div id="batchFileList" style="margin-top:16px;"></div>
@@ -360,7 +368,9 @@
     // =================================================================================
     window.updateMatchLamp = function () {
       console.log("--- updateMatchLamp Start ---");
+      console.log("[updateMatchLamp] Перед очисткой allErrorIndices.size =", window.allErrorIndices ? window.allErrorIndices.size : 'undefined');
       window.allErrorIndices.clear();
+      console.log("[updateMatchLamp] После очистки allErrorIndices.size =", window.allErrorIndices ? window.allErrorIndices.size : 'undefined');
       const lampDiv = document.getElementById('matchLampContainer');
       const diffsDiv = document.getElementById('previewDiffs');
       let statHtml = '';
@@ -529,9 +539,39 @@
             window.allErrorIndices.add(i);
           }
           // <<< КОНЕЦ ИЗМЕНЕНИЯ >>>
-          // <<< КОНЕЦ ИЗМЕНЕНИЯ >>>
-          // --- НАЧАЛО ИЗМЕНЕНИЯ: Показываем рекомендацию только если НЕТ структурных ошибок ---
-          if (!hasStructuralErrors && block.type === 'ShowText' && window.japBlocks && window.japBlocks.length > 0 &&
+          // <<< НАЧАЛО ИЗМЕНЕНИЯ: Отладка фантомных ошибок и шаблонов >>>
+          const isAffectionFixVisible = (document.getElementById('fixAffectionBtn') && document.getElementById('fixAffectionBtn').style.display !== 'none');
+
+          // Проверка на наличие ОШИБКИ ШАБЛОНА (для подсветки самой строки шаблона)
+          const affectionTemplateRegex = /(<∾∾C\[6\].*?)(∾∾C\[0\]>)\s*\((Уровень симпатии:|Привязанность:)\s*(∾+)(V\[\d+\])\)([\s\S]*)$/;
+          if (block.type === 'ShowText') {
+            const affMatch = block.text.match(affectionTemplateRegex);
+            if (affMatch) {
+              // Если это шаблон, проверяем условия из restore-mode.js
+              let isBroken = (affMatch[3] === 'Уровень симпатии:' || affMatch[4] !== '∾∾');
+              const dialoguePart = affMatch[6];
+              if (!isBroken && dialoguePart.trim() === '') {
+                if ((i + 1) < window.textBlocks.length) {
+                  const nextBlock = window.textBlocks[i + 1];
+                  if (nextBlock.type === 'ShowText' && !nextBlock.isDeleted && !window.isNameBlock(nextBlock.text) && !nextBlock.manualPlus && !nextBlock.generated) {
+                    isBroken = true; // Требуется слияние
+                  }
+                }
+              }
+
+              if (isBroken) {
+                redLineErrors.push({
+                  label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[продолжение]',
+                  type: 'Ошибка шаблона',
+                  reason: 'Требуется исправить шаблон привязанности и объединить строки.'
+                });
+                window.allErrorIndices.add(i);
+              }
+            }
+          }
+
+          // --- Рекомендация: Показываем только если НЕТ структурных ошибок И НЕТ ошибок шаблонов ---
+          if (!hasStructuralErrors && !isAffectionFixVisible && block.type === 'ShowText' && window.japBlocks && window.japBlocks.length > 0 &&
             !window.isNameBlock(block.text) && !block.japaneseLink && !block.generated && !block.manualPlus) {
             redLineErrors.push({
               label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[продолжение]',
@@ -540,7 +580,7 @@
             });
             window.allErrorIndices.add(i);
           }
-          // --- КОНЕЦ ИЗМЕНЕНИЯ ---
+          // <<< КОНЕЦ ИЗМЕНЕНИЯ >>>
           if (window.isNameBlock(block.text)) {
             let precedingStructuralBlock = null;
             for (let j = i - 1; j >= 0; j--) {
@@ -699,6 +739,19 @@
       if (!window.fullRusLines || !window.fullJapLines || window.fullRusLines.length === 0 || window.fullJapLines.length === 0) {
         lampDiv.style.display = 'none';
         diffsDiv.innerHTML = hasAnyErrors ? statHtml : 'Загрузите оба файла для проверки структуры.';
+
+        // Синхронизация кнопки сохранения (обработка раннего выхода)
+        const saveBtn = document.getElementById('saveBtn');
+        if (saveBtn) {
+          if (!hasAnyErrors) {
+            saveBtn.style.background = '#cdf';
+            saveBtn.title = 'Ошибок нет. Можно сохранять.';
+          } else {
+            saveBtn.style.background = '#fcc';
+            saveBtn.title = 'Обнаружены ошибки! Рекомендуется исправить.';
+          }
+        }
+
         if (typeof window.updateFixButtonsVisibility === 'function') window.updateFixButtonsVisibility();
         return;
       }
@@ -725,6 +778,21 @@
       const lamp = document.getElementById('matchLamp');
       lamp.style.background = !hasAnyErrors ? '#8f8' : '#f66';
       lamp.title = !hasAnyErrors ? 'Структура и строки в порядке' : `Обнаружены ошибки. Всего ошибок в строках: ${redLineErrors.length}. Всего структурных ошибок: ${structuralErrorCount}.`;
+
+      // Синхронизация кнопки сохранения с состоянием ошибок
+      const saveBtn = document.getElementById('saveBtn');
+      if (saveBtn) {
+        if (!hasAnyErrors) {
+          saveBtn.style.background = '#cdf';
+          saveBtn.title = 'Ошибок нет. Можно сохранять.';
+        } else {
+          saveBtn.style.background = '#fcc';
+          saveBtn.title = 'Обнаружены ошибки! Рекомендуется исправить.';
+        }
+      }
+
+      // Expose errors globally for UI buttons
+      window.allFileErrors = redLineErrors;
 
       if (result.grouped) {
         let hasStructuralContent = false;
@@ -2205,6 +2273,9 @@
       return exportLines;
     }
 
+    // Alias for compatibility with updateMatchLamp - ensures error checking uses live data
+    window.generateCurrentFileContentAsLines = window.generateFinalFileLines;
+
     document.getElementById('saveBtn').onclick = function () {
       // Проверка на наличие ошибок перед сохранением
       if ((window.redIndices && window.redIndices.length > 0) && !window.restoreModeEnabled) {
@@ -2218,8 +2289,13 @@
       // Получаем строки файла с помощью новой единой функции
       const exportLines = generateFinalFileLines();
 
-      // Логика скачивания файла (осталась без изменений)
-      let saveName = loadedFileName ? loadedFileName.replace(/(\.txt)?$/, '_edited.txt') : 'Map001_edited.txt';
+      // Логика скачивания файла (с учетом чекбокса)
+      const keepOriginal = document.getElementById('keepOriginalName').checked;
+      let saveName = loadedFileName || 'Map001.txt';
+      if (!keepOriginal) {
+        saveName = saveName.replace(/(\.txt)?$/, '_edited.txt');
+      }
+
       const blob = new Blob([exportLines.join('\n')], { type: 'text/plain' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
@@ -2630,9 +2706,81 @@
         const ta = block.dom?.rusInput;
         const ruler = block.dom?.limitRuler;
         const marker = block.dom?.limitMarker;
+        const blockDiv = ta?.closest('.block'); // Находим родительский div блока
+
         if (!ta) return;
         const hasError = redIndices.includes(i);
         ta.style.backgroundColor = hasError ? '#ffd6d6' : '';
+
+        // --- ЛОГИКА КНОПКИ ИСПРАВЛЕНИЯ ДВОЙНЫХ СЛЭШЕЙ ---
+        if (hasError && (block.type === 'Script' || block.type === 'ScriptMore')) {
+          const text = block.text;
+          // Проверяем наличие двойных слэшей (или их плейсхолдеров)
+          const hasDoubleSlash = text.includes('∾∾') || text.includes('\\\\');
+
+          if (hasDoubleSlash) {
+            // Проверяем, есть ли уже кнопка исправления
+            let fixSlashBtn = blockDiv.querySelector('.fix-slash-btn');
+            if (!fixSlashBtn) {
+              fixSlashBtn = document.createElement('button');
+              fixSlashBtn.className = 'fix-slash-btn';
+              fixSlashBtn.textContent = 'Исправить слэши (Везде)';
+              fixSlashBtn.style.backgroundColor = '#f88';
+              fixSlashBtn.style.color = '#fff';
+              fixSlashBtn.style.marginLeft = '8px';
+              fixSlashBtn.style.fontSize = '11px';
+              fixSlashBtn.style.border = 'none';
+              fixSlashBtn.style.padding = '2px 6px';
+              fixSlashBtn.style.cursor = 'pointer';
+              fixSlashBtn.title = 'Исправить двойные слэши в этой строке и во всех её копиях';
+
+              fixSlashBtn.onclick = function () {
+                const currentText = block.text;
+                // Заменяем ∾∾ на ∾ и \\ на \
+                const fixedText = currentText.replace(/∾∾/g, '∾').replace(/\\\\/g, '\\');
+
+                // Если текст не изменился (например, уже исправлен), ничего не делаем
+                if (currentText === fixedText) return;
+
+                // Массовое исправление: ищем все блоки с ТАКИМ ЖЕ текстом (включая текущий)
+                let fixedCount = 0;
+                textBlocks.forEach(b => {
+                  if ((b.type === 'Script' || b.type === 'ScriptMore') && b.text === currentText) {
+                    b.text = fixedText;
+                    if (b.dom && b.dom.rusInput) {
+                      b.dom.rusInput.value = fixedText;
+                      // Важно: триггерим событие ввода, чтобы обновить другие зависимые вещи если нужно
+                      // b.dom.rusInput.dispatchEvent(new Event('input', { bubbles: true })); 
+                      // Но сейчас мы делаем массовое обновление, лучше просто обновить модель
+                    }
+                    fixedCount++;
+                  }
+                });
+
+                // Обновляем UI
+                if (typeof window.updateMatchLamp === 'function') window.updateMatchLamp();
+                alert(`Исправлено строк: ${fixedCount}`);
+              };
+
+              // Добавляем кнопку
+              const minusBtn = Array.from(blockDiv.querySelectorAll('button')).find(b => b.textContent === '-');
+              if (minusBtn) {
+                minusBtn.parentNode.insertBefore(fixSlashBtn, minusBtn.nextSibling);
+              } else {
+                blockDiv.appendChild(fixSlashBtn);
+              }
+            }
+          } else {
+            // Если двойных слэшей нет (или уже исправлены), но error флаг остался (вдруг другая ошибка?), удаляем кнопку
+            const fixSlashBtn = blockDiv?.querySelector('.fix-slash-btn');
+            if (fixSlashBtn) fixSlashBtn.remove();
+          }
+        } else {
+          // Если ошибки нет или тип не тот
+          const fixSlashBtn = blockDiv?.querySelector('.fix-slash-btn');
+          if (fixSlashBtn) fixSlashBtn.remove();
+        }
+        // --- КОНЕЦ ЛОГИКИ КНОПКИ ---
 
         // Управляем линейкой только для ShowText
         if (ruler && marker && (block.type === 'ShowText' || block.type === undefined)) {
@@ -2676,6 +2824,7 @@
           saveBtn.style.background = '#cdf';
           saveBtn.style.color = '#333';
           saveBtn.title = 'Структура восстановлена. Можно сохранить файл.';
+          console.log("[updateRedIndices] Режим восстановления: кнопка активна, фон #cdf");
         } else {
           // Кнопка всегда активна, при ошибках показываем только визуальное предупреждение
           saveBtn.disabled = false;
@@ -2683,10 +2832,7 @@
             saveBtn.style.background = '#ffd6d6';
             saveBtn.style.color = '#a00';
             saveBtn.title = 'Есть неисправленные строки! Нажмите один раз для предупреждения, второй раз для сохранения.';
-          } else {
-            saveBtn.style.background = '';
-            saveBtn.style.color = '';
-            saveBtn.title = '';
+            console.log(`[updateRedIndices] Красные строки найдены: ${redIndices.length}, кнопка красная (#ffd6d6)`);
           }
         }
       }
