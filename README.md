@@ -1,4 +1,4 @@
-# MGQP Map Editor v1.5.05
+# MGQP Map Editor v1.5.08
 
 **A modern web-based tool for editing and batch-fixing RPG Maker XP map/event files, with advanced support for translation workflows (RU/JP), structure validation, and mass error correction.**
 
@@ -77,6 +77,9 @@
     -   **NEW:** Related blocks (JumpToLabel/Label, Script/ScriptMore) are automatically synchronized when you edit one of them.
     -   **NEW:** Use `##` marker at the end of ShowText lines to ignore Japanese text detection for that line.
     -   **NEW:** The **Duplicate** button (shown on matching lines) copies content from only the single associated block and works even when only the Russian file is loaded.
+-   **NEW:** **When Block Auto-Sync:** Editing a `ShowChoices` block automatically updates the corresponding `When` blocks in real-time. Supports multiple separators (` | `, `", "`, `,`).
+-   **NEW:** **Script Structural Validation:** `Script` and `ScriptMore` commands are now validated against the Japanese original using structural fingerprints (ignoring translation content). Detected errors include unclosed quotes, brackets, and structural mismatches.
+-   **NEW:** **Refined Item ID Fixing:** The Item ID mismatch detection now supports targeted replacement (only the ID is changed, preserving surrounding text). The item button provides real-time visual feedback (red border) when a mismatch is detected or fixed manualy.
 
 3.  **Undo/Redo:**
     -   Use the ↺ and ↻ buttons or Ctrl+Z / Ctrl+Y to undo/redo changes.
@@ -166,7 +169,26 @@
 
 ---
 
-## Changelog (v1.5.00)
+## Changelog (v1.5.08)
+
+### Structural & Validation Enhancements
+- **Script Tag Validation:** Implemented a structural fingerprinting system for `Script` and `ScriptMore` blocks. 
+  - Compares syntax markers (quotes, brackets, braces, commas) with the Japanese original.
+  - Correctly handles multi-line scripts by relying on JP comparison rather than strict per-line balance.
+  - Masks translation content (text inside quotes) to avoid false positives from punctuation in the translation.
+  - Integrated into the `JP Sync` logic to maintain accuracy even when lines are added/split.
+- **Item ID Mismatch Detection:**
+  - Improved the mismatch checker to scan for `\ii[X]`, `\ia[X]`, and `\iw[X]` tags in `ShowText` blocks.
+  - Refined the "Fix" button to perform **targeted replacement** (replacing only the numeric ID and type letter) instead of overwriting the entire line.
+  - Added real-time visual feedback: Item buttons now dynamically update their error state (Red border/Tooltip) as you type.
+
+### Automation & UI
+- **When Block Auto-Sync:** Implemented a real-time listener for `ShowChoices`. 
+  - Automatically populates subsequent `When` blocks as you edit the choices.
+  - Intelligent parsing supports formats like `Meat | Leaf`, `"Option 1", "Option 2"`, and simple comma-separated lists.
+- **Improved Script Error Handling:** Redundant syntax error loops were consolidated into the synchronized `JP Sync` pipeline to eliminate false positives on technical commands.
+
+### Changelog (v1.5.00)
 
 ### Indentation Synchronization
 - **New Detection Tool:** Automatically detects and flags indentation errors in `Page X` lines (must be exactly 2 spaces) and lines marked with `#+` (must match preceding line).
