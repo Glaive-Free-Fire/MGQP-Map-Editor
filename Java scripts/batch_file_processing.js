@@ -281,9 +281,15 @@ async function batchFixAllFiles() {
           continue;
         }
 
+        // --- УСТАНОВКА КОНТЕКСТА ФАЙЛА (Критично для generateFinalFileLines) ---
+        window.loadedFileName = fileName;
+        window.textBlocks = [];
+        window.mapDisplayName = "";
+
         // Читаем содержимое файлов
         const ruLines = await readFileAsLines(ruFile);
         const jpLines = await readFileAsLines(jpFile);
+        window.fullJapLines = jpLines.slice(); // Обновляем глобальный японский контекст
 
         let currentFixedLines = ruLines.slice(); // Начинаем с оригинальных RU строк
 
@@ -479,42 +485,46 @@ async function batchFixAllFiles() {
           addBatchReportLine(`    ✓ Исправлено ${indentErrors.length} ошибок отступов`, 'success');
         }
 
-        // === ПРИОРИТЕТ 3: Исправляем ОШИБКИ СКРИПТОВ (двойные слэши) ===
+        // === ЭТАП 2.3.1: Исправляем ОШИБКИ СКРИПТОВ (двойные слэши) через блоки ===
         addBatchReportLine(`  → ${fileName}: проверка ошибок скриптов...`, 'info');
-        const scriptErrors = window.checkForLineLevelErrors(currentFixedLines).filter(e =>
+        // Передаем японские строки для точной проверки (критично для избежания ложных срабатываний)
+        const scriptErrors = window.checkForLineLevelErrors(currentFixedLines, jpLines).filter(e =>
           e.type === 'Ошибка скрипта' && e.reason.includes('двойные слэши')
         );
 
         if (scriptErrors.length > 0) {
-          addBatchReportLine(`    Обнаружено ${scriptErrors.length} ошибок скриптов (двойные слэши), исправляем...`, 'info');
+          addBatchReportLine(`    Обнаружено ${scriptErrors.length} потенциальных ошибок скриптов, исправляем через модель блоков...`, 'info');
           let fixedSlashes = 0;
-          for (let i = scriptErrors.length - 1; i >= 0; i--) {
-            const err = scriptErrors[i];
-            if (currentFixedLines[err.line] !== undefined) {
-              const line = currentFixedLines[err.line];
-              // Исправляем двойные слэши: \\\\ -> \\ 
-              // (в JS строке \\\\ это два слэша, мы меняем их на один, который пишется как \\)
-              // Но постойте, если в файле написано \\ (два слэша как текст), то readAsText вернет их как есть.
-              // В JS строке это будет "..." + "\\\\" + "..."
-              // Нам нужно заменить \\\\ на \\
 
-              if (line.includes('\\\\')) {
-                currentFixedLines[err.line] = line.replace(/\\\\/g, '\\');
+          // Для каждого обнаруженного индекса ошибки ищем соответствующий блок
+          scriptErrors.forEach(err => {
+            // Маппинг для пакетного режима (простой поиск по оригинальному индексу)
+            const block = window.textBlocks.find(b => b.idx === err.line);
+            if (block && (block.type === 'Script' || block.type === 'ScriptMore')) {
+              const oldText = block.text;
+              // Исправляем любое количество повторов ∾ (внутреннее представление слэша)
+              const fixedText = oldText.replace(/∾∾+/g, '∾');
+
+              if (oldText !== fixedText) {
+                block.text = fixedText;
                 fixedSlashes++;
               }
             }
-          }
+          });
 
           if (fixedSlashes > 0) {
-            // Обновляем глобальное состояние
+            addBatchReportLine(`    ✓ Исправлено ${fixedSlashes} блоков с двойными слэшами`, 'success');
+            // После изменения блоков нужно перегенерировать итоговые строки
+            currentFixedLines = window.generateFinalFileLines().slice();
+
+            // Синхронизируем глобальные переменные для последующих этапов
             window.originalLines = currentFixedLines.slice();
             window.fullRusLines = currentFixedLines.slice();
-            window.textBlocks = [];
-            window.extractTexts();
-            window.extractJapaneseTexts(window.fullJapLines);
-
-            addBatchReportLine(`    ✓ Исправлено ${fixedSlashes} строк с двойными слэшами`, 'success');
+          } else {
+            addBatchReportLine(`    ✓ Все подозрительные слэши совпадают с оригиналом или уже исправлены через авто-синхронизацию`, 'success');
           }
+        } else {
+          addBatchReportLine(`    ✓ Ошибок скриптов не обнаружено`, 'success');
         }
 
 

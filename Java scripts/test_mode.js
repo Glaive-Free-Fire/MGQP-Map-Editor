@@ -588,7 +588,15 @@ setTimeout(function () {
     if (typeof window.formatShowTextContent === 'function') {
       return window.formatShowTextContent(text);
     }
-    // Фоллбек, если глобальной функции нет (копия логики из html)
+    // Фоллбек
+    let cleanText = text;
+    // Очистка от вложенных тегов (симуляция getVisibleTextMetrics, но для генерации мы оставляем теги, 
+    // здесь нам нужно просто экранирование. 
+    // ОСТОРОЖНО: formatShowTextContent нужен для ФИНАЛЬНОГО вывода в файл, 
+    // поэтому он НЕ должен удалять теги, а только экранировать слэши.
+    // НО! Логика выше (replace(/∾∾/g, '\\\\')) уже делает это.
+
+    // Возвращаем старую логику экранирования, так как formatShowTextContent НЕ должен удалять теги
     let txt = text.replace(/∿/g, '<<ONE>>').replace(/\n/g, '\\n').replace(/∾∾/g, '\\\\').replace(/∾/g, '\\').replace(/<<ONE>>/g, '\\').replace(/\\(?=[\?\.!\,—])/g, '');
     return txt.replace(/(?<!\\)"/g, '\\"');
   }
@@ -618,6 +626,21 @@ setTimeout(function () {
       return [];
     }
 
+    // --- СИНХРОНИЗАЦИЯ СКРЫТЫХ SCRIPT БЛОКОВ ---
+    // Если блок Script или ScriptMore не содержит ни японских, ни русских символов, 
+    // это означает, что он был скрыт в редакторе (фильтр в renderTextBlocks).
+    // Мы принудительно синхронизируем их текст с японским файлом перед сохранением.
+    blocksToUse.forEach(block => {
+      if ((block.type === 'Script' || block.type === 'ScriptMore') && !block.isDeleted) {
+        const hasJapanese = /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.text);
+        const hasRussian = /[А-Яа-яЁё]/.test(block.text);
+
+        if (!hasJapanese && !hasRussian && block.japaneseLink && block.japaneseLink.text) {
+          block.text = block.japaneseLink.text;
+        }
+      }
+    });
+
     let exportLines = []; // Итоговые строки
     let newLines = [...linesToUse];
     const blockMap = new Map();
@@ -628,13 +651,14 @@ setTimeout(function () {
     });
 
     // === ШАГ 2: ОБРАБОТКА 'Display Name' (Только для Карт!) ===
-    // Опираемся на имя файла для разделения логики
-    const isMapFile = window.loadedFileName && /Map\d+/i.test(window.loadedFileName);
-    const isCommonEventFile = window.loadedFileName && /CommonEvent\d+/i.test(window.loadedFileName);
+    // Проверка через имя файла и содержимое (для надежности при пакетной обработке)
+    const fileNameLower = (window.loadedFileName || "").toLowerCase();
+    const isMapFile = fileNameLower.includes('map') && !fileNameLower.includes('commonevent');
+    const isCommonEventFile = fileNameLower.includes('commonevent') || linesToUse.some(l => /^CommonEvent \d+/.test(l));
 
-    let lineOffset = 0; // Сдвиг индексов, если мы вставили строку
-
-    if (isMapFile || (!isCommonEventFile)) {
+    let lineOffset = 0;
+    // Вставляем Display Name ТОЛЬКО если это карта и НЕТ признаков CommonEvent
+    if (isMapFile && !isCommonEventFile) {
       let dn = '';
       if (typeof mapDisplayName !== 'undefined') dn = mapDisplayName;
       else if (window.mapDisplayName) dn = window.mapDisplayName;
@@ -659,14 +683,42 @@ setTimeout(function () {
 
     // === ШАГ 3: СБОРКА ИТОГОВОГО ФАЙЛА ===
     const originalIdxToExportPos = new Map();
+    window.lastExportLineToBlockIndex = new Map();
+    const blockToIndexMap = new Map();
+    blocksToUse.forEach((b, idx) => blockToIndexMap.set(b, idx));
+
+    // Набор индексов строк, которые нужно пропустить (т.к. они были объединены в один блок)
+    const skipIndices = new Set();
+    blocksToUse.forEach(b => {
+      if (b.linesToSkip) {
+        if (Array.isArray(b.linesToSkip)) {
+          b.linesToSkip.forEach(idx => skipIndices.add(idx));
+        } else if (typeof b.linesToSkip === 'number' && b.linesToSkip > 0) {
+          // Если это число, значит пропущено N строк СРАЗУ ПОСЛЕ текущей
+          for (let k = 1; k <= b.linesToSkip; k++) {
+            skipIndices.add(b.idx + k);
+          }
+        }
+      }
+    });
 
     for (let i = 0; i < newLines.length; i++) {
       const currentLineContent = newLines[i];
       const originalIdx = i - lineOffset;
+
+      // Если эта строка была поглощена другим блоком - пропускаем её
+      if (originalIdx >= 0 && skipIndices.has(originalIdx)) {
+        continue;
+      }
+
       const block = (originalIdx >= 0) ? blockMap.get(originalIdx) : undefined;
 
       if (originalIdx >= 0) {
         originalIdxToExportPos.set(originalIdx, exportLines.length);
+      }
+
+      if (block) {
+        window.lastExportLineToBlockIndex.set(exportLines.length, blockToIndexMap.get(block));
       }
 
       if (block) {
@@ -682,47 +734,33 @@ setTimeout(function () {
             formattedLine = currentLineContent.replace(/\[(.*)\]/, `["${formatShowTextContentLocal(block.text)}"]`);
             break;
           case 'ShowTextAttributes':
-            let attrText = block.text.replace(/∾/g, '\\\\').replace(/\n/g, '\\\\n');
+            let attrText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
             const attrHasQuotes = /\["(.*)"\]/.test(currentLineContent);
             if (attrHasQuotes) { formattedLine = currentLineContent.replace(/\["(.*)"\]/, `["${attrText}"]`); }
             else { formattedLine = currentLineContent.replace(/\[(.*)\]/, `[${attrText}]`); }
             break;
           case 'Script':
+          case 'ScriptMore':
             let scriptText = block.text.replace(/[∾∿]/g, '\\').replace(/\n/g, '\\n');
             let escapedScriptText = scriptText.replace(/(?<!\\)"/g, '\\"');
             formattedLine = currentLineContent.replace(/\[(.*)\]/, `["${escapedScriptText}"]`);
             break;
-          case 'ScriptMore':
-            let scriptMoreText = block.text.replace(/[∾∿]/g, '\\').replace(/\n/g, '\\n');
-            let escapedScriptMoreText = scriptMoreText.replace(/(?<!\\)"/g, '\\"');
-            formattedLine = currentLineContent.replace(/\[(.*)\]/, `["${escapedScriptMoreText}"]`);
-            break;
           case 'Label':
-            let labelText = block.text.replace(/∾/g, '\\\\').replace(/\n/g, '\\\\n');
-            const labelHasQuotes = /\["(.*)"\]/.test(currentLineContent);
-            if (labelHasQuotes) { formattedLine = currentLineContent.replace(/\["(.*)"\]/, `["${labelText}"]`); }
-            else { formattedLine = currentLineContent.replace(/\[(.*)\]/, `[${labelText}]`); }
-            break;
           case 'JumpToLabel':
-            let jumpText = block.text.replace(/∾/g, '\\\\').replace(/\n/g, '\\\\n');
-            const jumpHasQuotes = /\["(.*)"\]/.test(currentLineContent);
-            if (jumpHasQuotes) { formattedLine = currentLineContent.replace(/\["(.*)"\]/, `["${jumpText}"]`); }
-            else { formattedLine = currentLineContent.replace(/\[(.*)\]/, `[${jumpText}]`); }
-            break;
           case 'Name':
-            let nameText = block.text.replace(/∾/g, '\\\\').replace(/\n/g, '\\\\n');
-            const nameHasQuotes = /\["(.*)"\]/.test(currentLineContent);
-            if (nameHasQuotes) { formattedLine = currentLineContent.replace(/\["(.*)"\]/, `["${nameText}"]`); }
-            else { formattedLine = currentLineContent.replace(/\[(.*)\]/, `[${nameText}]`); }
+            let generalText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+            const hasQuotes = /\["(.*)"\]/.test(currentLineContent);
+            if (hasQuotes) { formattedLine = currentLineContent.replace(/\["(.*)"\]/, `["${generalText}"]`); }
+            else { formattedLine = currentLineContent.replace(/\[(.*)\]/, `[${generalText}]`); }
             break;
           case 'ShowChoices':
-            let choicesText = block.text.replace(/∾/g, '\\\\').replace(/\n/g, '\\\\n');
+            let choicesText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
             const choices = choicesText.split(/\s*\|\s*/);
             const quotedChoices = choices.map(choice => `"${choice.trim()}"`).join(', ');
             formattedLine = currentLineContent.replace(/\[\[(.*?)\],\s*(\d+)\]/, `[[${quotedChoices}], $2]`);
             break;
           case 'When':
-            let whenText = block.text.replace(/∾/g, '\\\\').replace(/\n/g, '\\\\n');
+            let whenText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
             const whenHasQuotes = /\[(\d+),\s*"(.*)"\]/.test(currentLineContent);
             if (whenHasQuotes) { formattedLine = currentLineContent.replace(/\[(\d+),\s*"(.*)"\]/, `[$1, "${whenText}"]`); }
             else { formattedLine = currentLineContent.replace(/\[(\d+),\s*(.*)\]/, `[$1, ${whenText}]`); }
@@ -732,17 +770,6 @@ setTimeout(function () {
             break;
         }
         exportLines.push(formattedLine.trimEnd());
-
-        // --- УМНЫЙ ПРОПУСК ДУБЛИКАТОВ ---
-        if (block.type === 'ShowText') {
-          while ((i + 1) < newLines.length) {
-            const nextIdx = i - lineOffset + 1; // Индекс в оригинальном файле/блоках
-            if (blockMap.has(nextIdx)) break;
-            const nextLineContent = newLines[i + 1];
-            if (!/^\s*ShowText\(/.test(nextLineContent)) break;
-            i++;
-          }
-        }
       } else {
         exportLines.push(currentLineContent.trimEnd());
       }
@@ -778,9 +805,24 @@ setTimeout(function () {
             `${parentIndent}ShowTextAttributes([${block.text}]) #+` :
             `${parentIndent}ShowText(["${txt}"]) #+`;
 
-          exportLines.splice(lastMainBlockLine + 1, 0, lineToInsert.trimEnd());
+          const posToInsert = lastMainBlockLine + 1;
+          exportLines.splice(posToInsert, 0, lineToInsert.trimEnd());
 
-          // Обновляем карту позиций для всех последующих элементов
+          // Обновляем карту позиций: сдвигаем все существующие маппинги после точки вставки
+          const newMap = new Map();
+          for (const [pos, blIdx] of window.lastExportLineToBlockIndex.entries()) {
+            if (pos >= posToInsert) {
+              newMap.set(pos + 1, blIdx);
+            } else {
+              newMap.set(pos, blIdx);
+            }
+          }
+          // Добавляем маппинг для самой вставленной строки
+          newMap.set(posToInsert, myIndexInBlocks);
+          window.lastExportLineToBlockIndex = newMap;
+
+
+          // Обновляем карту позиций для всех последующих элементов (оригинальная логика)
           for (const [key, value] of originalIdxToExportPos.entries()) {
             if (value > lastMainBlockLine) {
               originalIdxToExportPos.set(key, value + 1);
@@ -799,6 +841,9 @@ setTimeout(function () {
 
     return exportLines;
   };
+
+  // Обеспечиваем, чтобы алиас тоже указывал на новую функцию
+  window.generateCurrentFileContentAsLines = window.generateFinalFileLines;
 
   console.log("window.generateFinalFileLines успешно переопределена. Логика разделена для Map/CommonEvent.");
 }, 500);
@@ -934,15 +979,90 @@ window.addChangeItemsButtons = function () {
       }
     }
 
+
+    // === ЛОГИКА "ВЗГЛЯДА В БУДУЩЕЕ" (Forward Search) ===
+    // Если поиск назад ничего не дал, но в тексте есть плейсхолдер предмета
+    // ИЛИ если после этого блока идет ShowChoices (верный признак вопроса о предмете)
+    let triggerForwardSearch = false;
+    if (!itemId) {
+      if (/\\[iI][iIwaW]\[|Дать|Отдать/.test(block.text)) {
+        triggerForwardSearch = true;
+      } else {
+        // Проверяем, есть ли впереди ShowChoices (в пределах пары блоков)
+        // НО! Чтобы не мусорить кнопками на каждой строке диалога перед выбором,
+        // требуем наличие кавычек в текущей строке (обычно имя предмета в кавычках).
+        if (/([「«]).+?\1/.test(block.text)) {
+          for (let k = 1; k <= 5; k++) {
+            const nextB = window.textBlocks[index + k];
+            if (!nextB) break;
+            if (nextB.type === 'ShowChoices') {
+              triggerForwardSearch = true;
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    if (triggerForwardSearch) {
+      const forwardDepth = 30; // Ищем достаточно далеко вперед
+      for (let i = block.idx + 1; i < Math.min(lines.length, block.idx + forwardDepth); i++) {
+        const line = lines[i].trim();
+
+        // Прерываем поиск, если начался совсем другой диалог (ShowText не внутри выбора)
+        // Но! Нужно пропускать ShowChoices, When, и ShowText внутри них.
+        // Пока сделаем проще: ищем ПЕРВЫЙ ChangeItems.
+        // Если встретили ExitEventProcessing или конец файла - стоп.
+        if (/^ExitEventProcessing/.test(line)) break;
+
+        // Парсинг ChangeItems (тот же код)
+        const matchFull = line.match(/(ChangeItems|ChangeWeapons|ChangeArmor)\(\[\s*(\d+),\s*\d+,\s*(\d+),\s*(\d+).*?\]\)/);
+        const matchSimple = line.match(/(ChangeItems|ChangeWeapons|ChangeArmor)\(\[\s*(\d+),/);
+
+        if (matchFull) {
+          const command = matchFull[1];
+          itemId = matchFull[2];
+          const typeOp = matchFull[3];
+          const amount = matchFull[4];
+          itemAmount = (typeOp === '1') ? `∾∾V[${amount}]` : amount;
+          if (command === 'ChangeWeapons') itemType = 'iw';
+          else if (command === 'ChangeArmor') itemType = 'ia';
+          else itemType = 'ii';
+          break; // Нашли!
+        } else if (matchSimple) {
+          const command = matchSimple[1];
+          itemId = matchSimple[2];
+          itemAmount = '1';
+          if (command === 'ChangeWeapons') itemType = 'iw';
+          else if (command === 'ChangeArmor') itemType = 'ia';
+          else itemType = 'ii';
+          break; // Нашли!
+        }
+      }
+    }
+
     if (!itemId) return;
 
     // Решаем, показывать ли кнопку
     // Теперь показываем ТОЛЬКО если текст совпадает с паттерном получения предмета.
     // Это исключает ложные срабатывания на обычном диалоге, который просто идет после команды.
-    if (currentIsPattern) {
-      if (block.dom.changeItemsBtn && block.dom.changeItemsBtn.isConnected) return;
+    if (currentIsPattern || triggerForwardSearch) {
+      let btn = block.dom.changeItemsBtn;
+      const isNew = !btn || !btn.isConnected;
 
-      const btn = document.createElement('button');
+      if (isNew) {
+        btn = document.createElement('button');
+        btn.className = 'control-btn';
+        btn.style.fontSize = '11px';
+        btn.style.marginLeft = '10px';
+        btn.style.padding = '2px 6px';
+        btn.style.cursor = 'pointer';
+        block.dom.changeItemsBtn = btn;
+      }
+
+      // Те же данные теперь в самом блоке
+      block.associatedItemId = itemId;
+      block.associatedItemType = itemType;
 
       // Настраиваем текст и стиль в зависимости от типа
       let typeLabel = 'Item';
@@ -951,29 +1071,73 @@ window.addChangeItemsButtons = function () {
       else if (itemType === 'ia') { typeLabel = 'Armor'; btnBg = '#ccf2ff'; }
 
       btn.textContent = `${typeLabel}[${itemId}] x${itemAmount}`;
-      btn.className = 'control-btn';
-      btn.style.cssText = `font-size:11px; margin-left:10px; padding:2px 6px; background:${btnBg}; cursor:pointer;`;
+      btn.style.background = btnBg;
       btn.title = `Заменить на шаблон получения (${typeLabel}) ID ${itemId}`;
 
-      btn.onclick = function () {
-        const newText = `∾∾${itemType}[${itemId}] × ${itemAmount} получено!`;
-        if (block.dom.rusInput.value === newText) return;
+      // --- ПРОВЕРКА НА НЕСООТВЕТСТВИЕ ID ---
+      const itemTagRegex = /(?:\\|∾+)i([iaw]?)\[(\d+)\]/i;
+      const tMatch = block.text.match(itemTagRegex);
+      let hasMismatch = false;
 
-        block.dom.rusInput.value = newText;
-        block.text = newText;
-        block.dom.rusInput.dispatchEvent(new Event('input', { bubbles: true }));
+      if (tMatch) {
+        const textTypeLetter = (tMatch[1] || '').toLowerCase();
+        let textType = 'ii';
+        if (textTypeLetter === 'w') textType = 'iw';
+        else if (textTypeLetter === 'a') textType = 'ia';
 
-        const oldLabel = btn.textContent;
-        btn.textContent = 'Done!';
-        setTimeout(() => { btn.textContent = oldLabel; }, 1000);
-      };
+        const textId = tMatch[2];
+        if (textId !== itemId || textType !== itemType) {
+          hasMismatch = true;
+          btn.style.border = '2px solid #f00';
+          btn.style.boxShadow = '0 0 5px #f00';
+          btn.title = `ВНИМАНИЕ: ID в тексте (${textType}[${textId}]) не совпадает с командой (${itemType}[${itemId}])!`;
+          // Подсвечиваем блок
+          if (window.allErrorIndices) {
+            window.allErrorIndices.add(index);
+          }
+        }
+      }
 
-      const blockDiv = block.dom.rusInput.closest('.block');
-      if (blockDiv) {
-        const label = blockDiv.querySelector('label');
-        if (label) {
-          label.appendChild(btn);
-          block.dom.changeItemsBtn = btn;
+      if (!hasMismatch) {
+        btn.style.border = '';
+        btn.style.boxShadow = '';
+      }
+
+      if (isNew) {
+        btn.onclick = function () {
+          const currentText = block.dom.rusInput.value;
+          const currentMatch = currentText.match(itemTagRegex);
+          let newText;
+
+          if (currentMatch) {
+            // Заменяем только ID и тип, сохраняя префиксы
+            const typeLetter = itemType === 'iw' ? 'w' : (itemType === 'ia' ? 'a' : '');
+            newText = currentText.replace(itemTagRegex, (match) => {
+              const prefix = match.startsWith('∾') ? (match.startsWith('∾∾') ? '∾∾' : '∾') : '\\';
+              return `${prefix}i${typeLetter}[${itemId}]`;
+            });
+          } else {
+            // Полная замена только если тег не найден
+            newText = `∾∾${itemType}[${itemId}] × ${itemAmount} получено!`;
+          }
+
+          if (block.dom.rusInput.value === newText) return;
+
+          block.dom.rusInput.value = newText;
+          block.text = newText;
+          block.dom.rusInput.dispatchEvent(new Event('input', { bubbles: true }));
+
+          const oldLabel = btn.textContent;
+          btn.textContent = 'Done!';
+          setTimeout(() => { btn.textContent = oldLabel; }, 1000);
+        };
+
+        const blockDiv = block.dom.rusInput.closest('.block');
+        if (blockDiv) {
+          const label = blockDiv.querySelector('label');
+          if (label) {
+            label.appendChild(btn);
+          }
         }
       }
     }
@@ -1278,7 +1442,7 @@ setTimeout(function () {
     // 1. Вызываем базовые проверки (Японский текст, длина строк и т.д.)
     // Включаем проверку двойных слэшей из main_script.js
     if (typeof originalCheckForLineLevelErrors === 'function') {
-      const originalErrors = originalCheckForLineLevelErrors(lines);
+      const originalErrors = originalCheckForLineLevelErrors(lines, optionalJpLines);
       errors = originalErrors.slice(); // Копируем все ошибки, включая двойные слэши
     }
 
@@ -1384,23 +1548,74 @@ setTimeout(function () {
 
         // 1. Полное совпадение сигнатуры
         if (rSig === jSig) {
-          const rIndent = (rLine.match(/^\s*/) || [''])[0].length;
-          const jIndent = (jLine.match(/^\s*/) || [''])[0].length;
+          const rLineTrim = rLine.trim();
+          const jLineTrim = jLine.trim();
+
+          // Дополнительная проверка отступов для совпавших команд
+          const rIndent = (rLine.match(/^\s*/) || [""])[0];
+          const jIndent = (jLine.match(/^\s*/) || [""])[0];
 
           if (rIndent !== jIndent) {
-            const alreadyHasError = errors.some(e => e.line === i);
-            if (!alreadyHasError) {
-              errors.push({
-                label: `строка ${i + 1}`,
-                type: 'Ошибка отступа (JP)',
-                reason: `Отступ не совпадает с JP (RU: ${rIndent}, JP: ${jIndent})`,
-                line: i,
-                msg: `Отступ не совпадает с JP (ожидался: ${jIndent}, найден: ${rIndent})`,
-                expectedIndent: ' '.repeat(jIndent),
-                isFixableIndent: true
-              });
+            errors.push({
+              label: `строка ${i + 1}`,
+              type: 'Ошибка отступа',
+              reason: `Отступ не совпадает с японским оригиналом.`,
+              line: i,
+              msg: `Отступ не совпадает с JP (RU: ${rIndent.length}, JP: ${jIndent.length}).`,
+              expectedIndent: jIndent,
+              isFixableIndent: true
+            });
+          }
+
+          // --- НОВОЕ: Проверка структуры Script/ScriptMore внутри синхронизации ---
+          if (rSig === 'Script' || rSig === 'ScriptMore') {
+            const rMatch = rLineTrim.match(/\["(.*)"\]/);
+            const jMatch = jLineTrim.match(/\["(.*)"\]/);
+
+            if (rMatch && jMatch) {
+              const ruContent = rMatch[1];
+              const jpContent = jMatch[1];
+
+              // Если контент идентичен (техническая команда), пропускаем
+              if (ruContent !== jpContent) {
+                const getScriptFingerprint = (s) => {
+                  // 1. Нормализуем спецсимволы и экранированные кавычки
+                  let normalized = s
+                    .replace(/[“”]/g, '"')
+                    .replace(/[‘’]/g, "'")
+                    .replace(/[（]/g, '(')
+                    .replace(/[）]/g, ')')
+                    .replace(/[［]/g, '[')
+                    .replace(/[］]/g, ']')
+                    .replace(/\\/g, '∾')
+                    .replace(/∾"/g, '"') // Для поиска строк считаем ∾" как просто "
+                    .replace(/∾'/g, "'");
+
+                  // 2. Маскируем содержимое строк, чтобы не сверять пунктуацию в переводе
+                  normalized = normalized
+                    .replace(/"[^"]*"/g, '"X"')
+                    .replace(/'[^']*'/g, "'X'");
+
+                  // 3. Оставляем только каркас кода
+                  return normalized.replace(/[^\[\]\(\)\{\}"'∾,:;=!]/g, '');
+                };
+
+                const ruSigFinger = getScriptFingerprint(ruContent);
+                const jpSigFinger = getScriptFingerprint(jpContent);
+
+                if (ruSigFinger !== jpSigFinger) {
+                  errors.push({
+                    label: `строка ${i + 1}`,
+                    type: 'Ошибка скрипта',
+                    reason: `Структура не совпадает с JP. Ожидалось: ${jpSigFinger}, найдено: ${ruSigFinger}`,
+                    line: i,
+                    msg: 'Структура скрипта (скобки/кавычки) отличается от оригинала.'
+                  });
+                }
+              }
             }
           }
+
           j = tempJ + 1; // Продвигаем JP курсор
           continue;
         }
@@ -1562,6 +1777,81 @@ setTimeout(function () {
       }
     }
 
+    // --- НОВАЯ ПРОВЕРКА: Несоответствие ID предмета ---
+    const itemMismatchTagRegex = /(?:\\|∾+)i([iaw]?)\[(\d+)\]/i;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line.includes('ShowText([')) continue;
+
+      const startIdx = line.indexOf('["');
+      const endIdx = line.lastIndexOf('"]');
+      if (startIdx === -1 || endIdx === -1) continue;
+      const text = line.substring(startIdx + 2, endIdx);
+
+      const tMatch = text.match(itemMismatchTagRegex);
+      if (tMatch) {
+        const textTypeLetter = (tMatch[1] || '').toLowerCase();
+        let textType = 'ii';
+        if (textTypeLetter === 'w') textType = 'iw';
+        else if (textTypeLetter === 'a') textType = 'ia';
+        const textId = tMatch[2];
+
+        let itemId = null;
+        let itemType = 'ii';
+
+        // Поиск НАЗАД
+        for (let k = i - 1; k >= Math.max(0, i - 15); k--) {
+          const l = lines[k].trim();
+          if (/^(Label|JumpToLabel|Script|ExitEventProcessing)/.test(l)) break;
+          const mF = l.match(/(ChangeItems|ChangeWeapons|ChangeArmor)\(\[\s*(\d+),\s*\d+,\s*(\d+),\s*(\d+).*?\]\)/);
+          const mS = l.match(/(ChangeItems|ChangeWeapons|ChangeArmor)\(\[\s*(\d+),/);
+          if (mF) {
+            itemId = mF[2];
+            if (mF[1] === 'ChangeWeapons') itemType = 'iw';
+            else if (mF[1] === 'ChangeArmor') itemType = 'ia';
+            break;
+          } else if (mS) {
+            itemId = mS[2];
+            if (mS[1] === 'ChangeWeapons') itemType = 'iw';
+            else if (mS[1] === 'ChangeArmor') itemType = 'ia';
+            break;
+          }
+        }
+
+        // Поиск ВПЕРЕД
+        if (!itemId) {
+          for (let k = i + 1; k < Math.min(lines.length, i + 30); k++) {
+            const l = lines[k].trim();
+            if (/^ExitEventProcessing/.test(l)) break;
+            const mF = l.match(/(ChangeItems|ChangeWeapons|ChangeArmor)\(\[\s*(\d+),\s*\d+,\s*(\d+),\s*(\d+).*?\]\)/);
+            const mS = l.match(/(ChangeItems|ChangeWeapons|ChangeArmor)\(\[\s*(\d+),/);
+            if (mF) {
+              itemId = mF[2];
+              if (mF[1] === 'ChangeWeapons') itemType = 'iw';
+              else if (mF[1] === 'ChangeArmor') itemType = 'ia';
+              break;
+            } else if (mS) {
+              itemId = mS[2];
+              if (mS[1] === 'ChangeWeapons') itemType = 'iw';
+              else if (mS[1] === 'ChangeArmor') itemType = 'ia';
+              break;
+            }
+          }
+        }
+
+        if (itemId && (textId !== itemId || textType !== itemType)) {
+          errors.push({
+            label: `строка ${i + 1}`,
+            type: 'Ошибка ID предмета',
+            reason: `ID в тексте (${textType}[${textId}]) не совпадает с командой (${itemType}[${itemId}])!`,
+            line: i,
+            msg: `ID в тексте (${textType}[${textId}]) не совпадает с командой (${itemType}[${itemId}])!`,
+            isItemIdMismatchLine: true
+          });
+        }
+      }
+    }
+
     return errors;
   };
 
@@ -1580,116 +1870,120 @@ setTimeout(function () {
       // Это ключевой момент: мы проверяем не то, что было при загрузке, а то, что вы исправили
       let currentLines = [];
       if (typeof window.generateCurrentFileContentAsLines === 'function') {
-         currentLines = window.generateCurrentFileContentAsLines();
+        currentLines = window.generateCurrentFileContentAsLines();
       } else {
-         currentLines = window.originalLines || [];
+        currentLines = window.originalLines || [];
       }
 
       if (!currentLines || currentLines.length === 0) return;
 
       // 3. Проверяем этот актуальный текст на ошибки
-      // Передаем также японские линии для сверки отступов (если есть)
+      // Передаем также японские линии для сверки отступов и скриптов (если есть)
       const jpLines = (window.fullJapLines && window.fullJapLines.length > 0) ? window.fullJapLines : null;
       const allErrors = window.checkForLineLevelErrors(currentLines, jpLines);
 
       // 4. Обновляем список красных строк (allErrorIndices)
-      // Создаем карту соответствия между строками в сгенерированном файле и блоками в редакторе
-      const lineToBlockIndexMap = new Map();
-      if (window.textBlocks) {
-        window.textBlocks.forEach((block, blockIndex) => {
-          if (block.idx !== undefined) {
-            lineToBlockIndexMap.set(block.idx, blockIndex);
-          }
-        });
-      }
-      
       let scriptErrorsCount = 0;
       let indentErrorsCount = 0;
-      
+      let itemMismatchCount = 0;
+
       // Фильтруем ошибки, которые нам интересны
       allErrors.forEach(err => {
-         const fileLineIdx = err.line;
-         
-         // Находим соответствующий индекс блока в редакторе
-         const blockIndex = lineToBlockIndexMap.get(fileLineIdx);
-         
-         // Если блок не найден или удален, ошибку игнорируем
-         if (blockIndex === undefined || (window.textBlocks && window.textBlocks[blockIndex] && window.textBlocks[blockIndex].isDeleted)) return;
+        const fileLineIdx = err.line;
 
-         // Обработка ошибок скрипта (Двойные слэши)
-         if (err.type === 'Ошибка скрипта') {
-            window.allErrorIndices.add(blockIndex);
-            scriptErrorsCount++;
-         }
-         
-         // Обработка ошибок отступов
-         if (err.isFixableIndent) {
-            window.allErrorIndices.add(blockIndex);
-            indentErrorsCount++;
-         }
+        // --- ИСПРАВЛЕНИЕ ФАНТОМНЫХ ОШИБОК ---
+        const blockIndex = window.lastExportLineToBlockIndex ? window.lastExportLineToBlockIndex.get(fileLineIdx) : undefined;
+
+        // Если блок не найден или удален, ошибку игнорируем
+        if (blockIndex === undefined || (window.textBlocks && window.textBlocks[blockIndex] && window.textBlocks[blockIndex].isDeleted)) return;
+
+        // Обработка ошибок скрипта (Двойные слэши)
+        if (err.type === 'Ошибка скрипта') {
+          window.allErrorIndices.add(blockIndex);
+          scriptErrorsCount++;
+        }
+
+        // Обработка ошибок отступов
+        if (err.isFixableIndent) {
+          window.allErrorIndices.add(blockIndex);
+          indentErrorsCount++;
+        }
+
+        // Обработка ошибок ID предметов
+        if (err.isItemIdMismatchLine) {
+          window.allErrorIndices.add(blockIndex);
+          itemMismatchCount++;
+        }
       });
 
       // 5. Обновляем интерфейс (Лампочка, Кнопки, Список ошибок)
       const lamp = document.getElementById('matchLamp');
-      
-      if (scriptErrorsCount > 0 || indentErrorsCount > 0) {
-         if (lamp) {
-            lamp.style.background = '#f66';
-            let titleMsg = '';
-            if (scriptErrorsCount > 0) titleMsg += `\n + Ошибок скрипта: ${scriptErrorsCount}`;
-            if (indentErrorsCount > 0) titleMsg += `\n + Ошибок отступов: ${indentErrorsCount}`;
-            if (!lamp.title.includes('Ошибок скрипта') && !lamp.title.includes('Ошибок отступов')) {
-               lamp.title += titleMsg;
-            }
-         }
+
+      if (scriptErrorsCount > 0 || indentErrorsCount > 0 || itemMismatchCount > 0) {
+        if (lamp) {
+          lamp.style.background = '#f66';
+          let titleMsg = '';
+          if (scriptErrorsCount > 0) titleMsg += `\n + Ошибок скрипта: ${scriptErrorsCount}`;
+          if (indentErrorsCount > 0) titleMsg += `\n + Ошибок отступов: ${indentErrorsCount}`;
+          if (itemMismatchCount > 0) titleMsg += `\n + Ошибок ID предметов: ${itemMismatchCount}`;
+
+          if (!lamp.title.includes('Ошибок скрипта') && !lamp.title.includes('Ошибок отступов') && !lamp.title.includes('Ошибок ID предметов')) {
+            lamp.title += titleMsg;
+          }
+        }
       }
 
       // Обновляем список ошибок под предпросмотром (previewDiffs)
       // Чтобы сообщение об ошибке исчезало сразу после исправления
       const diffsDiv = document.getElementById('previewDiffs');
       if (diffsDiv) {
-         // Удаляем старые списки авто-детекта, чтобы не дублировать
-         const oldLists = diffsDiv.querySelectorAll('.auto-detect-errors');
-         oldLists.forEach(el => el.remove());
+        // Удаляем старые списки авто-детекта, чтобы не дублировать
+        const oldLists = diffsDiv.querySelectorAll('.auto-detect-errors');
+        oldLists.forEach(el => el.remove());
 
-         if (allErrors.length > 0) {
-            let extraHtml = '<div class="auto-detect-errors" style="margin-top:10px; border-top:1px solid #ccc; padding-top:5px;">';
-            extraHtml += '<b>Обнаруженные ошибки (Live):</b><ul style="color:#d00; margin-top:4px;">';
-            allErrors.forEach(err => {
-               // Показываем только скрипты и отступы в этом списке
-               if (err.type === 'Ошибка скрипта' || err.isFixableIndent) {
-                  extraHtml += `<li><b>Строка ${err.line + 1}</b>: ${err.msg}</li>`;
-               }
-            });
-            extraHtml += '</ul></div>';
-            
-            // Если мы нашли ошибки, добавляем их в div
-            if (indentErrorsCount > 0 || scriptErrorsCount > 0) {
-               diffsDiv.insertAdjacentHTML('beforeend', extraHtml);
+        if (allErrors.length > 0) {
+          let extraHtml = '<div class="auto-detect-errors" style="margin-top:10px; border-top:1px solid #ccc; padding-top:5px;">';
+          extraHtml += '<b>Обнаруженные ошибки (Live):</b><ul style="color:#d00; margin-top:4px;">';
+          allErrors.forEach(err => {
+            // Показываем только скрипты, отступы и ID предметов в этом списке
+            if (err.type === 'Ошибка скрипта' || err.isFixableIndent || err.isItemIdMismatchLine) {
+              extraHtml += `<li><b>Строка ${err.line + 1}</b>: ${err.msg}</li>`;
             }
-         }
+          });
+          extraHtml += '</ul></div>';
+
+          // Если мы нашли ошибки, добавляем их в div
+          if (indentErrorsCount > 0 || scriptErrorsCount > 0 || itemMismatchCount > 0) {
+            diffsDiv.insertAdjacentHTML('beforeend', extraHtml);
+          }
+        }
       }
 
       // Управление кнопкой "Исправить отступы"
       const fixIndentBtn = document.getElementById('fixIndentBtn');
       if (fixIndentBtn) {
-         if (indentErrorsCount > 0) {
-            fixIndentBtn.style.setProperty('display', 'inline-block', 'important');
-            fixIndentBtn.textContent = `Исправить отступы (${indentErrorsCount})`;
-            if (fixIndentBtn.parentElement) fixIndentBtn.parentElement.style.display = '';
-         } else {
-            fixIndentBtn.style.setProperty('display', 'none', 'important');
-         }
+        if (indentErrorsCount > 0) {
+          fixIndentBtn.style.setProperty('display', 'inline-block', 'important');
+          fixIndentBtn.textContent = `Исправить отступы (${indentErrorsCount})`;
+          if (fixIndentBtn.parentElement) fixIndentBtn.parentElement.style.display = '';
+        } else {
+          fixIndentBtn.style.setProperty('display', 'none', 'important');
+        }
       }
 
       // Обновляем глобальную кнопку ChangeItems
       if (typeof window.updateGlobalChangeItemsBtn === 'function') {
         window.updateGlobalChangeItemsBtn();
       }
-      
+
       // Принудительно обновляем цвета полей ввода, чтобы убрать красный цвет сразу
       if (typeof window.updateRedIndices === 'function') {
-         window.updateRedIndices();
+        window.updateRedIndices();
+      }
+
+      // --- НОВОЕ: Обновляем статус кнопок ChangeItems в реальном времени ---
+      if (typeof window.addChangeItemsButtons === 'function') {
+        window.addChangeItemsButtons();
       }
     };
     console.log("window.updateMatchLamp успешно расширена (с фильтрацией NaN).");

@@ -39,9 +39,13 @@ window.getGameTextInfo = function (txt) {
 // --- НОВАЯ ЦЕНТРАЛИЗОВАННАЯ ФУНКЦИЯ ПОДСЧЁТА СИМВОЛОВ ---
 window.getVisibleTextMetrics = function (text) {
   const info = window.getGameTextInfo(text);
-  const visibleText = info.rawGameText
-    .replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[0\]>/g, '')
-    .replace(/∾∾[A-Z](\[\d+\])?/g, '')
+  let cleanText = info.rawGameText.replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[0\]>/g, '');
+  while (true) {
+    const newer = cleanText.replace(/∾∾[A-Z](\[.*?\])?/g, '');
+    if (newer === cleanText) break;
+    cleanText = newer;
+  }
+  const visibleText = cleanText
     .replace(/∾/g, '')
     .replace(/∿/g, '')
     .trim();
@@ -66,19 +70,25 @@ window.updateAllForBlock = function (block, textarea, plusBtn, minusBtn, counter
     let selGame = 0;
     if (sel > 0 && selStart >= nameLen && selEnd >= nameLen) {
       const selected = info.rawGameText.substring(selStart - nameLen, selEnd - nameLen);
-      selGame = selected
-        .replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[0\]>/g, '')
-        .replace(/∾∾C\[\d+\]/g, '')
-        .replace(/C\[\d+\]/g, '')
+      let cleanSel = selected.replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[0\]>/g, '');
+      while (true) {
+        const newer = cleanSel.replace(/∾∾[A-Z](\[.*?\])?/g, '');
+        if (newer === cleanSel) break;
+        cleanSel = newer;
+      }
+      selGame = cleanSel
         .replace(/∾/g, '')
         .replace(/∿/g, '')
         .length;
     } else if (sel > 0 && selEnd > nameLen && selStart < nameLen) {
       const selected = info.rawGameText.substring(0, selEnd - nameLen);
-      selGame = selected
-        .replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[0\]>/g, '')
-        .replace(/∾∾C\[\d+\]/g, '')
-        .replace(/C\[\d+\]/g, '')
+      let cleanSel = selected.replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[0\]>/g, '');
+      while (true) {
+        const newer = cleanSel.replace(/∾∾[A-Z](\[.*?\])?/g, '');
+        if (newer === cleanSel) break;
+        cleanSel = newer;
+      }
+      selGame = cleanSel
         .replace(/∾/g, '')
         .replace(/∿/g, '')
         .length;
@@ -462,12 +472,12 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines) {
     const contentMatch = line.match(/\["(.*)"\]/);
     if (contentMatch) {
       const content = contentMatch[1];
-      
+
       // Ищем именно двойной обратный слэш \\ (который в коде пишется как \\\\)
       if (content.includes('\\\\')) {
         // Сравниваем с японским оригиналом, если он доступен
         let japContent = null;
-        
+
         // Проверяем, есть ли японский файл и соответствующая строка
         if (optionalJpLines && optionalJpLines.length > 0 && optionalJpLines[i]) {
           const japLine = optionalJpLines[i];
@@ -476,13 +486,13 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines) {
             japContent = japContentMatch[1];
           }
         }
-        
+
         // Если есть японский оригинал и содержимое совпадает - не показываем ошибку
         if (japContent !== null && content === japContent) {
           // Содержимое совпадает с японским оригиналом - это не ошибка
           continue;
         }
-        
+
         // Если японского оригинала нет или содержимое отличается - показываем ошибку
         errors.push({
           label: `строка ${i + 1}`,
