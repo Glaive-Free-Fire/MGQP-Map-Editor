@@ -480,6 +480,12 @@ window.checkMapStructureMatch = function (jpContent, ruContent) {
             continue;
           }
 
+          // 4. Пропускаем строки с ## (игнор ошибок)
+          if (ruPage[j] && ruPage[j].raw.trim().endsWith('##')) {
+            j++;
+            continue;
+          }
+
           // === Сравнение только структурных команд (Switch, Variable, Condition, Exit, etc.) ===
           if (!jpLine || !ruLine || jpCmd !== ruCmd) {
             issues.push({
@@ -1852,7 +1858,17 @@ setTimeout(function () {
       }
     }
 
-    return errors;
+    // === ФИНАЛЬНАЯ ФИЛЬТРАЦИЯ: Удаляем все ошибки для строк с ## ===
+    return errors.filter(err => {
+      // Если у ошибки есть ссылка на строку
+      if (err.line !== undefined && lines[err.line] !== undefined) {
+        // Проверяем наличие маркера ## в конце строки
+        if (lines[err.line].trim().endsWith('##')) {
+          return false; // Игнорируем ошибку
+        }
+      }
+      return true;
+    });
   };
 
   console.log("window.checkForLineLevelErrors расширена с JP Sync.");

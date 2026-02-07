@@ -270,11 +270,13 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines) {
       if (lineCount >= 5) {
         blockIndices.forEach(errorIndex => {
           const errorBlock = textBlocks[errorIndex];
-          errors.push({
-            label: `строка ${errorBlock.idx + 1}`,
-            type: 'Ошибка компоновки',
-            reason: `Часть слишком длинного диалога (${lineCount} строк). Требуется вставка ShowTextAttributes.`
-          });
+          if (!errorBlock.hasIgnoreMarker) {
+            errors.push({
+              label: `строка ${errorBlock.idx + 1}`,
+              type: 'Ошибка компоновки',
+              reason: `Часть слишком длинного диалога (${lineCount} строк). Требуется вставка ShowTextAttributes.`
+            });
+          }
         });
       }
     }
@@ -290,7 +292,7 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines) {
 
         // Проверяем префикс
         const isMissingPrefix = !/^∾\n/.test(text);
-        if (isMissingPrefix) {
+        if (isMissingPrefix && !block.hasIgnoreMarker) {
           errors.push({
             label: `строка ${block.idx + 1}`,
             type: 'Ошибка тега имени',
@@ -329,7 +331,7 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines) {
       if (prevBlock && prevBlock.type === 'ShowText') {
         // --- Проверка на Ошибку 3 (Мусорный STA) ---
         if (prevBlock.manualPlus && nextRelevantBlock.manualPlus) {
-          if (!block.generated) {
+          if (!block.generated && !block.hasIgnoreMarker) {
             errors.push({
               label: `строка ${block.idx + 1}`,
               type: 'Ошибка компоновки',
@@ -339,7 +341,7 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines) {
         }
 
         // --- Проверка на Ошибку 1 (Фаза 1 Очистки) ---
-        if (window.isNameBlock(prevBlock.text)) {
+        if (window.isNameBlock(prevBlock.text) && !block.hasIgnoreMarker) {
           errors.push({
             label: `строка ${block.idx + 1}`,
             type: 'Ошибка компоновки',
@@ -415,18 +417,20 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines) {
       }
 
       if (!isNarrationBlock) {
-        errors.push({
-          label: `строка ${nextRelevantBlock.idx + 1}`,
-          type: 'Ошибка компоновки',
-          reason: 'Эта строка должна содержать тег имени (\\n<\\C[6]Имя\\C[0]>), так как она идет после отмеченной (#+) ShowTextAttributes.'
-        });
+        if (!nextRelevantBlock.hasIgnoreMarker) {
+          errors.push({
+            label: `строка ${nextRelevantBlock.idx + 1}`,
+            type: 'Ошибка компоновки',
+            reason: 'Эта строка должна содержать тег имени (\\n<\\C[6]Имя\\C[0]>), так как она идет после отмеченной (#+) ShowTextAttributes.'
+          });
+        }
       }
     }
 
     // --- Other checks (length, Japanese text, etc.) ---
     if (block.type === 'ShowText') {
       const metrics = window.getVisibleTextMetrics(block.text);
-      if (metrics.length > 50) {
+      if (metrics.length > 50 && !block.hasIgnoreMarker) {
         errors.push({
           label: `строка ${block.idx + 1}`,
           type: 'Ошибка строки',
@@ -451,7 +455,7 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines) {
         }
       }
       const brokenCodeRegex = /∾∾[IC]\[\d+\].*?(?<!∾)∾C\[0\]/;
-      if (brokenCodeRegex.test(block.text)) {
+      if (brokenCodeRegex.test(block.text) && !block.hasIgnoreMarker) {
         errors.push({
           label: `строка ${block.idx + 1}`,
           type: 'Ошибка кода',
