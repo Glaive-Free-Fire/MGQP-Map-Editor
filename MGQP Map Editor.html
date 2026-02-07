@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8">
-  <title>MGQP Map Editor v1.5.08</title>
+  <title>MGQP Map Editor v1.5.09</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="Java scripts/main_script.js"></script>
   <script src="Java scripts/restore-mode.js"></script>
@@ -355,6 +355,10 @@
       lines.forEach((line, index) => {
         const trimmedLine = line.trim();
         if (trimmedLine.length === 0) return;
+
+        // === ИГНОРИРОВАНИЕ СТРОК С ## ===
+        if (trimmedLine.endsWith('##')) return;
+
         const match = trimmedLine.match(commandSyntaxRegex);
         if (match) {
           const commandName = match[1];
@@ -439,12 +443,15 @@
 
             blockIndices.forEach(errorIndex => {
               const errorBlock = textBlocks[errorIndex];
-              redLineErrors.push({
-                label: errorBlock.idx !== undefined ? `строка ${errorBlock.idx + 1}` : '[продолжение]',
-                type: 'Ошибка компоновки',
-                reason: `Часть слишком длинного диалога (${lineCount} строк). Требуется вставка ShowTextAttributes.`
-              });
-              window.allErrorIndices.add(errorIndex); // << ISPFRAVLENIE: Dobavlyaem v spisok dlya podsvetki
+              // Игнорируем блоки с ##
+              if (errorBlock && !errorBlock.hasIgnoreMarker) {
+                redLineErrors.push({
+                  label: errorBlock.idx !== undefined ? `строка ${errorBlock.idx + 1}` : '[продолжение]',
+                  type: 'Ошибка компоновки',
+                  reason: `Часть слишком длинного диалога (${lineCount} строк). Требуется вставка ShowTextAttributes.`
+                });
+                window.allErrorIndices.add(errorIndex);
+              }
             });
           }
         });
@@ -463,21 +470,21 @@
                 .trim();
               return v.length;
             })());
-            if (len > 50) {
+            if (!block.hasIgnoreMarker && len > 50) {
               redLineErrors.push({
                 label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[продолжение]',
                 type: 'Ошибка строки',
                 reason: `Превышен лимит символов: ${len} > 50`
               });
-              window.allErrorIndices.add(i); // << ДОБАВИТЬ
+              window.allErrorIndices.add(i);
             }
-            if (info.isCorrupted) {
+            if (!block.hasIgnoreMarker && info.isCorrupted) {
               redLineErrors.push({
                 label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[продолжение]',
                 type: 'Ошибка строки',
                 reason: 'Повреждён тег имени или синтаксис'
               });
-              window.allErrorIndices.add(i); // << ДОБАВИТЬ
+              window.allErrorIndices.add(i);
             }
 
             // ================== НОВЫЙ ПРАВИЛЬНЫЙ КОД ==================
@@ -494,7 +501,7 @@
                 const textBeforeTag = text.substring(0, nameTagMatch.index);
 
                 // Ошибка, если текст перед тегом НЕ заканчивается на "∾\n"
-                if (!/∾\n$/.test(textBeforeTag)) {
+                if (!block.hasIgnoreMarker && !/∾\n$/.test(textBeforeTag)) {
                   redLineErrors.push({
                     label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[продолжение]',
                     type: 'Ошибка тега имени',
@@ -537,7 +544,7 @@
           }
           // <<< НАЧАЛО ИЗМЕНЕНИЯ: Проверка на сломанные коды форматирования >>>
           const brokenCodeRegex = /∾∾[IC]\[\d+\].*?(?<!∾)∾C\[0\]/;
-          if (block.type === 'ShowText' && brokenCodeRegex.test(block.text)) {
+          if (!block.hasIgnoreMarker && block.type === 'ShowText' && brokenCodeRegex.test(block.text)) {
             redLineErrors.push({
               label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[продолжение]',
               type: 'Ошибка кода',
@@ -566,7 +573,7 @@
                 }
               }
 
-              if (isBroken) {
+              if (isBroken && !block.hasIgnoreMarker) {
                 redLineErrors.push({
                   label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[продолжение]',
                   type: 'Ошибка шаблона',
@@ -579,7 +586,7 @@
 
           // --- Рекомендация: Показываем только если НЕТ структурных ошибок И НЕТ ошибок шаблонов ---
           if (!hasStructuralErrors && !isAffectionFixVisible && block.type === 'ShowText' && window.japBlocks && window.japBlocks.length > 0 &&
-            !window.isNameBlock(block.text) && !block.japaneseLink && !block.generated && !block.manualPlus) {
+            !window.isNameBlock(block.text) && !block.japaneseLink && !block.generated && !block.manualPlus && !block.hasIgnoreMarker) {
             redLineErrors.push({
               label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[продолжение]',
               type: 'Рекомендация',
@@ -601,12 +608,14 @@
               }
             }
             if (!precedingStructuralBlock || precedingStructuralBlock.type !== 'ShowTextAttributes') {
-              redLineErrors.push({
-                label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[строка-плейсхолдер]',
-                type: 'Потенциальная ошибка',
-                reason: 'Строка с именем персонажа без предшествующей команды ShowTextAttributes'
-              });
-              window.allErrorIndices.add(i); // << ДОБАВИТЬ
+              if (!block.hasIgnoreMarker) {
+                redLineErrors.push({
+                  label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[строка-плейсхолдер]',
+                  type: 'Потенциальная ошибка',
+                  reason: 'Строка с именем персонажа без предшествующей команды ShowTextAttributes'
+                });
+                window.allErrorIndices.add(i);
+              }
             }
           }
 
@@ -700,20 +709,19 @@
                 // (Если якорь не найден или нет родителя, оставляем повествование)
 
                 if (!isNarrationBlock) {
-                  redLineErrors.push({
-                    label: nextRelevantBlock.idx !== undefined ? `строка ${nextRelevantBlock.idx + 1}` : '[продолжение]',
-                    type: 'Ошибка компоновки',
-                    reason: 'Эта строка должна содержать тег имени (\\n<\\C[6]Имя\\C[0]>), так как она идет после отмеченной (#+) ShowTextAttributes.'
-                  });
-                  window.allErrorIndices.add(nextRelevantBlockIndex);
+                  // Если следующий блок имеет маркер игнора, ошибку не выдаём
+                  if (!nextRelevantBlock || !nextRelevantBlock.hasIgnoreMarker) {
+                    redLineErrors.push({
+                      label: `строка ${nextRelevantBlock.idx + 1}`,
+                      type: 'Ошибка компоновки',
+                      reason: 'Эта строка должна содержать тег имени (\\n<\\C[6]Имя\\C[0]>), так как она идет после отмеченной (#+) ShowTextAttributes.'
+                    });
+                    window.allErrorIndices.add(nextRelevantBlockIndex);
+                  }
                 }
-              } else if (nextRelevantBlock) {
-              } else {
               }
-            } else {
             }
           }
-          // <<< КОНЕЦ НОВОЙ ПРОВЕРКИ >>>
         });
       }
 
