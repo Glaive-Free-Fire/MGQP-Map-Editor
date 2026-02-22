@@ -1,4 +1,4 @@
-# MGQP Map Editor v1.5.09
+# MGQP Map Editor v1.5.10
 
 **A modern web-based tool for editing and batch-fixing RPG Maker XP map/event files, with advanced support for translation workflows (RU/JP), structure validation, and mass error correction.**
 
@@ -166,6 +166,29 @@
 -   **Japanese Text Ignore Marker:** Use `##` at the end of ShowText lines to exclude them from Japanese text error detection.
 -   **Empty ShowText Processing:** Empty ShowText blocks are properly matched with Japanese counterparts but hidden from the editor interface.
 -   **Special Template Recognition:** Automatic detection and handling of special text patterns for improved translation workflow.
+
+---
+
+## Changelog (v1.5.10)
+
+### Smart Translation & Automation
+- **Context-Aware Duplicate Button:** The "Duplicate" button now automatically extracts numeric IDs (like `V[3064]`) from the current Japanese original and injects them into the copied Russian text. This eliminates manual ID correction when copying repetitive phrases.
+- **Smart Name Propagation:** The character name auto-replacement system now distinguishes between the "pure" name and the "Affection template".
+  - It preserves unique variable IDs in the target block's template while updating the name.
+  - Automatically adds the template if the target had none.
+- **Japanese Name Normalization:** The matching logic for Japanese names now ignores affinity/friendship stats in parentheses, allowing translation propagation between blocks that differ only by dynamic Japanese metrics.
+
+### Validation & Error Detection
+- **Advanced Color Tag State Tracking:** Improved the color tag validator to follow RPG Maker syntax. 
+  - Allows multiple opening tags (e.g., `\C[6]...\C[8]`) before a single reset tag (`\C[0]`).
+  - Correctly identifies "orphaned" close tags that result from line splits.
+- **Fuzzy Duplicate Detection:** The duplicate finder now ignores numeric indices in brackets (`[#]`) during search and when determining button color.
+  - **Green Button:** Content matches perfectly (including smart ID substitution).
+  - **Red Button:** Content differs and needs synchronization.
+- **Color Tag Integrity:** New check ensures every opening color tag has a corresponding reset tag on the same line to prevent visual bleeding.
+
+### Navigation & Comfort
+- **Protection Against Split Color Tags:** The manual line-split function (`+` button) now treats color-coded phrases as atomic units. It will never break a line in the middle of a `∾∾C[X]...∾∾C[0]` block, preserving the tag structure.
 
 ---
 
