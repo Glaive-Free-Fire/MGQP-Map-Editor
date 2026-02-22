@@ -1521,7 +1521,7 @@
     const hasTagsErrors = window.hasNameTagErrors();
 
     // <<< ИЗМЕНЕНИЕ 2: Новая, полная логика проверки шаблонов >>>
-    const templateRegex = /(<∾∾C\[6\].*?)(∾∾C\[0\]>)\s*\((Уровень симпатии:|Привязанность:)\s*(∾+)(V\[\d+\])\)([\s\S]*)$/;
+    const templateRegex = /(<[\\∾]{2}C\[6\].*?)([\\∾]{2}C\[0\]>)\s*[\（\(]((?:友好度|Уровень симпатии|Привязанность:?)[：:]\s*)?([\\∾]+)(V\[\d+\])[\）\)]([\s\S]*)$/;
     let hasAffectionErrors = false;
     if (window.textBlocks) {
       for (let i = 0; i < window.textBlocks.length; i++) {
@@ -1532,7 +1532,7 @@
         if (!match) continue; // Не шаблон
 
         // Проверяем на ошибки ФОРМАТИРОВАНИЯ
-        if (match[3] === 'Уровень симпатии:' || match[4] !== '∾∾') {
+        if ((match[3] && (match[3].includes('友好度') || match[3] === 'Уровень симпатии:')) || (match[4] && match[4].length !== 2)) {
           hasAffectionErrors = true;
           break; // Нашли ошибку, выходим
         }
@@ -1629,7 +1629,7 @@
     if (!window.textBlocks) return;
 
     // <<< ИЗМЕНЕНИЕ 1: Regex теперь захватывает и диалог в конце ([\s\S]*)$ >>>
-    const templateRegex = /(<∾∾C\[6\].*?)(∾∾C\[0\]>)\s*\((Уровень симпатии:|Привязанность:)\s*(∾+)(V\[\d+\])\)([\s\S]*)$/;
+    const templateRegex = /(<[\\∾]{2}C\[6\].*?)([\\∾]{2}C\[0\]>)\s*[\（\(]((?:友好度|Уровень симпатии|Привязанность:?)[：:]\s*)?([\\∾]+)(V\[\d+\])[\）\)]([\s\S]*)$/;
     let fixedCount = 0;
 
     if (typeof pushUndo === 'function') pushUndo();
@@ -1674,8 +1674,8 @@
 
       // Определяем, нужно ли что-то делать с этим блоком
       const needsFixing = (
-        oldText === 'Уровень симпатии:' || // 1. Текст "Уровень симпатии"
-        slashes !== '∾∾' ||                 // 2. Неправильное число ∾
+        (match[3] && (match[3].includes('友好度') || match[3] === 'Уровень симпатии:')) || // 1. Текст "Уровень симпатии" или "友好度"
+        slashes.length !== 2 ||                 // 2. Неправильное число ∾
         nextBlockToDelete                   // 3. Есть блок для слияния
       );
 

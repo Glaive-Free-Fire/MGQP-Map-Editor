@@ -1,28 +1,42 @@
 document.addEventListener('DOMContentLoaded', function () {
   // --- Универсальный генератор актуального содержимого файла ---
   window.generateCurrentFileContentAsLines = function () {
-    if (window.restoreModeEnabled) {
-      return window.fullRusLines.slice();
+    // --- СИНХРОНИЗАЦИЯ ИЗ UI ПЕРЕД СБОРКОЙ ---
+    const displayNameInput = document.getElementById('mapDisplayName');
+    if (displayNameInput) {
+      window.mapDisplayName = displayNameInput.value;
     }
-    if (!originalLines || originalLines.length === 0) {
+
+    if (window.restoreModeEnabled) {
+      return (window.fullRusLines || []).slice();
+    }
+    const linesToUse = window.originalLines || originalLines || [];
+    if (linesToUse.length === 0) {
       return ["Сборка файла невозможна. Сначала загрузите файл."];
     }
 
     const previewLines = [];
-    let newLines = [...originalLines];
+    let newLines = [...linesToUse];
 
     // 1. Обновляем Display Name
-    let displayNameLine = `Display Name = "${mapDisplayName}"`;
-    let foundDisplayName = false;
-    for (let i = 0; i < newLines.length; i++) {
-      if (/^\s*Display Name\s*=/.test(newLines[i])) {
-        newLines[i] = displayNameLine;
-        foundDisplayName = true;
-        break;
+    const fileNameLower = (window.loadedFileName || "").toLowerCase();
+    const isMapFile = fileNameLower.includes('map');
+    const isCommonEventFile = fileNameLower.includes('commonevent') || linesToUse.some(l => /^[\s\uFEFF]*CommonEvent \d+/.test(l));
+    const hasExistingDN = linesToUse.some(l => /^[\s\uFEFF]*Display Name\s*=/.test(l));
+
+    if ((isMapFile || (window.mapDisplayName && window.mapDisplayName.trim()) || hasExistingDN) && (!isCommonEventFile || isMapFile)) {
+      let displayNameLine = `Display Name = "${window.mapDisplayName || ''}"`;
+      let foundDisplayName = false;
+      for (let i = 0; i < newLines.length; i++) {
+        if (/^[\s\uFEFF]*Display Name\s*=/.test(newLines[i])) {
+          newLines[i] = displayNameLine;
+          foundDisplayName = true;
+          break;
+        }
       }
-    }
-    if (!foundDisplayName) {
-      newLines.unshift(displayNameLine);
+      if (!foundDisplayName) {
+        newLines.unshift(displayNameLine);
+      }
     }
 
     // 2. Создаём карту блоков и карту позиций
@@ -608,6 +622,11 @@ setTimeout(function () {
   }
 
   window.generateFinalFileLines = function () {
+    // --- СИНХРОНИЗАЦИЯ ИЗ UI ПЕРЕД СБОРКОЙ ---
+    const displayNameInput = document.getElementById('mapDisplayName');
+    if (displayNameInput) {
+      window.mapDisplayName = displayNameInput.value;
+    }
     // === ШАГ 0: АВТО-ИСПРАВЛЕНИЕ ИМЕН ===
     try {
       if (typeof window.forceCorrectNames === 'function') {
@@ -657,22 +676,17 @@ setTimeout(function () {
     });
 
     // === ШАГ 2: ОБРАБОТКА 'Display Name' (Только для Карт!) ===
-    // Проверка через имя файла и содержимое (для надежности при пакетной обработке)
     const fileNameLower = (window.loadedFileName || "").toLowerCase();
-    const isMapFile = fileNameLower.includes('map') && !fileNameLower.includes('commonevent');
-    const isCommonEventFile = fileNameLower.includes('commonevent') || linesToUse.some(l => /^CommonEvent \d+/.test(l));
+    const isMapFile = fileNameLower.includes('map');
+    const isCommonEventFile = fileNameLower.includes('commonevent') || linesToUse.some(l => /^[\s\uFEFF]*CommonEvent \d+/.test(l));
+    const hasExistingDN = linesToUse.some(l => /^[\s\uFEFF]*Display Name\s*=/.test(l));
 
     let lineOffset = 0;
-    // Вставляем Display Name ТОЛЬКО если это карта и НЕТ признаков CommonEvent
-    if (isMapFile && !isCommonEventFile) {
-      let dn = '';
-      if (typeof mapDisplayName !== 'undefined') dn = mapDisplayName;
-      else if (window.mapDisplayName) dn = window.mapDisplayName;
-
-      let displayNameLine = `Display Name = "${dn}"`;
+    if ((isMapFile || (window.mapDisplayName && window.mapDisplayName.trim()) || hasExistingDN) && (!isCommonEventFile || isMapFile)) {
+      let displayNameLine = `Display Name = "${window.mapDisplayName || ''}"`;
       let foundDisplayName = false;
       for (let i = 0; i < newLines.length; i++) {
-        if (/^\s*Display Name\s*=/.test(newLines[i])) {
+        if (/^[\s\uFEFF]*Display Name\s*=/.test(newLines[i])) {
           newLines[i] = displayNameLine;
           foundDisplayName = true;
           break;
@@ -907,7 +921,7 @@ setInterval(function () {
 // === НОВОЕ: Кнопка "ChangeItems" для CommonEvent ===
 // =================================================================================
 
-// 1. Создаем функцию для добавления кнопок
+// --- Функция для добавления кнопок "ChangeItems" (Юнит-мэппинг для Порогов Привязанности) ---
 window.addChangeItemsButtons = function () {
   let fileName = window.loadedFileName;
   if (!fileName) {
@@ -916,146 +930,151 @@ window.addChangeItemsButtons = function () {
       fileName = input.files[0].name;
     }
   }
-
   if (!fileName || !/(CommonEvent|Map)\d+/i.test(fileName)) {
     return;
   }
-
   const lines = window.originalLines || [];
   if (lines.length === 0) return;
 
+  // --- ШАГ 1: Индексация "Юнитов" (событий/страниц) ---
+  const unitStarts = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (/^[\s\uFEFF]*(CommonEvent\s+\d+|Page\s+\d+)/.test(lines[i])) {
+      unitStarts.push(i);
+    }
+  }
+
+  function getUnitIndex(lineIdx) {
+    let low = 0, high = unitStarts.length - 1, res = -1;
+    while (low <= high) {
+      let mid = Math.floor((low + high) / 2);
+      if (unitStarts[mid] <= lineIdx) { res = mid; low = mid + 1; }
+      else high = mid - 1;
+    }
+    return res;
+  }
+
+  // --- ШАГ 2: Собираем все ChangeItems и Пороги Привязанности по юнитам ---
+  const unitMappings = new Map();
+
+  // 2.1 Находим команды получения ресурсов
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    const matchFull = line.match(/(ChangeItems|ChangeWeapons|ChangeArmor)\(\[\s*(\d+),\s*\d+,\s*(\d+),\s*(\d+).*?\]\)/);
+    const matchSimple = line.match(/(ChangeItems|ChangeWeapons|ChangeArmor)\(\[\s*(\d+),/);
+
+    if (matchFull || matchSimple) {
+      const uIdx = getUnitIndex(i);
+      if (uIdx === -1) continue;
+      if (!unitMappings.has(uIdx)) unitMappings.set(uIdx, { items: [], affectionBlIdxs: [] });
+
+      const m = matchFull || matchSimple;
+      const command = m[1];
+      const itemId = m[2];
+      const typeOp = m[3] || '0';
+      const amount = m[4] || '1';
+
+      unitMappings.get(uIdx).items.push({
+        id: itemId,
+        amount: (typeOp === '1') ? `∾∾V[${amount}]` : amount,
+        type: (command === 'ChangeWeapons') ? 'iw' : (command === 'ChangeArmor' ? 'ia' : 'ii')
+      });
+    }
+  }
+
+  // 2.2 Находим все блоки с Порогами Привязанности
+  window.textBlocks.forEach((block, blIdx) => {
+    if (block.idx === undefined) return;
+    const affectionMatch = block.text.match(/(好感度|Привязанность|Affection|Reputation)\s*(\d+)\s*:/);
+    if (affectionMatch) {
+      const uIdx = getUnitIndex(block.idx);
+      if (uIdx !== -1) {
+        if (!unitMappings.has(uIdx)) unitMappings.set(uIdx, { items: [], affectionBlIdxs: [] });
+        unitMappings.get(uIdx).affectionBlIdxs.push(blIdx);
+      }
+    }
+  });
+
+  // --- ШАГ 3: Основной цикл рендеринга кнопок ---
   window.textBlocks.forEach((block, index) => {
     if (block.type !== 'ShowText' || !block.dom || !block.dom.rusInput) return;
     if (block.idx === undefined) return;
 
+    // Паттерн получения предмета (стандартный)
     const isItemGetPattern = (text) => {
-      // Ищем шаблоны i[iaw][...] или японские ключевые слова получения предмета
-      return /i[iaw]\[|手に入れた|入手|獲得|拾った|授かった|Obtained|Got|Найдено|Получено/i.test(text);
+      return /i[iaw]\[|手に入れた | 入手 | 獲得 | 拾った | 授かった |Obtained|Got|Найдено|Получено/i.test(text);
     };
 
-    const currentIsPattern = isItemGetPattern(block.text);
+    const affectionMatch = block.text.match(/(好感度|Привязанность|Affection|Reputation)\s*(\d+)\s*:/);
+    const isAffectionThreshold = !!affectionMatch;
+    const currentIsPattern = isItemGetPattern(block.text) || isAffectionThreshold;
 
-    // --- Улучшенная логика поиска ---
-    const searchDepth = 15; // Немного уменьшили глубину
     let itemId = null;
     let itemAmount = '1';
-    let itemType = 'ii'; // По умолчанию предмет (Item)
-    let interveningShowTexts = 0;
+    let itemType = 'ii';
+    let thresholdNum = isAffectionThreshold ? parseInt(affectionMatch[2]) : null;
 
-    for (let i = block.idx - 1; i >= Math.max(0, block.idx - searchDepth); i--) {
-      const line = lines[i].trim();
-
-      // Если встретили конец ветвления, начало другого условия или технические прерывания - ПРЕКРАЩАЕМ
-      // Это предотвратит "просачивание" кнопок в не связанный диалог
-      if (/^(BranchEnd|Else|ConditionalBranch|TransferPlayer|CallCommonEvent|Script|ExitEventProcessing|Label|JumpToLabel)/.test(line)) {
-        break;
-      }
-
-      if (/^ShowText\(/.test(line)) {
-        interveningShowTexts++;
-        if (interveningShowTexts > 2) break;
-      }
-
-      // Парсинг ChangeItems, ChangeWeapons, ChangeArmor
-      const matchFull = line.match(/(ChangeItems|ChangeWeapons|ChangeArmor)\(\[\s*(\d+),\s*\d+,\s*(\d+),\s*(\d+).*?\]\)/);
-      const matchSimple = line.match(/(ChangeItems|ChangeWeapons|ChangeArmor)\(\[\s*(\d+),/);
-
-      if (matchFull) {
-        const command = matchFull[1];
-        itemId = matchFull[2];
-        const typeOp = matchFull[3];
-        const amount = matchFull[4];
-        itemAmount = (typeOp === '1') ? `∾∾V[${amount}]` : amount;
-
-        if (command === 'ChangeWeapons') itemType = 'iw';
-        else if (command === 'ChangeArmor') itemType = 'ia';
-        else itemType = 'ii';
-
-        break;
-      } else if (matchSimple) {
-        const command = matchSimple[1];
-        itemId = matchSimple[2];
-        itemAmount = '1';
-
-        if (command === 'ChangeWeapons') itemType = 'iw';
-        else if (command === 'ChangeArmor') itemType = 'ia';
-        else itemType = 'ii';
-
-        break;
-      }
-    }
-
-
-    // === ЛОГИКА "ВЗГЛЯДА В БУДУЩЕЕ" (Forward Search) ===
-    // Если поиск назад ничего не дал, но в тексте есть плейсхолдер предмета
-    // ИЛИ если после этого блока идет ShowChoices (верный признак вопроса о предмете)
-    let triggerForwardSearch = false;
-    if (!itemId) {
-      if (/\\[iI][iIwaW]\[|Дать|Отдать/.test(block.text)) {
-        triggerForwardSearch = true;
-      } else {
-        // Проверяем, есть ли впереди ShowChoices (в пределах пары блоков)
-        // НО! Чтобы не мусорить кнопками на каждой строке диалога перед выбором,
-        // требуем наличие кавычек в текущей строке (обычно имя предмета в кавычках).
-        if (/([「«]).+?\1/.test(block.text)) {
-          for (let k = 1; k <= 5; k++) {
-            const nextB = window.textBlocks[index + k];
-            if (!nextB) break;
-            if (nextB.type === 'ShowChoices') {
-              triggerForwardSearch = true;
-              break;
-            }
-          }
+    // А. Сначала пробуем МЭППИНГ ЮНИТА (для порогов привязанности)
+    if (isAffectionThreshold) {
+      const uIdx = getUnitIndex(block.idx);
+      const mapping = unitMappings.get(uIdx);
+      if (mapping) {
+        const nth = mapping.affectionBlIdxs.indexOf(index);
+        if (nth !== -1 && mapping.items[nth]) {
+          itemId = mapping.items[nth].id;
+          itemAmount = mapping.items[nth].amount;
+          itemType = mapping.items[nth].type;
         }
       }
     }
 
-    if (triggerForwardSearch) {
-      const forwardDepth = 30; // Ищем достаточно далеко вперед
-      for (let i = block.idx + 1; i < Math.min(lines.length, block.idx + forwardDepth); i++) {
+    // Б. Если мэппинг не помог или это обычная строка - ищем рядом (NEARBY SEARCH)
+    if (!itemId) {
+      // Поиск НАЗАД (30 строк)
+      for (let i = block.idx - 1; i >= Math.max(0, block.idx - 30); i--) {
         const line = lines[i].trim();
+        if (/^[\s\uFEFF]*(CommonEvent|Page)\s+\d+/.test(line)) break;
+        if (/^(TransferPlayer|CallCommonEvent|Script|ExitEventProcessing|Label|JumpToLabel)/.test(line)) break;
 
-        // Прерываем поиск, если начался совсем другой диалог (ShowText не внутри выбора)
-        // Но! Нужно пропускать ShowChoices, When, и ShowText внутри них.
-        // Пока сделаем проще: ищем ПЕРВЫЙ ChangeItems.
-        // Если встретили ExitEventProcessing или конец файла - стоп.
-        if (/^ExitEventProcessing/.test(line)) break;
-
-        // Парсинг ChangeItems (тот же код)
         const matchFull = line.match(/(ChangeItems|ChangeWeapons|ChangeArmor)\(\[\s*(\d+),\s*\d+,\s*(\d+),\s*(\d+).*?\]\)/);
         const matchSimple = line.match(/(ChangeItems|ChangeWeapons|ChangeArmor)\(\[\s*(\d+),/);
-
-        if (matchFull) {
-          const command = matchFull[1];
-          itemId = matchFull[2];
-          const typeOp = matchFull[3];
-          const amount = matchFull[4];
+        if (matchFull || matchSimple) {
+          const m = matchFull || matchSimple;
+          itemId = m[2];
+          const typeOp = m[3] || '0';
+          const amount = m[4] || '1';
           itemAmount = (typeOp === '1') ? `∾∾V[${amount}]` : amount;
-          if (command === 'ChangeWeapons') itemType = 'iw';
-          else if (command === 'ChangeArmor') itemType = 'ia';
-          else itemType = 'ii';
-          break; // Нашли!
-        } else if (matchSimple) {
-          const command = matchSimple[1];
-          itemId = matchSimple[2];
-          itemAmount = '1';
-          if (command === 'ChangeWeapons') itemType = 'iw';
-          else if (command === 'ChangeArmor') itemType = 'ia';
-          else itemType = 'ii';
-          break; // Нашли!
+          itemType = (m[1] === 'ChangeWeapons') ? 'iw' : (m[1] === 'ChangeArmor' ? 'ia' : 'ii');
+          break;
+        }
+      }
+    }
+
+    // В. Если все еще нет - ищем ВПЕРЕД (50 строк)
+    if (!itemId) {
+      for (let i = block.idx + 1; i < Math.min(lines.length, block.idx + 50); i++) {
+        const line = lines[i].trim();
+        if (/^[\s\uFEFF]*(CommonEvent|Page|ExitEventProcessing|^BranchEnd)/.test(line)) break;
+        const matchFull = line.match(/(ChangeItems|ChangeWeapons|ChangeArmor)\(\[\s*(\d+),\s*\d+,\s*(\d+),\s*(\d+).*?\]\)/);
+        const matchSimple = line.match(/(ChangeItems|ChangeWeapons|ChangeArmor)\(\[\s*(\d+),/);
+        if (matchFull || matchSimple) {
+          const m = matchFull || matchSimple;
+          itemId = m[2];
+          const typeOp = m[3] || '0';
+          const amount = m[4] || '1';
+          itemAmount = (typeOp === '1') ? `∾∾V[${amount}]` : amount;
+          itemType = (m[1] === 'ChangeWeapons') ? 'iw' : (m[1] === 'ChangeArmor' ? 'ia' : 'ii');
+          break;
         }
       }
     }
 
     if (!itemId) return;
 
-    // Решаем, показывать ли кнопку
-    // Теперь показываем ТОЛЬКО если текст совпадает с паттерном получения предмета.
-    // Это исключает ложные срабатывания на обычном диалоге, который просто идет после команды.
-    if (currentIsPattern || triggerForwardSearch) {
+    // --- РЕНДЕРИНГ КНОПКИ ---
+    if (currentIsPattern) {
       let btn = block.dom.changeItemsBtn;
       const isNew = !btn || !btn.isConnected;
-
       if (isNew) {
         btn = document.createElement('button');
         btn.className = 'control-btn';
@@ -1066,90 +1085,74 @@ window.addChangeItemsButtons = function () {
         block.dom.changeItemsBtn = btn;
       }
 
-      // Те же данные теперь в самом блоке
       block.associatedItemId = itemId;
       block.associatedItemType = itemType;
+      block.associatedThreshold = thresholdNum;
 
-      // Настраиваем текст и стиль в зависимости от типа
-      let typeLabel = 'Item';
-      let btnBg = '#e6ccff'; // Фиолетовый для предметов
-      if (itemType === 'iw') { typeLabel = 'Weapon'; btnBg = '#ffe0cc'; }
-      else if (itemType === 'ia') { typeLabel = 'Armor'; btnBg = '#ccf2ff'; }
+      let typeLabel = (itemType === 'iw') ? 'Weapon' : (itemType === 'ia' ? 'Armor' : 'Item');
+      let btnBg = (itemType === 'iw') ? '#ffe0cc' : (itemType === 'ia' ? '#ccf2ff' : '#e6ccff');
 
-      btn.textContent = `${typeLabel}[${itemId}] x${itemAmount}`;
+      btn.textContent = `${typeLabel}[${itemId}]`;
       btn.style.background = btnBg;
-      btn.title = `Заменить на шаблон получения (${typeLabel}) ID ${itemId}`;
+      btn.title = `Заменить на шаблон (${typeLabel}) ID ${itemId}`;
 
-      // --- ПРОВЕРКА НА НЕСООТВЕТСТВИЕ ID ---
+      // Проверка на несоответствие ID
       const itemTagRegex = /(?:\\|∾+)i([iaw]?)\[(\d+)\]/i;
       const tMatch = block.text.match(itemTagRegex);
       let hasMismatch = false;
-
       if (tMatch) {
-        const textTypeLetter = (tMatch[1] || '').toLowerCase();
-        let textType = 'ii';
-        if (textTypeLetter === 'w') textType = 'iw';
-        else if (textTypeLetter === 'a') textType = 'ia';
-
-        const textId = tMatch[2];
-        if (textId !== itemId || textType !== itemType) {
+        const textType = tMatch[1] === 'w' ? 'iw' : (tMatch[1] === 'a' ? 'ia' : 'ii');
+        if (tMatch[2] !== itemId || textType !== itemType) {
           hasMismatch = true;
           btn.style.border = '2px solid #f00';
           btn.style.boxShadow = '0 0 5px #f00';
-          btn.title = `ВНИМАНИЕ: ID в тексте (${textType}[${textId}]) не совпадает с командой (${itemType}[${itemId}])!`;
-          // Подсвечиваем блок
-          if (window.allErrorIndices) {
-            window.allErrorIndices.add(index);
-          }
+          btn.title = `ВНИМАНИЕ: ID в тексте не совпадает с командой!`;
+          if (window.allErrorIndices) window.allErrorIndices.add(index);
         }
       }
-
-      if (!hasMismatch) {
-        btn.style.border = '';
-        btn.style.boxShadow = '';
-      }
+      if (!hasMismatch) { btn.style.border = ''; btn.style.boxShadow = ''; }
 
       if (isNew) {
         btn.onclick = function () {
           const currentText = block.dom.rusInput.value;
-          const currentMatch = currentText.match(itemTagRegex);
           let newText;
-
-          if (currentMatch) {
-            // Заменяем только ID и тип, сохраняя префиксы
-            const typeLetter = itemType === 'iw' ? 'w' : (itemType === 'ia' ? 'a' : '');
-            newText = currentText.replace(itemTagRegex, (match) => {
-              const prefix = match.startsWith('∾') ? (match.startsWith('∾∾') ? '∾∾' : '∾') : '\\';
-              return `${prefix}i${typeLetter}[${itemId}]`;
-            });
+          if (isAffectionThreshold) {
+            const numStr = thresholdNum.toString();
+            const spacesCount = Math.max(1, 1 + (4 - numStr.length) * 2);
+            const prefix = `Привязанность${" ".repeat(spacesCount)}${numStr}:`;
+            let amountSuffix = (itemAmount !== "1") ? ` × ${itemAmount}` : "";
+            newText = `${prefix}∾${itemType}[${itemId}]${amountSuffix}`;
           } else {
-            // Полная замена только если тег не найден
-            newText = `∾∾${itemType}[${itemId}] × ${itemAmount} получено!`;
+            const tagMatch = currentText.match(itemTagRegex);
+            if (tagMatch) {
+              const typeLetter = itemType === 'iw' ? 'w' : (itemType === 'ia' ? 'a' : '');
+              newText = currentText.replace(itemTagRegex, (match) => {
+                const prefix = match.startsWith('∾') ? (match.startsWith('∾∾') ? '∾∾' : '∾') : '\\';
+                return `${prefix}i${typeLetter}[${itemId}]`;
+              });
+            } else {
+              newText = `∾∾${itemType}[${itemId}] × ${itemAmount} получено!`;
+            }
           }
-
-          if (block.dom.rusInput.value === newText) return;
-
-          block.dom.rusInput.value = newText;
-          block.text = newText;
-          block.dom.rusInput.dispatchEvent(new Event('input', { bubbles: true }));
-
-          const oldLabel = btn.textContent;
-          btn.textContent = 'Done!';
-          setTimeout(() => { btn.textContent = oldLabel; }, 1000);
+          if (block.dom.rusInput.value !== newText) {
+            block.dom.rusInput.value = newText;
+            block.text = newText;
+            block.dom.rusInput.dispatchEvent(new Event('input', { bubbles: true }));
+            const oldLabel = btn.textContent;
+            btn.textContent = 'Done!';
+            setTimeout(() => { btn.textContent = oldLabel; }, 1000);
+          }
         };
 
         const blockDiv = block.dom.rusInput.closest('.block');
         if (blockDiv) {
           const label = blockDiv.querySelector('label');
-          if (label) {
-            label.appendChild(btn);
-          }
+          if (label) label.appendChild(btn);
         }
       }
     }
   });
 
-  // Обновляем глобальную кнопку после добавления локальных
   if (typeof window.updateGlobalChangeItemsBtn === 'function') {
     window.updateGlobalChangeItemsBtn();
   }
@@ -1722,7 +1725,7 @@ setTimeout(function () {
     }
 
     // --- НОВАЯ ПРОВЕРКА: Шаблоны привязанности ---
-    const affectionTemplateRegex = /(<[\\∾]{2}C\[6\].*?)([\\∾]{2}C\[0\]>)\s*\((Уровень симпатии:|Привязанность:)\s*([\\∾]+)(V\[\d+\])\)([\s\S]*)$/;
+    const affectionTemplateRegex = /(<[\\∾]{2}C\[6\].*?)([\\∾]{2}C\[0\]>)\s*[\（\(]((?:友好度|Уровень симпатии|Привязанность:?)[：:]\s*)?([\\∾]+)(V\[\d+\])[\）\)]([\s\S]*)$/;
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       if (!line.includes('ShowText([')) continue;
@@ -1734,7 +1737,7 @@ setTimeout(function () {
 
       const affMatch = text.match(affectionTemplateRegex);
       if (affMatch) {
-        let isBroken = (affMatch[3] === 'Уровень симпатии:' || affMatch[4].length !== 2); // Проверяем на 2 символа (\\ или ∾∾)
+        let isBroken = (affMatch[3] && (affMatch[3].includes('友好度') || affMatch[3] === 'Уровень симпатии:') || affMatch[4].length !== 2); // Проверяем на 2 символа (\\ или ∾∾)
         const dialoguePart = affMatch[6];
         if (!isBroken && dialoguePart.trim() === '') {
           let nextIdx = i + 1;
@@ -1858,6 +1861,56 @@ setTimeout(function () {
       }
     }
 
+    // --- НОВАЯ ПРОВЕРКА: Разделенные или незакрытые теги цвета ---
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line.includes('ShowText([')) continue;
+
+      const startIdx = line.indexOf('["');
+      const endIdx = line.lastIndexOf('"]');
+      if (startIdx === -1 || endIdx === -1) continue;
+      const text = line.substring(startIdx + 2, endIdx);
+
+      // Ищем все цветовые теги ∾∾C[X] или \C[X] (учитывая разный слэш)
+      const colorTags = text.match(/(?:∾+|\\+)C\[(\d+)\]/gi);
+      if (colorTags) {
+        let currentColorState = 0;
+        let hasError = false;
+
+        for (const tag of colorTags) {
+          const match = tag.match(/\[(\d+)\]/);
+          if (match) {
+            const colorVal = parseInt(match[1], 10);
+
+            if (colorVal !== 0) {
+              currentColorState = colorVal; // Включили цветной текст
+            } else {
+              // Если пытаемся сбросить цвет, но он и так стандартный
+              if (currentColorState === 0) {
+                hasError = true; // Это "одинокий" закрывающий тег на новой строке
+              }
+              currentColorState = 0; // Сбросили цвет до стандартного
+            }
+          }
+        }
+
+        // Если строка закончилась, а цвет так и не сбросили на 0
+        if (currentColorState !== 0) {
+          hasError = true;
+        }
+
+        if (hasError) {
+          errors.push({
+            label: `строка ${i + 1}`,
+            type: 'Ошибка тега цвета',
+            reason: 'Тег цвета разорван между строками или содержит лишний закрывающий ∾∾C[0].',
+            line: i,
+            msg: 'Разорван тег цвета.'
+          });
+        }
+      }
+    }
+
     // === ФИНАЛЬНАЯ ФИЛЬТРАЦИЯ: Удаляем все ошибки для строк с ## ===
     return errors.filter(err => {
       // Если у ошибки есть ссылка на строку
@@ -1902,6 +1955,7 @@ setTimeout(function () {
       let scriptErrorsCount = 0;
       let indentErrorsCount = 0;
       let itemMismatchCount = 0;
+      let colorTagErrorsCount = 0;
 
       // Фильтруем ошибки, которые нам интересны
       allErrors.forEach(err => {
@@ -1930,20 +1984,27 @@ setTimeout(function () {
           window.allErrorIndices.add(blockIndex);
           itemMismatchCount++;
         }
+
+        // Обработка ошибок разорванных тегов цвета
+        if (err.type === 'Ошибка тега цвета') {
+          window.allErrorIndices.add(blockIndex);
+          colorTagErrorsCount++;
+        }
       });
 
       // 5. Обновляем интерфейс (Лампочка, Кнопки, Список ошибок)
       const lamp = document.getElementById('matchLamp');
 
-      if (scriptErrorsCount > 0 || indentErrorsCount > 0 || itemMismatchCount > 0) {
+      if (scriptErrorsCount > 0 || indentErrorsCount > 0 || itemMismatchCount > 0 || colorTagErrorsCount > 0) {
         if (lamp) {
           lamp.style.background = '#f66';
           let titleMsg = '';
           if (scriptErrorsCount > 0) titleMsg += `\n + Ошибок скрипта: ${scriptErrorsCount}`;
           if (indentErrorsCount > 0) titleMsg += `\n + Ошибок отступов: ${indentErrorsCount}`;
           if (itemMismatchCount > 0) titleMsg += `\n + Ошибок ID предметов: ${itemMismatchCount}`;
+          if (colorTagErrorsCount > 0) titleMsg += `\n + Разорванных тегов: ${colorTagErrorsCount}`;
 
-          if (!lamp.title.includes('Ошибок скрипта') && !lamp.title.includes('Ошибок отступов') && !lamp.title.includes('Ошибок ID предметов')) {
+          if (!lamp.title.includes('Ошибок скрипта') && !lamp.title.includes('Ошибок отступов') && !lamp.title.includes('Ошибок ID предметов') && !lamp.title.includes('Разорванных тегов')) {
             lamp.title += titleMsg;
           }
         }
@@ -1961,15 +2022,15 @@ setTimeout(function () {
           let extraHtml = '<div class="auto-detect-errors" style="margin-top:10px; border-top:1px solid #ccc; padding-top:5px;">';
           extraHtml += '<b>Обнаруженные ошибки (Live):</b><ul style="color:#d00; margin-top:4px;">';
           allErrors.forEach(err => {
-            // Показываем только скрипты, отступы и ID предметов в этом списке
-            if (err.type === 'Ошибка скрипта' || err.isFixableIndent || err.isItemIdMismatchLine) {
+            // Показываем только скрипты, отступы, ID предметов и теги цвета в этом списке
+            if (err.type === 'Ошибка скрипта' || err.isFixableIndent || err.isItemIdMismatchLine || err.type === 'Ошибка тега цвета') {
               extraHtml += `<li><b>Строка ${err.line + 1}</b>: ${err.msg}</li>`;
             }
           });
           extraHtml += '</ul></div>';
 
           // Если мы нашли ошибки, добавляем их в div
-          if (indentErrorsCount > 0 || scriptErrorsCount > 0 || itemMismatchCount > 0) {
+          if (indentErrorsCount > 0 || scriptErrorsCount > 0 || itemMismatchCount > 0 || colorTagErrorsCount > 0) {
             diffsDiv.insertAdjacentHTML('beforeend', extraHtml);
           }
         }
@@ -2066,3 +2127,82 @@ setTimeout(function () {
   };
 
 }, 1000);
+
+// === ФУНКЦИЯ АВТОЗАМЕНЫ ДУБЛИКАТОВ ===
+(function () {
+  let isMassClicking = false; // Флаг защиты от рекурсии
+  const DUPLICATE_BTN_CLASS = 'duplicate-fix-btn';
+
+  // 1. Функция для навешивания класса на кнопки дубликатов (если они созданы динамически без класса)
+  function tagDuplicateButtons() {
+    // Ищем все кнопки, которые могут быть кнопками исправления дубликатов
+    const allButtons = document.querySelectorAll('button');
+
+    allButtons.forEach(btn => {
+      const isDuplicateBtn = btn.textContent.includes('Дубликат') ||
+        btn.classList.contains('fix-duplicate') ||
+        (btn.title && btn.title.includes('Дубликат'));
+
+      if (isDuplicateBtn) {
+        btn.classList.add(DUPLICATE_BTN_CLASS);
+      }
+    });
+  }
+
+  // 2. Обработчик клика
+  document.addEventListener('click', function (e) {
+    const checkbox = document.getElementById('autoReplaceDuplicates');
+    if (!checkbox || !checkbox.checked) return;
+
+    const target = e.target;
+
+    // Проверяем, что кликнули по кнопке дубликата
+    if (target.matches(`button.${DUPLICATE_BTN_CLASS}`) && !isMassClicking) {
+      isMassClicking = true;
+
+      // Находим ВСЕ кнопки дубликатов на странице
+      const allDuplicateBtns = document.querySelectorAll(`button.${DUPLICATE_BTN_CLASS}`);
+
+      // Фильтруем только видимые и не disabled, и те, которые действительно требуют нажатия (красные)
+      const visibleBtns = Array.from(allDuplicateBtns).filter(btn => {
+        const isRed = btn.style.backgroundColor === 'rgb(255, 136, 136)' || btn.style.backgroundColor === '#f88';
+        return btn.offsetParent !== null && !btn.disabled && isRed && btn !== target;
+      });
+
+      if (visibleBtns.length > 0) {
+        // Небольшая задержка
+        setTimeout(() => {
+          console.log(`[Автозамена] Запуск массового нажатия (${visibleBtns.length} кнопок)...`);
+
+          visibleBtns.forEach((btn, index) => {
+            // Кликаем по каждой кнопке
+            btn.click();
+          });
+
+          console.log('[Автозамена] Готово.');
+          isMassClicking = false;
+        }, 50);
+      } else {
+        isMassClicking = false;
+      }
+    }
+  }, true);
+
+  // 3. Интеграция с перерисовкой редактора
+  if (typeof window.renderTextBlocks === 'function') {
+    const originalRender = window.renderTextBlocks;
+    window.renderTextBlocks = function () {
+      const result = originalRender.apply(this, arguments);
+      setTimeout(tagDuplicateButtons, 50);
+      return result;
+    };
+  }
+
+  // 4. Первичная разметка
+  setTimeout(tagDuplicateButtons, 1500);
+
+  // 5. Наблюдатель за изменениями в DOM
+  const observer = new MutationObserver(tagDuplicateButtons);
+  observer.observe(document.body, { childList: true, subtree: true });
+
+})();

@@ -223,7 +223,7 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines) {
 
     if (window.isNameBlock(rawText) && currentBlock.type === 'ShowText') {
       let combinedText = currentBlock.text;
-      const specialTemplateRegex = /^\\n<\\C\[\d+\].*\\C\[0\]>\((Уровень симпатии:|Найдено мастеров:).*?\)$/;
+      const specialTemplateRegex = /(^\\n|^∾∾\\n)<[\\∾]{2}C\[\d+\].*[\\∾]{2}C\[0\]>\((Уровень симпатии:|Найдено мастеров:).*?\)$/;
       if (specialTemplateRegex.test(rawText.trim()) && i + 1 < tempBlocks.length && tempBlocks[i + 1].type === 'ShowText') {
         combinedText += '\n' + tempBlocks[i + 1].text;
         i++;
