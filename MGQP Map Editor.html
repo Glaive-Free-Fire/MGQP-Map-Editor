@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8">
-  <title>MGQP Map Editor v1.5.09</title>
+  <title>MGQP Map Editor v1.5.10</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="Java scripts/main_script.js"></script>
   <script src="Java scripts/restore-mode.js"></script>
@@ -175,9 +175,14 @@
         <input type="checkbox" id="hideLabelCheckbox" checked> Скрыть Label
       </label>
 
-      <label id="keepOriginalNameLabel" style="font-size:13px; cursor:pointer;"
+      <label id="keepOriginalNameLabel" style="font-size:13px; cursor:pointer; margin-bottom: 2px;"
         title="Если включено, файл будет сохранен под оригинальным именем. Если выключено — прибавится суффикс _edited.">
         <input type="checkbox" id="keepOriginalName" checked> Сохранить Оригинальное имя
+      </label>
+
+      <label id="autoReplaceDuplicatesLabel" style="font-size:13px; cursor:pointer;"
+        title="Если включено, нажатие на одну кнопку исправления дубликата нажмёт все остальные видимые кнопки 'Дубликат'">
+        <input type="checkbox" id="autoReplaceDuplicates"> Автозамена дубликатов
       </label>
     </div>
 
@@ -319,7 +324,7 @@
     let japaneseBlockMapping = [];
     let japBlocks = [];
     let manualJapaneseMapping = [];
-    let loadedFileName = '';
+    window.loadedFileName = '';
 
 
     // навигация по красным полям: массив найденных индексов и указатель
@@ -557,12 +562,12 @@
           const isAffectionFixVisible = (document.getElementById('fixAffectionBtn') && document.getElementById('fixAffectionBtn').style.display !== 'none');
 
           // Проверка на наличие ОШИБКИ ШАБЛОНА (для подсветки самой строки шаблона)
-          const affectionTemplateRegex = /(<∾∾C\[6\].*?)(∾∾C\[0\]>)\s*\((Уровень симпатии:|Привязанность:)\s*(∾+)(V\[\d+\])\)([\s\S]*)$/;
+          const affectionTemplateRegex = /(<[\\∾]{2}C\[6\].*?)([\\∾]{2}C\[0\]>)\s*[\（\(]((?:友好度|Уровень симпатии|Привязанность:?)[：:]\s*)?([\\∾]+)(V\[\d+\])[\）\)]([\s\S]*)$/;
           if (block.type === 'ShowText') {
             const affMatch = block.text.match(affectionTemplateRegex);
             if (affMatch) {
               // Если это шаблон, проверяем условия из restore-mode.js
-              let isBroken = (affMatch[3] === 'Уровень симпатии:' || affMatch[4] !== '∾∾');
+              let isBroken = (affMatch[3] && (affMatch[3].includes('友好度') || affMatch[3] === 'Уровень симпатии:') || affMatch[4].length !== 2);
               const dialoguePart = affMatch[6];
               if (!isBroken && dialoguePart.trim() === '') {
                 if ((i + 1) < window.textBlocks.length) {
@@ -896,7 +901,7 @@
     document.getElementById('fileInput').addEventListener('change', function (e) {
       const file = e.target.files[0];
       if (!file) return;
-      loadedFileName = file.name;
+      window.loadedFileName = file.name;
       const reader = new FileReader();
       reader.onload = function (evt) {
         const lines = evt.target.result.split('\n');
@@ -1049,16 +1054,16 @@
       });
     }
 
-    let mapDisplayName = '';
+    window.mapDisplayName = '';
 
     window.extractTexts = function () {
       // --- Сначала парсим Display Name ---
-      mapDisplayName = '';
+      window.mapDisplayName = '';
       const linesToUse = window.originalLines || originalLines;
       for (let i = 0; i < linesToUse.length; i++) {
-        const match = linesToUse[i].match(/^\s*Display Name\s*=\s*"(.*)"/);
+        const match = linesToUse[i].match(/^[\s\uFEFF]*Display Name\s*=\s*"(.*)"/);
         if (match) {
-          mapDisplayName = match[1];
+          window.mapDisplayName = match[1];
           break;
         }
       }
@@ -1068,6 +1073,7 @@
       const textCmdRegex = /^\s*ShowText\(\["([\s\S]*?)"\]\)(.*)/;
       const showChoicesRegex = /^\s*ShowChoices\(\[\[(.*)\],\s*(\d+)\]\)/;
       const whenRegex = /^\s*When\(\[(\d+),\s*"(.*)"\]\)/;
+      const scriptRegex = /^\s*(Script|ScriptMore)\(\[\s*"((?:[^"\\]|\\.)*)"\s*\]\)(.*)/;
       const otherRegex = /^\s*(\w+)\(\[([\s\S]*?)\]\)(.*)/;
       const nameValueRegex = /^\s*(\w+)\s*=\s*"(.*)"$/;
 
@@ -1090,6 +1096,11 @@
           tempBlocks.push({ text: choices.join(' | '), type: 'ShowChoices', originalIdx: idx, choices: choices, defaultChoice: parseInt(match[2]), line: line, commonEventId: currentEventId });
         } else if ((match = line.match(whenRegex))) {
           tempBlocks.push({ text: match[2], type: 'When', originalIdx: idx, choiceIndex: parseInt(match[1]), line: line, commonEventId: currentEventId });
+        } else if ((match = line.match(scriptRegex))) {
+          const commandType = match[1];
+          const commandText = match[2];
+          const trailingContent = match[3] || '';
+          tempBlocks.push({ text: commandText, type: commandType, originalIdx: idx, line: line, commonEventId: currentEventId, trailingContent: trailingContent });
         } else if ((match = line.match(otherRegex))) {
           const commandType = match[1];
           const commandText = match[2];
@@ -1108,7 +1119,7 @@
       });
 
       window.textBlocks = textBlocks = [];
-      const affinityRegex = /^【(.+?)】（好感度：(.*)）$/;
+      const affinityRegex = /^【(.+?)】（(友好度|好感度)：(.*)）$/;
 
       for (let i = 0; i < tempBlocks.length; i++) {
         const currentBlock = tempBlocks[i];
@@ -1124,12 +1135,13 @@
         let affinityMatch = rawText.match(affinityRegex);
         if (currentBlock.type === 'ShowText' && affinityMatch) {
           const name = affinityMatch[1];
-          const variable = affinityMatch[2].replace(/\\/g, '∾∾');
-          const newText = `∾\n<∾∾C[6]${name}∾∾C[0]>(Уровень симпатии: ${variable})`;
+          const affinityType = affinityMatch[2];
+          const variable = affinityMatch[3].replace(/\\/g, '∾∾');
+          const newText = `∾\n<∾∾C[6]${name}∾∾C[0]>(${affinityType === '好感度' ? 'Уровень симпатии' : 'Привязанность'}: ${variable})`;
           textBlocks.push({ idx: currentBlock.originalIdx, text: newText, type: 'ShowText', generated: hasPlus, manualPlus: hasPlus && currentBlock.originalIdx !== undefined, commonEventId: currentBlock.commonEventId, hasIgnoreMarker: currentBlock.hasIgnoreMarker });
         } else if (currentBlock.type === 'ShowText' && isName) {
           let combinedText = currentBlock.text;
-          const specialTemplateRegex = /^\n<\\C\[\d+\].*\\C\[0\]>\((Уровень симпатии:|Найдено мастеров:|Привязанность:).*?\)$/;
+          const specialTemplateRegex = /(^\\n|^∾∾\\n)<[\\∾]{2}C\[\d+\].*[\\∾]{2}C\[0\]>\((Уровень симпатии:|Найдено мастеров:|Привязанность:).*?\)$/;
 
           let linesToSkip = [];
           if (specialTemplateRegex.test(rawText) && i + 1 < tempBlocks.length && tempBlocks[i + 1].type === 'ShowText') {
@@ -1194,9 +1206,10 @@
       let currentEventId = null;
       window.japDisplayName = '';
       const textCmdRegex = /^\s*ShowText\(\[\s*"([\s\S]*?)"\s*\]\)/;
-      const displayNameRegex = /^\s*Display Name\s*=\s*"(.*)"/;
+      const displayNameRegex = /^[\s\uFEFF]*Display Name\s*=\s*"(.*)"/;
       const showChoicesRegex = /^\s*ShowChoices\(\[\[(.*)\],\s*(\d+)\]\)/;
       const whenRegex = /^\s*When\(\[(\d+),\s*"(.*)"\]\)/;
+      const scriptRegex = /^\s*(Script|ScriptMore)\(\[\s*"((?:[^"\\]|\\.)*)"\s*\]\)(.*)/;
       const otherRegex = /^\s*(\w+)\(\[(.*)\]\)/;
       const nameValueRegex = /^\s*(\w+)\s*=\s*"(.*)"$/;
 
@@ -1217,6 +1230,11 @@
           tempBlocks.push({ text: choices.join(' | '), type: 'ShowChoices', originalIdx: idx, choices: choices, commonEventId: currentEventId });
         } else if ((match = line.match(whenRegex))) {
           tempBlocks.push({ text: match[2], type: 'When', originalIdx: idx, choiceIndex: parseInt(match[1]), commonEventId: currentEventId });
+        } else if ((match = line.match(scriptRegex))) {
+          const commandType = match[1];
+          const commandText = match[2];
+          // trailingContent ignored for JP texts usually, or simplified
+          tempBlocks.push({ text: commandText, type: commandType, originalIdx: idx, commonEventId: currentEventId });
         } else if ((match = line.match(otherRegex))) {
           const commandType = match[1];
           const commandText = match[2];
@@ -1240,7 +1258,7 @@
 
       window.japBlocks = japBlocks = [];
       const nameRegex = /^【.*】$/;
-      const affinityRegex = /^【(.+?)】（好感度：(.*)）$/;
+      const affinityRegex = /^【(.+?)】（(友好度|好感度)：(.*)）$/;
       const nameAndDialogueRegex = /^(【.+?】)(.*)$/;
 
       for (let i = 0; i < tempBlocks.length; i++) {
@@ -1259,7 +1277,8 @@
         // === НАЧАЛО ИСПРАВЛЕНИЯ: Логика слияния шаблона в JP парсере ===
         if (affinityMatch) {
           const name = affinityMatch[1];
-          const templateText = `（好感度：${affinityMatch[2]}）`;
+          const affinityType = affinityMatch[2]; // 好感度 или 友好度
+          const templateText = `（${affinityType}：${affinityMatch[3]}）`;
 
           // Проверяем, идет ли следом строка диалога
           let dialoguePart = '';
@@ -1317,11 +1336,11 @@
 
       const tempBlocks = [];
       const textCmdRegex = /^\s*ShowText\(\[\s*"([\s\S]*?)"\s*\]\)/;
-      const displayNameRegex = /^\s*Display Name\s*=\s*"(.*)"/;
+      const displayNameRegex = /^[\s\uFEFF]*Display Name\s*=\s*"(.*)"/;
       const showChoicesRegex = /^\s*ShowChoices\(\[\[(.*)\],\s*(\d+)\]\)/;
       const whenRegex = /^\s*When\(\[(\d+),\s*"(.*)"\]\)/;
-      const scriptJpRegex = /^\s*Script\(\[(.*)\]\)/;
-      const scriptMoreJpRegex = /^\s*ScriptMore\(\[(.*)\]\)/;
+      const scriptJpRegex = /^\s*Script\(\[\s*"((?:[^"\\]|\\.)*)"\s*\]\)/;
+      const scriptMoreJpRegex = /^\s*ScriptMore\(\[\s*"((?:[^"\\]|\\.)*)"\s*\]\)/;
       const showTextAttrRegex = /^\s*ShowTextAttributes\(\[(.*)\]\)/;
       // Добавляем поддержку строк в формате "Name = "значение""
       const nameValueRegex = /^\s*(\w+)\s*=\s*"(.*)"$/;
@@ -1395,7 +1414,7 @@
       });
 
       window.textBlocks = textBlocks = [];
-      const nameRegex = /^【.*】$/;
+      const nameRegex = /^【.*?】(?:（(?:好感度|友好度)：.*）)?$/;
 
       for (let i = 0; i < tempBlocks.length; i++) {
         const currentBlock = tempBlocks[i];
@@ -1403,8 +1422,10 @@
         if (currentBlock.type === 'ShowText' && nameRegex.test(currentBlock.text)) {
           // Это блок с именем. Собираем все последующие строки диалога.
           const dialogueParts = [];
-          const nameMatch = currentBlock.text.match(/^【(.*)】$/);
+          const nameMatch = currentBlock.text.match(/^【(.*?)】/);
           const name = nameMatch ? nameMatch[1] : '';
+          const affMatchOnly = currentBlock.text.match(/（(好感度|友好度)：(.*)）/);
+          const affText = affMatchOnly ? `（${affMatchOnly[1]}：${affMatchOnly[2]}）` : '';
 
           // >>> НАЧАЛО ИЗМЕНЕНИЯ: Проверяем, есть ли текст после имени в той же строке <<<
           const nameAndDialogueMatch = currentBlock.text.match(/^(【.+?】)(.*)$/);
@@ -1436,8 +1457,9 @@
           }
 
           // Создаем один textBlock для всего диалога
-          const combinedText = `∾\n<∾∾C[6]${name}∾∾C[0]>${dialogueParts.join('\n')}`;
-          const originalJapText = `【${name}】\n${dialogueParts.join('\n')}`;
+          const displayAffText = affText ? `(${affText.includes('好感度') ? 'Уровень симпатии' : 'Привязанность'}: ${affMatchOnly[2].replace(/\\/g, '∾∾')})` : '';
+          const combinedText = `∾\n<∾∾C[6]${name}∾∾C[0]>${displayAffText}${dialogueParts.join('\n')}`;
+          const originalJapText = `【${name}】${affText}\n${dialogueParts.join('\n')}`;
 
           textBlocks.push({
             idx: currentBlock.originalIdx,
@@ -1478,9 +1500,8 @@
       }
 
       // Находим и устанавливаем DisplayName для редактора
-      const dnMatch = lines.join('\n').match(/^\s*Display Name\s*=\s*"(.*)"/m);
+      const dnMatch = lines.join('\n').match(/^[\s\uFEFF]*Display Name\s*=\s*"(.*)"/m);
       if (dnMatch) {
-        mapDisplayName = dnMatch[1];
         window.japDisplayName = dnMatch[1];
       }
 
@@ -1587,7 +1608,7 @@
     function pushUndo() {
       undoStack.push({
         textBlocks: JSON.parse(JSON.stringify(textBlocks)),
-        mapDisplayName: mapDisplayName,
+        mapDisplayName: window.mapDisplayName,
         selections: getSelections()
       });
       if (undoStack.length > MAX_HISTORY) undoStack.shift();
@@ -1617,13 +1638,13 @@
       const input = document.createElement('input');
       input.type = 'text';
       input.id = 'mapDisplayName';
-      input.value = mapDisplayName;
+      input.value = window.mapDisplayName;
       input.style.width = '60%';
       input.style.fontSize = '16px';
       input.style.padding = '4px 8px';
       input.style.marginLeft = '8px';
       input.addEventListener('input', function () {
-        mapDisplayName = this.value;
+        window.mapDisplayName = this.value;
       });
       displayDiv.appendChild(label);
       displayDiv.appendChild(input);
@@ -1761,26 +1782,29 @@
         // Ищем дубликаты по japaneseLink (если есть) или по block.text (если нет японского файла)
         if (block.type === 'ShowText') {
           try {
+            // Хелпер для нормализации текста (игнорируем индексы в скобках)
+            const getNorm = t => t ? t.trim().replace(/\[\d+\]/g, '[#]') : '';
+
             let origIdx = -1;
 
             // Если есть японский файл, ищем ТОЛЬКО по japaneseLink
             if (block.japaneseLink && block.japaneseLink.text) {
-              const currentJap = block.japaneseLink.text.trim();
+              const currentJapNorm = getNorm(block.japaneseLink.text);
               origIdx = textBlocks.findIndex((b, idx2) =>
                 idx2 < i &&
                 b.japaneseLink &&
                 b.japaneseLink.text &&
-                b.japaneseLink.text.trim() === currentJap
+                getNorm(b.japaneseLink.text) === currentJapNorm
               );
             }
             // ИНАЧЕ (если японского файла нет), ищем по русскому тексту
             else {
-              const currentText = block.text.trim();
+              const currentTextNorm = getNorm(block.text);
               origIdx = textBlocks.findIndex((b, idx2) =>
                 idx2 < i &&
                 b.type === 'ShowText' &&
                 b.text &&
-                b.text.trim() === currentText &&
+                getNorm(b.text) === currentTextNorm &&
                 b.idx !== undefined
               );
             }
@@ -1790,6 +1814,7 @@
               const rusInputEl = block.dom && block.dom.rusInput;
               if (rusInputEl) {
                 const dupBtn = document.createElement('button');
+                dupBtn.className = 'control-btn duplicate-fix-btn';
                 dupBtn.textContent = 'Дубликат';
                 dupBtn.title = `Повтор строки ${textBlocks[origIdx].idx !== undefined ? textBlocks[origIdx].idx + 1 : '?'}`;
                 dupBtn.style.marginLeft = '8px';
@@ -1802,6 +1827,22 @@
                   }
                   // Копируем содержимое только из одного блока, без захвата следующих строк
                   return textBlocks[start].text;
+                };
+
+                // Хелпер для "умной" подстановки ID из японского оригинала
+                const getSmartText = (source, targetBlock) => {
+                  let text = source;
+                  if (targetBlock.japaneseLink && targetBlock.japaneseLink.text) {
+                    const jap = targetBlock.japaneseLink.text;
+                    const japMatches = jap.match(/\[\d+\]/g);
+                    const sourceMatches = source.match(/\[\d+\]/g);
+                    // Если количество тегов совпадает, заменяем их по порядку
+                    if (japMatches && sourceMatches && japMatches.length === sourceMatches.length) {
+                      let matchIdx = 0;
+                      text = source.replace(/\[\d+\]/g, () => japMatches[matchIdx++]);
+                    }
+                  }
+                  return text;
                 };
                 // <<< КОНЕЦ ИЗМЕНЕНИЯ >>>
 
@@ -1824,29 +1865,27 @@
                 };
                 // <<< КОНЕЦ ИЗМЕНЕНИЯ >>>
 
-                // Получаем счётчики символов
-                const origCount = getCharCount(origIdx);
-                const currCount = getCharCount(i);
-
                 // Функция обновления цвета кнопки
                 const updateDupStyle = () => {
-                  const origText = collectText(origIdx);
+                  const sourceText = collectText(origIdx);
                   const currText = collectText(i);
-                  const newOrigCount = getCharCount(origIdx);
-                  const newCurrCount = getCharCount(i);
 
-                  // Зеленая, только если текст полностью совпадает
-                  if (currText === origText) {
+                  // Кнопка зеленая, если текущий текст совпадает с источником
+                  // С УЧЕТОМ того, что ID были автоматически подправлены под текущую японскую строку.
+                  const expectedText = getSmartText(sourceText, block);
+
+                  if (currText === expectedText) {
                     dupBtn.style.backgroundColor = '#8f8';
                   } else {
                     dupBtn.style.backgroundColor = '#f88';
                   }
                 };
 
-                // Клик: вставить объединённый текст
+                // Клик: вставить объединённый текст со смарт-заменой ID
                 dupBtn.addEventListener('click', () => {
-                  const origText = collectText(origIdx);
-                  rusInputEl.value = origText;
+                  const sourceText = collectText(origIdx);
+                  const smartText = getSmartText(sourceText, block);
+                  rusInputEl.value = smartText;
                   rusInputEl.dispatchEvent(new Event('input', { bubbles: true }));
                   updateDupStyle();
                 });
@@ -1903,21 +1942,41 @@
           const nameTagMatch = textarea.value.match(/<∾∾C\[6\](.*?)∾∾C\[0\]>/);
           if (block.japaneseLink && block.japaneseLink.type === 'name' && nameTagMatch) {
             const newRuName = nameTagMatch[1];
-            const japName = block.japaneseLink.text.split('\n')[0].trim();
+
+            // Хелпер для нормализации японского имени (игнорируем переменные в скобках)
+            const normJap = t => t.split('\n')[0].replace(/（(友好度|好感度)：.*?）/, '').trim();
+            const japName = normJap(block.japaneseLink.text);
+
             // Получаем старое имя из старого значения
             const prevNameTagMatch = oldText.match(/<∾∾C\[6\](.*?)∾∾C\[0\]>/);
             const prevRuName = prevNameTagMatch ? prevNameTagMatch[1] : null;
+
             // Если имя не изменилось — ничего не делаем
             if (prevRuName === newRuName) return;
+
+            // Хелпер для разделения имени и шаблона (Привязанность)
+            const splitName = t => {
+              const m = t.match(/^(.*?)(\s*\(Привязанность:.*?\))?$/);
+              return m ? { pure: m[1], template: m[2] || "" } : { pure: t, template: "" };
+            };
+
+            const newParts = splitName(newRuName);
+
             // Проходим по всем ShowText с тем же японским именем
             for (let j = 0; j < textBlocks.length; j++) {
               if (j === i) continue; // не трогаем текущий
               const b = textBlocks[j];
               if (b.type === 'ShowText' && b.japaneseLink && b.japaneseLink.type === 'name') {
-                const bJapName = b.japaneseLink.text.split('\n')[0].trim();
+                const bJapName = normJap(b.japaneseLink.text);
                 if (bJapName === japName) {
                   // Меняем имя только если оно отличается
-                  b.text = b.text.replace(/(<∾∾C\[6\]).*?(∾∾C\[0\]>)/, `$1${newRuName}$2`);
+                  b.text = b.text.replace(/(<∾∾C\[6\])(.*?)(∾∾C\[0\]>)/, (match, p1, p2, p3) => {
+                    const bParts = splitName(p2);
+                    // Если у целевого блока свой шаблон — сохраняем его, меняем только имя.
+                    // Иначе берем шаблон из нового имени.
+                    const targetContent = newParts.pure + (bParts.template || newParts.template);
+                    return p1 + targetContent + p3;
+                  });
                   // Если textarea уже отрисована — обновляем её значение
                   if (b.dom && b.dom.rusInput) {
                     b.dom.rusInput.value = b.text;
@@ -1925,7 +1984,6 @@
                 }
               }
             }
-            // renderTextBlocks(); // Больше не вызываем, чтобы не сбивалась прокрутка
           }
 
           // --- АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ JUMPTOLABEL ---
@@ -2136,11 +2194,11 @@
           saveEditorBlockPosition();
           pushUndo();
 
-          // Если это вручную добавленный блок (+), его можно удалить сразу
-          if (block.manualPlus) {
+          // Если это НОВЫЙ блок (добавлен в сессии и не имеет привязки к файлу), его можно удалить сразу
+          if (block.idx === undefined) {
             textBlocks.splice(i, 1);
           } else {
-            // Для всех остальных блоков просто ставим флаг "удалено"
+            // Для блоков, которые есть в файле (даже если это #+), ставим флаг "удалено"
             block.isDeleted = true;
           }
 
@@ -2187,6 +2245,12 @@
 
     // === НОВАЯ ЕДИНАЯ ФУНКЦИЯ СБОРКИ ФАЙЛА (ДЛЯ ПРЕДПРОСМОТРА И СОХРАНЕНИЯ) ===
     window.generateFinalFileLines = function () {
+      // --- СИНХРОНИЗАЦИЯ ИЗ UI ПЕРЕД СБОРКОЙ ---
+      const displayNameInput = document.getElementById('mapDisplayName');
+      if (displayNameInput) {
+        window.mapDisplayName = displayNameInput.value;
+      }
+
       // Если включен режим восстановления, просто возвращаем уже готовые строки
       if (window.restoreModeEnabled) {
         return window.fullRusLines.slice();
@@ -2230,15 +2294,16 @@
 
       // === ШАГ 2: ОБРАБОТКА 'Display Name' (Только для Карт!) ===
       const fileNameLower = (window.loadedFileName || "").toLowerCase();
-      const isMapFile = fileNameLower.includes('map') && !fileNameLower.includes('commonevent');
-      const isCommonEventFile = fileNameLower.includes('commonevent') || linesToUse.some(l => /^CommonEvent \d+/.test(l));
+      const isMapFile = fileNameLower.includes('map');
+      const isCommonEventFile = fileNameLower.includes('commonevent') || linesToUse.some(l => /^[\s\uFEFF]*CommonEvent \d+/.test(l));
+      const hasExistingDN = linesToUse.some(l => /^[\s\uFEFF]*Display Name\s*=/.test(l));
 
       let lineOffset = 0;
-      if (isMapFile && !isCommonEventFile) {
-        let displayNameLine = `Display Name = "${mapDisplayName}"`;
+      if ((isMapFile || window.mapDisplayName.trim() || hasExistingDN) && (!isCommonEventFile || isMapFile)) {
+        let displayNameLine = `Display Name = "${window.mapDisplayName}"`;
         let foundDisplayName = false;
         for (let i = 0; i < newLines.length; i++) {
-          if (/^\s*Display Name\s*=/.test(newLines[i])) {
+          if (/^[\s\uFEFF]*Display Name\s*=/.test(newLines[i])) {
             newLines[i] = displayNameLine;
             foundDisplayName = true;
             break;
@@ -2414,9 +2479,9 @@
       let outputLines = [];
 
       // === 1. Добавляем Display Name в начало ===
-      if (typeof mapDisplayName !== 'undefined') {
+      if (typeof window.mapDisplayName !== 'undefined') {
         let label = '[Display Name]: ';
-        outputLines.push(label + mapDisplayName);
+        outputLines.push(label + window.mapDisplayName);
       }
 
       // === 2. Проходим по всем блокам из редактора ===
@@ -2509,24 +2574,35 @@
       let namePart = info.fullPrefix;
       let textPart = info.rawGameText;
 
+      // --- НОВАЯ ЗАЩИТА ТЕГОВ ---
+      // Заменяем пробелы ВНУТРИ тегов цвета на спецсимвол (\x01), чтобы split(' ') их не разорвал
+      const safeTextPart = textPart.replace(/(?:∾+|\\+)C\[\d+\].*?(?:∾+|\\+)C\[0\]/g, (match) => {
+        return match.replace(/ /g, '\x01');
+      });
+
       // Логика разделения слов
-      const words = textPart.split(' ');
+      const words = safeTextPart.split(' ');
       let firstLineWords = [];
       for (const word of words) {
         firstLineWords.push(word);
 
-        // Проверяем длину используя ту же метрику, что и для подсветки
-        const currentText = firstLineWords.join(' ');
+        // Проверяем длину (возвращаем пробелы обратно для корректного подсчета)
+        const currentText = firstLineWords.join(' ').replace(/\x01/g, ' ');
         const currentLen = window.getVisibleTextMetrics(currentText).length;
 
         if (currentLen > 50) {
-          firstLineWords.pop(); // Убираем последнее слово
+          // Защита: если одно-единственное слово (или неразрывный тег) длиннее 50 символов,
+          // мы обязаны его оставить, иначе уйдем в бесконечный цикл разделения пустоты.
+          if (firstLineWords.length > 1) {
+            firstLineWords.pop(); // Убираем последнее слово, чтобы не превышать лимит
+          }
           break;
         }
       }
 
-      const acc = firstLineWords.join(' ');
-      const rest = words.slice(firstLineWords.length).join(' ');
+      // Собираем строки и восстанавливаем пробелы
+      const acc = firstLineWords.join(' ').replace(/\x01/g, ' ');
+      const rest = words.slice(firstLineWords.length).join(' ').replace(/\x01/g, ' ');
 
       // Если хвост пустой, выходим
       if (rest.trim() === '') return false;
