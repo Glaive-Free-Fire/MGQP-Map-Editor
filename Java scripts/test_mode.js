@@ -7,7 +7,7 @@ document.addEventListener('DOMContentLoaded', function () {
       window.mapDisplayName = displayNameInput.value;
     }
 
-    if (window.restoreModeEnabled) {
+    if (window.restoreModeEnabled && window.fullRusLines && (!textBlocks || textBlocks.length === 0)) {
       return (window.fullRusLines || []).slice();
     }
     const linesToUse = window.originalLines || originalLines || [];
@@ -637,14 +637,15 @@ setTimeout(function () {
     }
 
     // === ШАГ 1: ПОДГОТОВКА ДАННЫХ ===
-    // Если включен режим восстановления, просто возвращаем уже готовые строки
-    if (window.restoreModeEnabled && window.fullRusLines) {
-      return window.fullRusLines.slice();
-    }
-
     // Используем window.originalLines и window.textBlocks если доступны, иначе локальные
     const linesToUse = window.originalLines || originalLines;
     const blocksToUse = window.textBlocks || textBlocks;
+
+    // Если включен режим восстановления, используем кэшированные строки только если редактор пуст.
+    // Это позволяет видеть ошибки в текущих правках даже в режиме восстановления.
+    if (window.restoreModeEnabled && window.fullRusLines && (!blocksToUse || blocksToUse.length === 0)) {
+      return window.fullRusLines.slice();
+    }
 
     // Если данных нет, возвращаем пустой массив
     if (!linesToUse || !blocksToUse) {
@@ -1121,14 +1122,14 @@ window.addChangeItemsButtons = function () {
             const spacesCount = Math.max(1, 1 + (4 - numStr.length) * 2);
             const prefix = `Привязанность${" ".repeat(spacesCount)}${numStr}:`;
             let amountSuffix = (itemAmount !== "1") ? ` × ${itemAmount}` : "";
-            newText = `${prefix}∾${itemType}[${itemId}]${amountSuffix}`;
+            newText = `${prefix}∾∾${itemType}[${itemId}]${amountSuffix}`;
           } else {
             const tagMatch = currentText.match(itemTagRegex);
             if (tagMatch) {
               const typeLetter = itemType === 'iw' ? 'w' : (itemType === 'ia' ? 'a' : '');
               newText = currentText.replace(itemTagRegex, (match) => {
-                const prefix = match.startsWith('∾') ? (match.startsWith('∾∾') ? '∾∾' : '∾') : '\\';
-                return `${prefix}i${typeLetter}[${itemId}]`;
+                // Всегда жестко ставим двойной слэш ∾∾ для любых тегов предметов
+                return `∾∾i${typeLetter}[${itemId}]`;
               });
             } else {
               newText = `∾∾${itemType}[${itemId}] × ${itemAmount} получено!`;
@@ -1911,6 +1912,53 @@ setTimeout(function () {
       }
     }
 
+    // --- НОВАЯ ПРОВЕРКА: Одиночные слэши в тегах предметов ---
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line.includes('ShowText([')) continue;
+
+      const startIdx = line.indexOf('["');
+      const endIdx = line.lastIndexOf('"]');
+      if (startIdx === -1 || endIdx === -1) continue;
+      const text = line.substring(startIdx + 2, endIdx);
+
+      // Ищем паттерн, где перед тегами \ia, \ii, \iw стоит только один слэш
+      if (/(^|[^\\])\\i[iaw]?\[\d+\]/i.test(text)) {
+        errors.push({
+          label: `строка ${i + 1}`,
+          type: 'Ошибка тега предмета',
+          reason: 'Тег предмета должен иметь двойной обратный слэш (в игре \\\\ia[...], в редакторе ∾∾ia[...]).',
+          line: i,
+          msg: 'Одиночный слэш в теге предмета.',
+          isItemIdMismatchLine: true // Используем этот флаг, чтобы строка подсвечивалась красным
+        });
+      }
+    }
+
+    // --- НОВАЯ ПРОВЕРКА: Лишний перенос строки (\n) в конце ---
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      // Проверяем все типы текстовых команд (ShowText, Script, Label и др.), содержащие ["..."]
+      if (!line.includes('["') || !line.includes('"]')) continue;
+
+      const startIdx = line.indexOf('["');
+      const endIdx = line.lastIndexOf('"]');
+      if (startIdx === -1 || endIdx === -1 || endIdx <= startIdx) continue;
+      const textContent = line.substring(startIdx + 2, endIdx);
+
+      // Проверяем, заканчивается ли текст на \n (возможно, с пробелами или \r после него)
+      // Используем [\s\r]* для надежной поимки конца строки в разных ОС
+      if (/\\n[\s\r]*$/.test(textContent)) {
+        errors.push({
+          label: `строка ${i + 1}`,
+          type: 'Лишний перенос',
+          reason: 'Случайный тег \\n в самом конце строки.',
+          line: i,
+          msg: 'Лишний тег \\n в конце.'
+        });
+      }
+    }
+
     // === ФИНАЛЬНАЯ ФИЛЬТРАЦИЯ: Удаляем все ошибки для строк с ## ===
     return errors.filter(err => {
       // Если у ошибки есть ссылка на строку
@@ -1956,6 +2004,7 @@ setTimeout(function () {
       let indentErrorsCount = 0;
       let itemMismatchCount = 0;
       let colorTagErrorsCount = 0;
+      let trailingNewlineCount = 0;
 
       // Фильтруем ошибки, которые нам интересны
       allErrors.forEach(err => {
@@ -1990,12 +2039,18 @@ setTimeout(function () {
           window.allErrorIndices.add(blockIndex);
           colorTagErrorsCount++;
         }
+
+        // Обработка лишних переносов
+        if (err.type === 'Лишний перенос') {
+          window.allErrorIndices.add(blockIndex);
+          trailingNewlineCount++;
+        }
       });
 
       // 5. Обновляем интерфейс (Лампочка, Кнопки, Список ошибок)
       const lamp = document.getElementById('matchLamp');
 
-      if (scriptErrorsCount > 0 || indentErrorsCount > 0 || itemMismatchCount > 0 || colorTagErrorsCount > 0) {
+      if (scriptErrorsCount > 0 || indentErrorsCount > 0 || itemMismatchCount > 0 || colorTagErrorsCount > 0 || trailingNewlineCount > 0) {
         if (lamp) {
           lamp.style.background = '#f66';
           let titleMsg = '';
@@ -2003,8 +2058,9 @@ setTimeout(function () {
           if (indentErrorsCount > 0) titleMsg += `\n + Ошибок отступов: ${indentErrorsCount}`;
           if (itemMismatchCount > 0) titleMsg += `\n + Ошибок ID предметов: ${itemMismatchCount}`;
           if (colorTagErrorsCount > 0) titleMsg += `\n + Разорванных тегов: ${colorTagErrorsCount}`;
+          if (trailingNewlineCount > 0) titleMsg += `\n + Лишних переносов: ${trailingNewlineCount}`;
 
-          if (!lamp.title.includes('Ошибок скрипта') && !lamp.title.includes('Ошибок отступов') && !lamp.title.includes('Ошибок ID предметов') && !lamp.title.includes('Разорванных тегов')) {
+          if (!lamp.title.includes('Ошибок скрипта') && !lamp.title.includes('Ошибок отступов') && !lamp.title.includes('Ошибок ID предметов') && !lamp.title.includes('Разорванных тегов') && !lamp.title.includes('Лишних переносов')) {
             lamp.title += titleMsg;
           }
         }
@@ -2023,14 +2079,14 @@ setTimeout(function () {
           extraHtml += '<b>Обнаруженные ошибки (Live):</b><ul style="color:#d00; margin-top:4px;">';
           allErrors.forEach(err => {
             // Показываем только скрипты, отступы, ID предметов и теги цвета в этом списке
-            if (err.type === 'Ошибка скрипта' || err.isFixableIndent || err.isItemIdMismatchLine || err.type === 'Ошибка тега цвета') {
+            if (err.type === 'Ошибка скрипта' || err.isFixableIndent || err.isItemIdMismatchLine || err.type === 'Ошибка тега цвета' || err.type === 'Лишний перенос') {
               extraHtml += `<li><b>Строка ${err.line + 1}</b>: ${err.msg}</li>`;
             }
           });
           extraHtml += '</ul></div>';
 
           // Если мы нашли ошибки, добавляем их в div
-          if (indentErrorsCount > 0 || scriptErrorsCount > 0 || itemMismatchCount > 0 || colorTagErrorsCount > 0) {
+          if (indentErrorsCount > 0 || scriptErrorsCount > 0 || itemMismatchCount > 0 || colorTagErrorsCount > 0 || trailingNewlineCount > 0) {
             diffsDiv.insertAdjacentHTML('beforeend', extraHtml);
           }
         }
@@ -2130,14 +2186,11 @@ setTimeout(function () {
 
 // === ФУНКЦИЯ АВТОЗАМЕНЫ ДУБЛИКАТОВ ===
 (function () {
-  let isMassClicking = false; // Флаг защиты от рекурсии
+  let isMassClicking = false;
   const DUPLICATE_BTN_CLASS = 'duplicate-fix-btn';
 
-  // 1. Функция для навешивания класса на кнопки дубликатов (если они созданы динамически без класса)
   function tagDuplicateButtons() {
-    // Ищем все кнопки, которые могут быть кнопками исправления дубликатов
     const allButtons = document.querySelectorAll('button');
-
     allButtons.forEach(btn => {
       const isDuplicateBtn = btn.textContent.includes('Дубликат') ||
         btn.classList.contains('fix-duplicate') ||
@@ -2149,46 +2202,40 @@ setTimeout(function () {
     });
   }
 
-  // 2. Обработчик клика
-  document.addEventListener('click', function (e) {
-    const checkbox = document.getElementById('autoReplaceDuplicates');
-    if (!checkbox || !checkbox.checked) return;
+  // Оборачиваем всё в DOMContentLoaded, чтобы body точно успел загрузиться
+  document.addEventListener('DOMContentLoaded', function () {
+    if (!document.body) return;
 
-    const target = e.target;
+    document.addEventListener('click', function (e) {
+      const checkbox = document.getElementById('autoReplaceDuplicates');
+      if (!checkbox || !checkbox.checked) return;
 
-    // Проверяем, что кликнули по кнопке дубликата
-    if (target.matches(`button.${DUPLICATE_BTN_CLASS}`) && !isMassClicking) {
-      isMassClicking = true;
+      const target = e.target;
+      if (target.matches(`button.${DUPLICATE_BTN_CLASS}`) && !isMassClicking) {
+        isMassClicking = true;
+        const allDuplicateBtns = document.querySelectorAll(`button.${DUPLICATE_BTN_CLASS}`);
+        const visibleBtns = Array.from(allDuplicateBtns).filter(btn => {
+          const isRed = btn.style.backgroundColor === 'rgb(255, 136, 136)' || btn.style.backgroundColor === '#f88';
+          return btn.offsetParent !== null && !btn.disabled && isRed && btn !== target;
+        });
 
-      // Находим ВСЕ кнопки дубликатов на странице
-      const allDuplicateBtns = document.querySelectorAll(`button.${DUPLICATE_BTN_CLASS}`);
-
-      // Фильтруем только видимые и не disabled, и те, которые действительно требуют нажатия (красные)
-      const visibleBtns = Array.from(allDuplicateBtns).filter(btn => {
-        const isRed = btn.style.backgroundColor === 'rgb(255, 136, 136)' || btn.style.backgroundColor === '#f88';
-        return btn.offsetParent !== null && !btn.disabled && isRed && btn !== target;
-      });
-
-      if (visibleBtns.length > 0) {
-        // Небольшая задержка
-        setTimeout(() => {
-          console.log(`[Автозамена] Запуск массового нажатия (${visibleBtns.length} кнопок)...`);
-
-          visibleBtns.forEach((btn, index) => {
-            // Кликаем по каждой кнопке
-            btn.click();
-          });
-
-          console.log('[Автозамена] Готово.');
+        if (visibleBtns.length > 0) {
+          setTimeout(() => {
+            visibleBtns.forEach(btn => btn.click());
+            isMassClicking = false;
+          }, 50);
+        } else {
           isMassClicking = false;
-        }, 50);
-      } else {
-        isMassClicking = false;
+        }
       }
-    }
-  }, true);
+    }, true);
 
-  // 3. Интеграция с перерисовкой редактора
+    const observer = new MutationObserver(tagDuplicateButtons);
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    setTimeout(tagDuplicateButtons, 1500);
+  });
+
   if (typeof window.renderTextBlocks === 'function') {
     const originalRender = window.renderTextBlocks;
     window.renderTextBlocks = function () {
@@ -2197,12 +2244,4 @@ setTimeout(function () {
       return result;
     };
   }
-
-  // 4. Первичная разметка
-  setTimeout(tagDuplicateButtons, 1500);
-
-  // 5. Наблюдатель за изменениями в DOM
-  const observer = new MutationObserver(tagDuplicateButtons);
-  observer.observe(document.body, { childList: true, subtree: true });
-
 })();
