@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8">
-  <title>MGQP Map Editor v1.5.10</title>
+  <title>MGQP Map Editor v1.5.11</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="Java scripts/main_script.js"></script>
   <script src="Java scripts/restore-mode.js"></script>
@@ -1169,6 +1169,7 @@
 
           const finalText = combinedText
             .replace(/^"(.*)"$/, '$1')
+            .replace(/\\i([iaw]?)\[/gi, '\\\\i$1[')
             .replace(/\\n/g, '\n')
             .replace(/\\/g, '∾');
           textBlocks.push({
@@ -1182,7 +1183,7 @@
             linesToSkip: linesToSkip
           });
         } else {
-          const text = currentBlock.text.replace(/^"(.*)"$/, '$1').replace(/\\n/g, '\n').replace(/\\/g, '∾');
+          const text = currentBlock.text.replace(/^"(.*)"$/, '$1').replace(/\\i([iaw]?)\[/gi, '\\\\i$1[').replace(/\\n/g, '\n').replace(/\\/g, '∾');
           const newBlock = { idx: currentBlock.originalIdx, text: (currentBlock.type === 'ShowChoices') ? currentBlock.text : text, type: currentBlock.type, generated: hasPlus, manualPlus: hasPlus && currentBlock.originalIdx !== undefined, choices: currentBlock.choices, defaultChoice: currentBlock.defaultChoice, choiceIndex: currentBlock.choiceIndex, commonEventId: currentBlock.commonEventId, hasIgnoreMarker: currentBlock.hasIgnoreMarker };
 
           if (newBlock.generated && textBlocks.length > 0) {
