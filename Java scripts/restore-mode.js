@@ -1521,34 +1521,40 @@
     const hasTagsErrors = window.hasNameTagErrors();
 
     // <<< ИЗМЕНЕНИЕ 2: Новая, полная логика проверки шаблонов >>>
-    const templateRegex = /(<[\\∾]{2}C\[6\].*?)([\\∾]{2}C\[0\]>)\s*[\（\(]((?:友好度|Уровень симпатии|Привязанность:?)[：:]\s*)?([\\∾]+)(V\[\d+\])[\）\)]([\s\S]*)$/;
+    // Регулярка для японского (разделенного) шаблона: скобка привязанности СНАРУЖИ C[0]>
+    const splitRegex = /(<[\\∾]+[CcСс]\[6\].*?)([\\∾]+[CcСс]\[0\]>)\s*[\(\（]((?:友好度|Уровень симпатии|Привязанность:?)[：:]?\s*)?([\\∾]+)([VvВв]\[\d+\])[\)\）]([\s\S]*)$/i;
+    // Регулярка для старого русского шаблона: привязанность ВНУТРИ тега, но без ∾∾C[8]
+    const oldRegex = /(<[\\∾]+[CcСс]\[6\](?:(?![\\∾]+[CcСс]\[8\]).)*?)\s*[\(\（]((?:友好度|Уровень симпатии|Привязанность:?)\s*)?([\\∾]+)([VvВв]\[\d+\])[\)\）]([\\∾]+[CcСс]\[0\]>)/i;
+
     let hasAffectionErrors = false;
     if (window.textBlocks) {
       for (let i = 0; i < window.textBlocks.length; i++) {
         const block = window.textBlocks[i];
         if (block.type !== 'ShowText' || block.isDeleted) continue;
 
-        const match = block.text.match(templateRegex);
-        if (!match) continue; // Не шаблон
+        const matchSplit = block.text.match(splitRegex);
+        const matchOld = block.text.match(oldRegex);
 
-        // Проверяем на ошибки ФОРМАТИРОВАНИЯ
-        if ((match[3] && (match[3].includes('友好度') || match[3] === 'Уровень симпатии:')) || (match[4] && match[4].length !== 2)) {
+        // Если нашли любой из устаревших форматов — показываем кнопку!
+        if (matchSplit || matchOld) {
           hasAffectionErrors = true;
-          break; // Нашли ошибку, выходим
+          break;
         }
 
-        // Проверяем на ошибки СЛИЯНИЯ
-        const dialoguePart = match[6];
-        if (dialoguePart.trim() === '') { // Блок не объединен
-          if ((i + 1) < window.textBlocks.length) {
-            const nextBlock = window.textBlocks[i + 1];
-            if (nextBlock.type === 'ShowText' &&
-              !nextBlock.isDeleted &&
-              !window.isNameBlock(nextBlock.text) &&
-              !nextBlock.manualPlus &&
-              !nextBlock.generated) {
-              hasAffectionErrors = true; // Нашли блок для слияния
-              break; // Нашли ошибку, выходим
+        // Проверяем на ошибки СЛИЯНИЯ (старый split: диалог пустой, следующий блок — не имя)
+        if (matchSplit) {
+          const dialoguePart = matchSplit[6];
+          if (dialoguePart.trim() === '') {
+            if ((i + 1) < window.textBlocks.length) {
+              const nextBlock = window.textBlocks[i + 1];
+              if (nextBlock.type === 'ShowText' &&
+                !nextBlock.isDeleted &&
+                !window.isNameBlock(nextBlock.text) &&
+                !nextBlock.manualPlus &&
+                !nextBlock.generated) {
+                hasAffectionErrors = true;
+                break;
+              }
             }
           }
         }
@@ -1628,34 +1634,44 @@
   global.fixAffectionTemplates = function () {
     if (!window.textBlocks) return;
 
-    // <<< ИЗМЕНЕНИЕ 1: Regex теперь захватывает и диалог в конце ([\s\S]*)$ >>>
-    const templateRegex = /(<[\\∾]{2}C\[6\].*?)([\\∾]{2}C\[0\]>)\s*[\（\(]((?:友好度|Уровень симпатии|Привязанность:?)[：:]\s*)?([\\∾]+)(V\[\d+\])[\）\)]([\s\S]*)$/;
+    // Регулярка для японского (разделенного) шаблона:
+    // <∾∾C[6]Имя∾∾C[0]> (友好度：∾∾V[N]) текст
+    const splitRegex = /(<[\\∾]+[CcСс]\[6\](?:(?![\\∾]+[CcСс]\[8\]).)*?)([\\∾]+[CcСс]\[0\]>)\s*[\(\（]((?:友好度|Уровень симпатии|Привязанность:?)[：:]?\s*)?([\\∾]+)([VvВв]\[\d+\])[\)\）]([\s\S]*)$/i;
+    // Регулярка для старого русского шаблона (без C[8]):
+    // <∾∾C[6]Имя (Привязанность: ∾∾V[N])∾∾C[0]> текст
+    const oldRegex = /(<[\\∾]+[CcСс]\[6\](?:(?![\\∾]+[CcСс]\[8\]).)*?)\s*[\(\（]((?:友好度|Уровень симпатии|Привязанность:?)\s*)?([\\∾]+)([VvВв]\[\d+\])[\)\）]([\\∾]+[CcСс]\[0\]>)([\s\S]*)$/i;
+
     let fixedCount = 0;
 
     if (typeof pushUndo === 'function') pushUndo();
 
-    // <<< ИЗМЕНЕНИЕ 2: Полностью новый цикл исправления >>>
-    // Мы должны итерировать в обратном порядке, так как можем удалять элементы
     for (let i = window.textBlocks.length - 1; i >= 0; i--) {
       const block = window.textBlocks[i];
 
       if (block.type !== 'ShowText' || block.isDeleted) continue;
 
-      const match = block.text.match(templateRegex);
-      if (!match) continue; // Это не блок-шаблон
+      const matchSplit = block.text.match(splitRegex);
+      const matchOld = block.text.match(oldRegex);
 
-      // --- Это блок-шаблон ---
-      const tagStart = match[1];
-      const tagEnd = match[2];
-      const oldText = match[3];
-      const slashes = match[4];
-      const variable = match[5];
-      let dialoguePart = match[6]; // Диалог, который УЖЕ в этом блоке
+      if (!matchSplit && !matchOld) continue; // Это не блок-шаблон
+
+      let tagStart, tagEnd, variable, dialoguePart;
+
+      if (matchSplit) {
+        tagStart = matchSplit[1];
+        tagEnd = matchSplit[2];
+        variable = matchSplit[5];
+        dialoguePart = matchSplit[6];
+      } else {
+        tagStart = matchOld[1];
+        variable = matchOld[4];
+        tagEnd = matchOld[5];
+        dialoguePart = matchOld[6];
+      }
 
       let nextBlockToDelete = null;
+      let nextBlockJapLink = null;
 
-      // Проверяем, нужно ли слияние
-      let nextBlockJapLink = null; // Для сохранения японской связи следующего блока
       if (dialoguePart.trim() === '') {
         if ((i + 1) < window.textBlocks.length) {
           const nextBlock = window.textBlocks[i + 1];
@@ -1664,75 +1680,50 @@
             !window.isNameBlock(nextBlock.text) &&
             !nextBlock.manualPlus &&
             !nextBlock.generated) {
-            // Нашли блок для слияния
-            dialoguePart = nextBlock.text; // Берем его текст
-            nextBlockJapLink = nextBlock.japaneseLink; // Сохраняем японскую связь
-            nextBlockToDelete = nextBlock; // Помечаем на удаление
+            dialoguePart = nextBlock.text;
+            nextBlockJapLink = nextBlock.japaneseLink;
+            nextBlockToDelete = nextBlock;
           }
         }
       }
 
-      // Определяем, нужно ли что-то делать с этим блоком
-      const needsFixing = (
-        (match[3] && (match[3].includes('友好度') || match[3] === 'Уровень симпатии:')) || // 1. Текст "Уровень симпатии" или "友好度"
-        slashes.length !== 2 ||                 // 2. Неправильное число ∾
-        nextBlockToDelete                   // 3. Есть блок для слияния
-      );
+      fixedCount++;
 
-      if (needsFixing) {
-        fixedCount++;
+      const prefixMatch = block.text.match(/^(∾\n)\s*/);
+      const prefix = prefixMatch ? prefixMatch[1] : '';
 
-        // Сохраняем оригинальный префикс (∾\n), если он был
-        const prefixMatch = block.text.match(/^(∾\n)\s*/);
-        const prefix = prefixMatch ? prefixMatch[1] : '';
+      if (!nextBlockToDelete && dialoguePart.startsWith('\n')) {
+        dialoguePart = dialoguePart.substring(1);
+      }
 
-        // Если диалог был в этом же блоке, убираем \n
-        if (!nextBlockToDelete && dialoguePart.startsWith('\n')) {
-          dialoguePart = dialoguePart.substring(1);
-        }
+      // --- НОВЫЙ ШАБЛОН: <∾∾C[6]Имя ∾∾C[8](Привязанность:∾∾V[ID])∾∾C[0]> ---
+      block.text = `${prefix}${tagStart} ∾∾C[8](Привязанность:∾∾${variable})${tagEnd}${dialoguePart}`;
 
-        // Собираем новую, исправленную и объединенную строку
-        block.text = `${prefix}${tagStart} (Привязанность: ∾∾${variable})${tagEnd}${dialoguePart}`;
-
-        // Объединяем японские связи: если у следующего блока есть japaneseLink, объединяем его с текущим
-        if (nextBlockJapLink && nextBlockJapLink.text) {
-          // Если у текущего блока уже есть японская связь, объединяем тексты
-          if (block.japaneseLink && block.japaneseLink.text) {
-            // Объединяем японские тексты через перенос строки
-            block.japaneseLink.text = block.japaneseLink.text + '\n' + nextBlockJapLink.text;
-          } else {
-            // Если у текущего блока нет японской связи, просто копируем из следующего
-            block.japaneseLink = nextBlockJapLink;
-          }
-        }
-
-        // Помечаем следующий блок как "удаленный"
-        if (nextBlockToDelete) {
-          nextBlockToDelete.isDeleted = true;
-          // Очищаем японскую связь у удаляемого блока, чтобы она не отображалась
-          nextBlockToDelete.japaneseLink = null;
+      if (nextBlockJapLink && nextBlockJapLink.text) {
+        if (block.japaneseLink && block.japaneseLink.text) {
+          block.japaneseLink.text = block.japaneseLink.text + '\n' + nextBlockJapLink.text;
+        } else {
+          block.japaneseLink = nextBlockJapLink;
         }
       }
-    } // Конец цикла for
-    // <<< КОНЕЦ ИЗМЕНЕНИЯ 2 >>>
+
+      if (nextBlockToDelete) {
+        nextBlockToDelete.isDeleted = true;
+        nextBlockToDelete.japaneseLink = null;
+      }
+    }
 
     if (fixedCount > 0) {
       alert(`Исправлено и объединено ${fixedCount} шаблонов привязанности.`);
-
-      // Если были загружены оба файла, нужно пересоздать японские связи
-      // так как объединение блоков могло изменить структуру
       if (window.japBlocks && window.japBlocks.length > 0 && typeof linkAndRender === 'function') {
-        linkAndRender(); // Пересоздаем связи с японскими блоками
+        linkAndRender();
       } else {
-        // Если японский файл не загружен, просто перерисовываем
         if (typeof renderTextBlocks === 'function') renderTextBlocks();
       }
-
       if (typeof window.updateMatchLamp === 'function') window.updateMatchLamp();
       if (typeof updateRedIndices === 'function') updateRedIndices();
     } else {
       alert('Шаблоны для исправления или объединения не найдены.');
-      // Отменяем добавление в историю, если ничего не изменилось
       if (typeof window.undoStack === 'object' && window.undoStack.length > 0) {
         window.undoStack.pop();
         if (typeof document.getElementById === 'function' && document.getElementById('undoBtn')) {

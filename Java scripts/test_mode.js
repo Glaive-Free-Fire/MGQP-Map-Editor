@@ -1959,6 +1959,35 @@ setTimeout(function () {
       }
     }
 
+    // --- НОВАЯ ПРОВЕРКА: Ошибки шаблона привязанности ---
+    // ВАЖНО: lines[] содержат экспортированный текст, где ∾∾ → \\ (два слэша).
+    // Поэтому ищем \\C[6] и \\C[8] через регулярку /\\\\C\[6\]/ (4 слэша = 2 реальных).
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line.includes('ShowText([')) continue;
+
+      const startIdx = line.indexOf('["');
+      const endIdx = line.lastIndexOf('"]');
+      if (startIdx === -1 || endIdx === -1) continue;
+      const text = line.substring(startIdx + 2, endIdx);
+
+      // Есть тег имени C[6], но НЕТ тега цвета привязанности C[8]
+      const hasNameTag = /\\\\C\[6\]/.test(text);
+      const hasColorTag = /\\\\C\[8\]/.test(text);
+      const hasAffection = /Привязанность|友好度|\\\\V\[/.test(text);
+
+      if (hasNameTag && !hasColorTag && hasAffection) {
+        errors.push({
+          label: `строка ${i + 1}`,
+          type: 'Ошибка шаблона',
+          reason: 'Устаревший шаблон привязанности. Ожидается: <∾∾C[6]Имя ∾∾C[8](Привязанность:∾∾V[ID])∾∾C[0]>',
+          line: i,
+          msg: 'Неверный шаблон привязанности.',
+          isItemIdMismatchLine: true
+        });
+      }
+    }
+
     // === ФИНАЛЬНАЯ ФИЛЬТРАЦИЯ: Удаляем все ошибки для строк с ## ===
     return errors.filter(err => {
       // Если у ошибки есть ссылка на строку
@@ -2005,6 +2034,7 @@ setTimeout(function () {
       let itemMismatchCount = 0;
       let colorTagErrorsCount = 0;
       let trailingNewlineCount = 0;
+      let templateErrorsCount = 0;
 
       // Фильтруем ошибки, которые нам интересны
       allErrors.forEach(err => {
@@ -2045,12 +2075,18 @@ setTimeout(function () {
           window.allErrorIndices.add(blockIndex);
           trailingNewlineCount++;
         }
+
+        // Обработка ошибок шаблона привязанности
+        if (err.type === 'Ошибка шаблона') {
+          window.allErrorIndices.add(blockIndex);
+          templateErrorsCount++;
+        }
       });
 
       // 5. Обновляем интерфейс (Лампочка, Кнопки, Список ошибок)
       const lamp = document.getElementById('matchLamp');
 
-      if (scriptErrorsCount > 0 || indentErrorsCount > 0 || itemMismatchCount > 0 || colorTagErrorsCount > 0 || trailingNewlineCount > 0) {
+      if (scriptErrorsCount > 0 || indentErrorsCount > 0 || itemMismatchCount > 0 || colorTagErrorsCount > 0 || trailingNewlineCount > 0 || templateErrorsCount > 0) {
         if (lamp) {
           lamp.style.background = '#f66';
           let titleMsg = '';
@@ -2059,8 +2095,9 @@ setTimeout(function () {
           if (itemMismatchCount > 0) titleMsg += `\n + Ошибок ID предметов: ${itemMismatchCount}`;
           if (colorTagErrorsCount > 0) titleMsg += `\n + Разорванных тегов: ${colorTagErrorsCount}`;
           if (trailingNewlineCount > 0) titleMsg += `\n + Лишних переносов: ${trailingNewlineCount}`;
+          if (templateErrorsCount > 0) titleMsg += `\n + Ошибок шаблонов: ${templateErrorsCount}`;
 
-          if (!lamp.title.includes('Ошибок скрипта') && !lamp.title.includes('Ошибок отступов') && !lamp.title.includes('Ошибок ID предметов') && !lamp.title.includes('Разорванных тегов') && !lamp.title.includes('Лишних переносов')) {
+          if (!lamp.title.includes('Ошибок скрипта') && !lamp.title.includes('Ошибок отступов') && !lamp.title.includes('Ошибок ID предметов') && !lamp.title.includes('Разорванных тегов') && !lamp.title.includes('Лишних переносов') && !lamp.title.includes('Ошибок шаблонов')) {
             lamp.title += titleMsg;
           }
         }
@@ -2078,15 +2115,13 @@ setTimeout(function () {
           let extraHtml = '<div class="auto-detect-errors" style="margin-top:10px; border-top:1px solid #ccc; padding-top:5px;">';
           extraHtml += '<b>Обнаруженные ошибки (Live):</b><ul style="color:#d00; margin-top:4px;">';
           allErrors.forEach(err => {
-            // Показываем только скрипты, отступы, ID предметов и теги цвета в этом списке
-            if (err.type === 'Ошибка скрипта' || err.isFixableIndent || err.isItemIdMismatchLine || err.type === 'Ошибка тега цвета' || err.type === 'Лишний перенос') {
+            if (err.type === 'Ошибка скрипта' || err.isFixableIndent || err.isItemIdMismatchLine || err.type === 'Ошибка тега цвета' || err.type === 'Лишний перенос' || err.type === 'Ошибка шаблона') {
               extraHtml += `<li><b>Строка ${err.line + 1}</b>: ${err.msg}</li>`;
             }
           });
           extraHtml += '</ul></div>';
 
-          // Если мы нашли ошибки, добавляем их в div
-          if (indentErrorsCount > 0 || scriptErrorsCount > 0 || itemMismatchCount > 0 || colorTagErrorsCount > 0 || trailingNewlineCount > 0) {
+          if (indentErrorsCount > 0 || scriptErrorsCount > 0 || itemMismatchCount > 0 || colorTagErrorsCount > 0 || trailingNewlineCount > 0 || templateErrorsCount > 0) {
             diffsDiv.insertAdjacentHTML('beforeend', extraHtml);
           }
         }
