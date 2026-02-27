@@ -468,46 +468,5 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines) {
   // END: All checks
   // =================================================================
 
-  // --- ПРОВЕРКА: Двойные слэши в Script/ScriptMore (сравнение с японским оригиналом) ---
-  for (let i = 0; i < ruLines.length; i++) {
-    const line = ruLines[i];
-    if (!line.includes('Script(') && !line.includes('ScriptMore(')) continue;
-
-    const contentMatch = line.match(/\["(.*)"\]/);
-    if (contentMatch) {
-      const content = contentMatch[1];
-
-      // Ищем именно двойной обратный слэш \\ (который в коде пишется как \\\\)
-      if (content.includes('\\\\')) {
-        // Сравниваем с японским оригиналом, если он доступен
-        let japContent = null;
-
-        // Проверяем, есть ли японский файл и соответствующая строка
-        if (optionalJpLines && optionalJpLines.length > 0 && optionalJpLines[i]) {
-          const japLine = optionalJpLines[i];
-          const japContentMatch = japLine.match(/\["(.*)"\]/);
-          if (japContentMatch) {
-            japContent = japContentMatch[1];
-          }
-        }
-
-        // Если есть японский оригинал и содержимое совпадает - не показываем ошибку
-        if (japContent !== null && content === japContent) {
-          // Содержимое совпадает с японским оригиналом - это не ошибка
-          continue;
-        }
-
-        // Если японского оригинала нет или содержимое отличается - показываем ошибку
-        errors.push({
-          label: `строка ${i + 1}`,
-          type: 'Ошибка скрипта',
-          reason: 'Обнаружены ошибочные двойные слэши. Требуется пересохранить файл для исправления.',
-          line: i,
-          msg: 'Двойные слэши в скрипте.'
-        });
-      }
-    }
-  }
-
   return errors;
 };

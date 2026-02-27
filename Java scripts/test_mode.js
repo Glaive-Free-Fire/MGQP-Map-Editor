@@ -1960,8 +1960,6 @@ setTimeout(function () {
     }
 
     // --- НОВАЯ ПРОВЕРКА: Ошибки шаблона привязанности ---
-    // ВАЖНО: lines[] содержат экспортированный текст, где ∾∾ → \\ (два слэша).
-    // Поэтому ищем \\C[6] и \\C[8] через регулярку /\\\\C\[6\]/ (4 слэша = 2 реальных).
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       if (!line.includes('ShowText([')) continue;
@@ -1971,16 +1969,17 @@ setTimeout(function () {
       if (startIdx === -1 || endIdx === -1) continue;
       const text = line.substring(startIdx + 2, endIdx);
 
-      // Есть тег имени C[6], но НЕТ тега цвета привязанности C[8]
-      const hasNameTag = /\\\\C\[6\]/.test(text);
-      const hasColorTag = /\\\\C\[8\]/.test(text);
-      const hasAffection = /Привязанность|友好度|\\\\V\[/.test(text);
+      // Ищем старый формат (Внутри тега имени НЕТ C[8], но ОБЯЗАТЕЛЬНО есть слово Привязанность/Симпатия)
+      const isOldFormat = /<[\\∾]+[CcСс]\[6\](?:(?![\\∾]+[CcСс]\[8\]|[\\∾]+[CcСс]\[0\]>).)*?(?:友好度|Уровень симпатии|Привязанность).*?[VvВв]\[\d+\][\)\）]?[\\∾]+[CcСс]\[0\]>/i.test(text);
 
-      if (hasNameTag && !hasColorTag && hasAffection) {
+      // Ищем разорванный формат (Слово Привязанность находится ПОСЛЕ закрывающего C[0]>)
+      const isSplitFormat = /<[\\∾]+[CcСс]\[6\].*?[\\∾]+[CcСс]\[0\]>[^<]*?(?:友好度|Уровень симпатии|Привязанность).*?[VvВв]\[\d+\]/i.test(text);
+
+      if (isOldFormat || isSplitFormat) {
         errors.push({
           label: `строка ${i + 1}`,
           type: 'Ошибка шаблона',
-          reason: 'Устаревший шаблон привязанности. Ожидается: <∾∾C[6]Имя ∾∾C[8](Привязанность:∾∾V[ID])∾∾C[0]>',
+          reason: 'Устаревший или разорванный шаблон привязанности. Ожидается: <∾∾C[6]Имя ∾∾C[8](Привязанность:∾∾V[ID])∾∾C[0]>',
           line: i,
           msg: 'Неверный шаблон привязанности.',
           isItemIdMismatchLine: true
@@ -2040,45 +2039,46 @@ setTimeout(function () {
       allErrors.forEach(err => {
         const fileLineIdx = err.line;
 
-        // --- ИСПРАВЛЕНИЕ ФАНТОМНЫХ ОШИБОК ---
-        const blockIndex = window.lastExportLineToBlockIndex ? window.lastExportLineToBlockIndex.get(fileLineIdx) : undefined;
+        // Определяем блок, к которому относится ошибка
+        const blockIndex = (window.lastExportLineToBlockIndex && fileLineIdx !== undefined) ? window.lastExportLineToBlockIndex.get(fileLineIdx) : undefined;
 
-        // Если блок не найден или удален, ошибку игнорируем
-        if (blockIndex === undefined || (window.textBlocks && window.textBlocks[blockIndex] && window.textBlocks[blockIndex].isDeleted)) return;
+        // Проверяем, не удален ли блок (если он найден)
+        const isDeleted = (blockIndex !== undefined && window.textBlocks && window.textBlocks[blockIndex] && window.textBlocks[blockIndex].isDeleted);
+        if (isDeleted) return;
 
-        // Обработка ошибок скрипта (Двойные слэши)
+        // Обработка ошибок скрипта
         if (err.type === 'Ошибка скрипта') {
-          window.allErrorIndices.add(blockIndex);
+          if (blockIndex !== undefined) window.allErrorIndices.add(blockIndex);
           scriptErrorsCount++;
         }
 
         // Обработка ошибок отступов
         if (err.isFixableIndent) {
-          window.allErrorIndices.add(blockIndex);
+          if (blockIndex !== undefined) window.allErrorIndices.add(blockIndex);
           indentErrorsCount++;
         }
 
         // Обработка ошибок ID предметов
         if (err.isItemIdMismatchLine) {
-          window.allErrorIndices.add(blockIndex);
+          if (blockIndex !== undefined) window.allErrorIndices.add(blockIndex);
           itemMismatchCount++;
         }
 
         // Обработка ошибок разорванных тегов цвета
         if (err.type === 'Ошибка тега цвета') {
-          window.allErrorIndices.add(blockIndex);
+          if (blockIndex !== undefined) window.allErrorIndices.add(blockIndex);
           colorTagErrorsCount++;
         }
 
         // Обработка лишних переносов
         if (err.type === 'Лишний перенос') {
-          window.allErrorIndices.add(blockIndex);
+          if (blockIndex !== undefined) window.allErrorIndices.add(blockIndex);
           trailingNewlineCount++;
         }
 
         // Обработка ошибок шаблона привязанности
         if (err.type === 'Ошибка шаблона') {
-          window.allErrorIndices.add(blockIndex);
+          if (blockIndex !== undefined) window.allErrorIndices.add(blockIndex);
           templateErrorsCount++;
         }
       });
@@ -2103,9 +2103,9 @@ setTimeout(function () {
         }
       }
 
-      // Обновляем список ошибок под предпросмотром (previewDiffs)
+      // Обновляем список ошибок под предпросмотром (previewDiffs или matchDiffs)
       // Чтобы сообщение об ошибке исчезало сразу после исправления
-      const diffsDiv = document.getElementById('previewDiffs');
+      const diffsDiv = document.getElementById('previewDiffs') || document.getElementById('matchDiffs');
       if (diffsDiv) {
         // Удаляем старые списки авто-детекта, чтобы не дублировать
         const oldLists = diffsDiv.querySelectorAll('.auto-detect-errors');
@@ -2116,7 +2116,9 @@ setTimeout(function () {
           extraHtml += '<b>Обнаруженные ошибки (Live):</b><ul style="color:#d00; margin-top:4px;">';
           allErrors.forEach(err => {
             if (err.type === 'Ошибка скрипта' || err.isFixableIndent || err.isItemIdMismatchLine || err.type === 'Ошибка тега цвета' || err.type === 'Лишний перенос' || err.type === 'Ошибка шаблона') {
-              extraHtml += `<li><b>Строка ${err.line + 1}</b>: ${err.msg}</li>`;
+              // Если это ошибка скрипта, проверяем на пустой msg
+              const displayMsg = err.msg || err.reason || 'Неизвестная ошибка';
+              extraHtml += `<li><b>Строка ${err.line + 1}</b>: ${displayMsg}</li>`;
             }
           });
           extraHtml += '</ul></div>';
