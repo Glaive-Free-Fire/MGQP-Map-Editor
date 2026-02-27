@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8">
-  <title>MGQP Map Editor v1.5.11</title>
+  <title>MGQP Map Editor v1.5.12</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="Java scripts/main_script.js"></script>
   <script src="Java scripts/restore-mode.js"></script>
@@ -196,6 +196,8 @@
       Script</button>
     <button id="fixIndentBtn" class="control-btn" style="background:#fde; display:none;">Исправить отступы</button>
     <button id="fixNameTagsBtn" class="control-btn" style="background:#cfc; display:none;">Исправить теги имён</button>
+    <button id="fixColorTagsBtn" class="control-btn" style="background:#ccf; display:none;">Исправить теги
+      цвета</button>
     <button id="fixAffectionBtn" class="control-btn" style="background:#fcc; display:none;">Исправить Шаблоны
       Строк</button>
     <button id="clearOrphanedBtn" class="control-btn" style="background:#fdd; display:none;">Очистить строки</button>
@@ -2560,8 +2562,8 @@
     // Чистая функция: ТОЛЬКО разделяет строку на две части
     function splitDialogueBlock(blockIndex, textBlocks) {
       const block = textBlocks[blockIndex];
-      // Проверяем валидность блока
-      if (!block || block.type !== 'ShowText' || !block.text) return false;
+      // Проверяем валидность блока (ИГНОРИРУЕМ УДАЛЕННЫЕ)
+      if (!block || block.type !== 'ShowText' || !block.text || block.isDeleted) return false;
 
       const info = window.getGameTextInfo(block.text);
       const visibleText = info.rawGameText;
@@ -2575,7 +2577,7 @@
       let namePart = info.fullPrefix;
       let textPart = info.rawGameText;
 
-      // --- НОВАЯ ЗАЩИТА ТЕГОВ ---
+      // --- ЗАЩИТА ТЕГОВ ---
       // Заменяем пробелы ВНУТРИ тегов цвета на спецсимвол (\x01), чтобы split(' ') их не разорвал
       const safeTextPart = textPart.replace(/(?:∾+|\\+)C\[\d+\].*?(?:∾+|\\+)C\[0\]/g, (match) => {
         return match.replace(/ /g, '\x01');
@@ -2602,11 +2604,24 @@
       }
 
       // Собираем строки и восстанавливаем пробелы
-      const acc = firstLineWords.join(' ').replace(/\x01/g, ' ');
-      const rest = words.slice(firstLineWords.length).join(' ').replace(/\x01/g, ' ');
+      let acc = firstLineWords.join(' ').replace(/\x01/g, ' ');
+      let rest = words.slice(firstLineWords.length).join(' ').replace(/\x01/g, ' ');
 
       // Если хвост пустой, выходим
       if (rest.trim() === '') return false;
+
+      // --- НОВАЯ ЛОГИКА: Авто-закрытие экранированных кавычек при разрыве ---
+      // Считаем количество ∾" в первой части. Если нечетное — кавычка осталась незакрытой.
+      if ((acc.match(/∾"/g) || []).length % 2 !== 0) {
+        acc = acc.trimEnd() + '∾"'; // Убираем лишний пробел и закрываем кавычку
+        rest = '∾"' + rest.trimStart(); // Открываем кавычку и приклеиваем к следующему слову
+      }
+
+      // То же самое для ∿" (верхняя кнопка "\...\"")
+      if ((acc.match(/∿"/g) || []).length % 2 !== 0) {
+        acc = acc.trimEnd() + '∿"';
+        rest = '∿"' + rest.trimStart();
+      }
 
       // 1. Обрезаем текущий блок
       textBlocks[blockIndex].text = namePart + acc.trimEnd();
