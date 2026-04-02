@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8">
-  <title>MGQP Map Editor v1.5.12</title>
+  <title>MGQP Map Editor v1.5.15</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="Java scripts/main_script.js"></script>
   <script src="Java scripts/restore-mode.js"></script>
@@ -150,10 +150,113 @@
       font-weight: normal;
       box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
     }
+
+    #restoreDialogOverlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.5);
+      z-index: 2000;
+      display: none;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #restoreDialog {
+      background: white;
+      padding: 25px;
+      border-radius: 12px;
+      width: 450px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+      font-weight: normal;
+      color: #333;
+    }
+
+    .modal-header {
+      font-size: 18px;
+      font-weight: bold;
+      margin-bottom: 15px;
+      color: #333;
+    }
+
+    .modal-row {
+      margin-bottom: 20px;
+    }
+
+    .modal-label {
+      font-size: 14px;
+      margin-bottom: 8px;
+      display: block;
+      color: #666;
+    }
+
+    #restoreSlider {
+      width: 100%;
+      cursor: pointer;
+    }
+
+    #restoreSummaryText {
+      font-weight: bold;
+      color: #d32f2f;
+      margin-top: 10px;
+      min-height: 20px;
+    }
+
+    .modal-buttons {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      border-top: 1px solid #eee;
+      padding-top: 15px;
+    }
+
+    .modal-btn {
+      padding: 8px 12px;
+      border-radius: 5px;
+      cursor: pointer;
+      border: none;
+      font-weight: bold;
+      font-size: 14px;
+    }
+
+    .btn-ok {
+      background: #4caf50;
+      color: white;
+    }
+
+    .btn-ok:hover {
+      background: #43a047;
+    }
+
+    .btn-cancel {
+      background: #eee;
+      color: #333;
+    }
+
+    .btn-cancel:hover {
+      background: #e0e0e0;
+    }
   </style>
 </head>
 
 <body>
+  <div id="restoreDialogOverlay">
+    <div id="restoreDialog">
+      <div class="modal-header">Восстановление структуры</div>
+      <div class="modal-row">
+        <label class="modal-label" id="restoreDialogDesc">Найдена первая проблема в CommonEvent 1.</label>
+        <label class="modal-label">Выберите количество событий для восстановления (включая это и далее):</label>
+        <input type="range" id="restoreSlider" min="1" max="1" value="1">
+        <div id="restoreSummaryText">Восстановить: CE 1-1 (1 блок)</div>
+      </div>
+      <div class="modal-buttons">
+        <button id="cancelRestoreBtn" class="modal-btn btn-cancel">Отмена</button>
+        <button id="confirmRestoreBtn" class="modal-btn btn-ok">Исправить структуру</button>
+      </div>
+    </div>
+  </div>
   <div class="control-panel">
     <button id="wrapModeBtn" class="control-btn">Режим переноса: Остаточный</button>
     <button id="splitAllBtn" class="control-btn">Разделить Строки</button>
@@ -173,6 +276,11 @@
       <label id="hideLabelLabel" style="font-size:13px; cursor:pointer; margin-bottom: 2px;"
         title="Скрывает блоки Label и JumpToLabel для экономии места.">
         <input type="checkbox" id="hideLabelCheckbox" checked> Скрыть Label
+      </label>
+
+      <label id="hideStaLabel" style="font-size:13px; cursor:pointer; margin-bottom: 2px;"
+        title="Скрывает вывод атрибутов (ShowTextAttributes) над японским текстом.">
+        <input type="checkbox" id="hideStaCheckbox" checked> Скрыть STA
       </label>
 
       <label id="keepOriginalNameLabel" style="font-size:13px; cursor:pointer; margin-bottom: 2px;"
@@ -1138,7 +1246,7 @@
         if (currentBlock.type === 'ShowText' && affinityMatch) {
           const name = affinityMatch[1];
           const affinityType = affinityMatch[2];
-          const variable = affinityMatch[3].replace(/\\/g, '∾∾');
+          const variable = affinityMatch[3].replace(/\\/g, '∾');
           const newText = `∾\n<∾∾C[6]${name}∾∾C[0]>(${affinityType === '好感度' ? 'Уровень симпатии' : 'Привязанность'}: ${variable})`;
           textBlocks.push({ idx: currentBlock.originalIdx, text: newText, type: 'ShowText', generated: hasPlus, manualPlus: hasPlus && currentBlock.originalIdx !== undefined, commonEventId: currentBlock.commonEventId, hasIgnoreMarker: currentBlock.hasIgnoreMarker });
         } else if (currentBlock.type === 'ShowText' && isName) {
@@ -1171,7 +1279,6 @@
 
           const finalText = combinedText
             .replace(/^"(.*)"$/, '$1')
-            .replace(/\\i([iaw]?)\[/gi, '\\\\i$1[')
             .replace(/\\n/g, '\n')
             .replace(/\\/g, '∾');
           textBlocks.push({
@@ -1185,7 +1292,7 @@
             linesToSkip: linesToSkip
           });
         } else {
-          const text = currentBlock.text.replace(/^"(.*)"$/, '$1').replace(/\\i([iaw]?)\[/gi, '\\\\i$1[').replace(/\\n/g, '\n').replace(/\\/g, '∾');
+          const text = currentBlock.text.replace(/^"(.*)"$/, '$1').replace(/\\n/g, '\n').replace(/\\/g, '∾');
           const newBlock = { idx: currentBlock.originalIdx, text: (currentBlock.type === 'ShowChoices') ? currentBlock.text : text, type: currentBlock.type, generated: hasPlus, manualPlus: hasPlus && currentBlock.originalIdx !== undefined, choices: currentBlock.choices, defaultChoice: currentBlock.defaultChoice, choiceIndex: currentBlock.choiceIndex, commonEventId: currentBlock.commonEventId, hasIgnoreMarker: currentBlock.hasIgnoreMarker };
 
           if (newBlock.generated && textBlocks.length > 0) {
@@ -1264,12 +1371,22 @@
       const affinityRegex = /^【(.+?)】（(友好度|好感度)：(.*)）$/;
       const nameAndDialogueRegex = /^(【.+?】)(.*)$/;
 
+      let lastShowTextAttr = '';
+      let isNewAttrDefined = false;
       for (let i = 0; i < tempBlocks.length; i++) {
         const currentBlock = tempBlocks[i];
+        if (currentBlock.type === 'ShowTextAttributes') {
+          const attrMatch = currentBlock.text.match(/^"(.*?)"/);
+          if (attrMatch) lastShowTextAttr = attrMatch[1];
+          isNewAttrDefined = true;
+          continue; // Переходим к следующему блоку, не сбрасывая флаг
+        }
+
         if (currentBlock.type !== 'ShowText') {
           // Применяем ту же очистку, что и в основном парсере (extractTexts)
           const cleanText = currentBlock.text.replace(/^"(.*)"$/, '$1').replace(/\\n/g, '\n').replace(/\\/g, '∾');
           japBlocks.push({ type: 'no_name', text: cleanText, blockType: currentBlock.type, originalIdx: currentBlock.originalIdx, choices: currentBlock.choices, choiceIndex: currentBlock.choiceIndex, commonEventId: currentBlock.commonEventId });
+          isNewAttrDefined = false;
           continue;
         }
 
@@ -1298,31 +1415,37 @@
             text: `【${name}】${templateText}\n${dialoguePart}`, // Новый объединенный текст
             blockType: 'ShowText',
             commonEventId: currentBlock.commonEventId,
-            originalIdx: currentBlock.originalIdx
+            originalIdx: currentBlock.originalIdx,
+            showTextAttr: lastShowTextAttr,
+            wasNewAttr: isNewAttrDefined
           });
+          isNewAttrDefined = false;
           // === КОНЕЦ ИСПРАВЛЕНИЯ ===
         } else if (nameAndDialogueMatch) {
           const namePart = nameAndDialogueMatch[1];
           const dialoguePart = nameAndDialogueMatch[2];
           if (dialoguePart.trim()) {
-            japBlocks.push({ type: 'name', text: `${namePart}\n${dialoguePart}`, blockType: 'ShowText', commonEventId: currentBlock.commonEventId, originalIdx: currentBlock.originalIdx });
+            japBlocks.push({ type: 'name', text: `${namePart}\n${dialoguePart}`, blockType: 'ShowText', commonEventId: currentBlock.commonEventId, originalIdx: currentBlock.originalIdx, showTextAttr: lastShowTextAttr, wasNewAttr: isNewAttrDefined });
           } else {
             if (i + 1 < tempBlocks.length && tempBlocks[i + 1].type === 'ShowText' && !nameRegex.test(tempBlocks[i + 1].text)) {
-              japBlocks.push({ type: 'name', text: `${rawText}\n${tempBlocks[i + 1].text}`, blockType: 'ShowText', commonEventId: currentBlock.commonEventId, originalIdx: currentBlock.originalIdx });
+              japBlocks.push({ type: 'name', text: `${rawText}\n${tempBlocks[i + 1].text}`, blockType: 'ShowText', commonEventId: currentBlock.commonEventId, originalIdx: currentBlock.originalIdx, showTextAttr: lastShowTextAttr, wasNewAttr: isNewAttrDefined });
               i++;
             } else {
-              japBlocks.push({ type: 'name', text: rawText, blockType: 'ShowText', commonEventId: currentBlock.commonEventId, originalIdx: currentBlock.originalIdx });
+              japBlocks.push({ type: 'name', text: rawText, blockType: 'ShowText', commonEventId: currentBlock.commonEventId, originalIdx: currentBlock.originalIdx, showTextAttr: lastShowTextAttr, wasNewAttr: isNewAttrDefined });
             }
           }
+          isNewAttrDefined = false;
         } else if (nameRegex.test(rawText)) {
           if (i + 1 < tempBlocks.length && tempBlocks[i + 1].type === 'ShowText' && !nameRegex.test(tempBlocks[i + 1].text)) {
-            japBlocks.push({ type: 'name', text: `${rawText}\n${tempBlocks[i + 1].text}`, blockType: 'ShowText', commonEventId: currentBlock.commonEventId, originalIdx: currentBlock.originalIdx });
+            japBlocks.push({ type: 'name', text: `${rawText}\n${tempBlocks[i + 1].text}`, blockType: 'ShowText', commonEventId: currentBlock.commonEventId, originalIdx: currentBlock.originalIdx, showTextAttr: lastShowTextAttr, wasNewAttr: isNewAttrDefined });
             i++;
           } else {
-            japBlocks.push({ type: 'name', text: rawText, blockType: 'ShowText', commonEventId: currentBlock.commonEventId, originalIdx: currentBlock.originalIdx });
+            japBlocks.push({ type: 'name', text: rawText, blockType: 'ShowText', commonEventId: currentBlock.commonEventId, originalIdx: currentBlock.originalIdx, showTextAttr: lastShowTextAttr, wasNewAttr: isNewAttrDefined });
           }
+          isNewAttrDefined = false;
         } else {
-          japBlocks.push({ type: 'no_name', text: rawText, blockType: 'ShowText', commonEventId: currentBlock.commonEventId, originalIdx: currentBlock.originalIdx });
+          japBlocks.push({ type: 'no_name', text: rawText, blockType: 'ShowText', commonEventId: currentBlock.commonEventId, originalIdx: currentBlock.originalIdx, showTextAttr: lastShowTextAttr, wasNewAttr: isNewAttrDefined });
+          isNewAttrDefined = false;
         }
       }
 
@@ -1419,8 +1542,14 @@
       window.textBlocks = textBlocks = [];
       const nameRegex = /^【.*?】(?:（(?:好感度|友好度)：.*）)?$/;
 
+      let lastShowTextAttr = '';
       for (let i = 0; i < tempBlocks.length; i++) {
         const currentBlock = tempBlocks[i];
+
+        if (currentBlock.type === 'ShowTextAttributes') {
+          const attrMatch = currentBlock.text.match(/^"(.*?)"/);
+          if (attrMatch) lastShowTextAttr = attrMatch[1];
+        }
 
         if (currentBlock.type === 'ShowText' && nameRegex.test(currentBlock.text)) {
           // Это блок с именем. Собираем все последующие строки диалога.
@@ -1443,7 +1572,7 @@
               text: combinedText,
               type: 'ShowText',
               generated: false,
-              japaneseLink: { type: 'name', text: originalJapText },
+              japaneseLink: { type: 'name', text: originalJapText, showTextAttr: lastShowTextAttr },
               linesToSkip: 0,
               dialogueParts: [dialoguePart]
             });
@@ -1469,7 +1598,7 @@
             text: combinedText,
             type: 'ShowText',
             generated: false,
-            japaneseLink: { type: 'name', text: originalJapText },
+            japaneseLink: { type: 'name', text: originalJapText, showTextAttr: lastShowTextAttr },
             // Сохраняем, сколько строк мы объединили, чтобы пропустить их при сохранении
             linesToSkip: dialogueParts.length,
             // Сохраняем части диалога для правильного сохранения
@@ -1485,7 +1614,7 @@
             text: cleanText,
             type: 'ShowText',
             generated: false,
-            japaneseLink: { type: 'no_name', text: cleanText }
+            japaneseLink: { type: 'no_name', text: cleanText, showTextAttr: lastShowTextAttr }
           });
         } else if (currentBlock.type !== 'Structural') {
           // Обрабатываем другие типы блоков с очисткой текста
@@ -1576,7 +1705,7 @@
           }
           // Теперь добавляем сам сопоставленный блок
           const rusBlock = textBlocks[matchedRusIndex];
-          rusBlock.japaneseLink = { type: japBlock.type, text: japBlock.text };
+          rusBlock.japaneseLink = { type: japBlock.type, text: japBlock.text, showTextAttr: japBlock.showTextAttr };
           finalTextBlocks.push(rusBlock);
           rusBlocksUsed.add(matchedRusIndex);
           lastMatchedRusIndex = matchedRusIndex;
@@ -1592,7 +1721,7 @@
           finalTextBlocks.push({
             idx: undefined, japIdx: japBlock.originalIdx, text: placeholderText,
             type: japBlock.blockType || 'ShowText', generated: true,
-            commonEventId: japBlock.commonEventId, japaneseLink: { type: japBlock.type, text: japBlock.text }
+            commonEventId: japBlock.commonEventId, japaneseLink: { type: japBlock.type, text: japBlock.text, showTextAttr: japBlock.showTextAttr }
           });
         }
       });
@@ -1726,6 +1855,40 @@
           if (textBlocks.length > 0 && textBlocks[0].idx === undefined) {
             // Преобразуем формат ∾\n<∾∾C[6]Имя∾∾C[0]> обратно в 【Имя】 для отображения
             japaneseText = japaneseText.replace(/∾\n<∾∾C\[6\](.*?)∾∾C\[0\]>/g, '【$1】\n');
+          }
+
+          const hideSta = document.getElementById('hideStaCheckbox').checked;
+          if (!hideSta && typeof block.japaneseLink.showTextAttr === 'string') {
+            const hasNameInText = /^【.*?】(?:（.*?）)?/.test(japaneseText);
+            const isAttrStringEmpty = block.japaneseLink.showTextAttr === "";
+
+            // Ищем, был ли атрибут задан прямо перед этой строкой (без других ShowText между ними)
+            let wasNewAttr = false;
+            for (let j = i - 1; j >= 0; j--) {
+              const prev = textBlocks[j];
+              if (prev.isDeleted) continue;
+              if (prev.type === 'ShowTextAttributes') {
+                wasNewAttr = true;
+                break;
+              }
+              if (prev.type === 'ShowText') {
+                break; // перед нами другой ShowText, значит это продолжение
+              }
+            }
+
+            // Если есть непустой атрибут, либо если атрибут пустой, но и имени нет, 
+            // И при этом атрибут был явно определен ПРЯМО перед этим блоком (был найден вверху)
+            if (!isAttrStringEmpty || (!hasNameInText && wasNewAttr)) {
+              const attrDisplay = block.japaneseLink.showTextAttr || 'Описание';
+              const attrText = `[${attrDisplay}]`;
+              if (hasNameInText) {
+                // Если есть имя, приклеиваем атрибут прямо к нему
+                japaneseText = japaneseText.replace(/^(【.*?】(?:（.*?）)?)/, `$1${attrText}`);
+              } else {
+                // Если имени нет, выводим первой строкой
+                japaneseText = `${attrText}\n${japaneseText}`;
+              }
+            }
           }
 
           const pre = document.createElement('pre');
@@ -2818,6 +2981,10 @@
       renderTextBlocks();
     });
 
+    document.getElementById('hideStaCheckbox').addEventListener('change', function () {
+      renderTextBlocks();
+    });
+
     // === ОПТИМИЗИРОВАННЫЙ ОБРАБОТЧИК для кнопки "Разделить Строки" ===
     document.getElementById('splitAllBtn').onclick = function () {
       let hasSplitted = false;
@@ -3076,31 +3243,85 @@
 
     // === Обработчик кнопки восстановления структуры ===
     document.getElementById('restoreStructBtn').onclick = function () {
-      // Новый, безопасный обработчик: заменяем только проблемные CommonEvent
       if (!window.fullRusLines || !window.fullJapLines) {
         alert('Сначала загрузите оба файла: русский и японский.');
         return;
       }
-      if (typeof window.fixOnlyMismatchedEvents === 'function') {
-        const fixedLines = window.fixOnlyMismatchedEvents(window.fullRusLines, window.fullJapLines);
-        if (fixedLines) {
-          window.fullRusLines = fixedLines;
-          window.restoreModeEnabled = true;
-          const syncBtn = document.getElementById('syncEditorBtn');
-          if (syncBtn) syncBtn.style.display = '';
-          if (typeof window.updatePreviewArea === 'function') {
-            window.updatePreviewArea();
+
+      // 1. Собираем информацию о всех CommonEvent
+      const allEvIds = Array.from(new Set(
+        window.textBlocks
+          .map(b => b.commonEventId)
+          .filter(id => id !== undefined && id !== -1)
+      )).sort((a, b) => a - b);
+
+      if (allEvIds.length === 0) {
+        alert('В файле не обнаружены CommonEvent.');
+        return;
+      }
+
+      // 2. Ищем первый проблемный CommonEvent
+      let firstProblemId = allEvIds[0];
+      if (window.allErrorIndices && window.allErrorIndices.size > 0) {
+        let minId = Infinity;
+        window.allErrorIndices.forEach(idx => {
+          const block = window.textBlocks[idx];
+          if (block && block.commonEventId !== undefined && block.commonEventId !== -1) {
+            if (block.commonEventId < minId) minId = block.commonEventId;
+          }
+        });
+        if (minId !== Infinity) firstProblemId = minId;
+      }
+
+      // 3. Настраиваем UI модального окна
+      const overlay = document.getElementById('restoreDialogOverlay');
+      const slider = document.getElementById('restoreSlider');
+      const desc = document.getElementById('restoreDialogDesc');
+      const summary = document.getElementById('restoreSummaryText');
+      const cancelBtn = document.getElementById('cancelRestoreBtn');
+      const confirmBtn = document.getElementById('confirmRestoreBtn');
+
+      const startIndex = allEvIds.indexOf(firstProblemId);
+      const remainingCount = allEvIds.length - startIndex;
+
+      desc.textContent = `Первая проблема обнаружена в CommonEvent ${firstProblemId}.`;
+      slider.min = 1;
+      slider.max = remainingCount;
+      slider.value = Math.min(1, remainingCount);
+
+      const updateSummary = () => {
+        const count = parseInt(slider.value, 10);
+        const endId = allEvIds[startIndex + count - 1];
+        summary.textContent = `Будет исправлено: CE ${firstProblemId} - ${endId} (Кол-во: ${count})`;
+      };
+
+      slider.oninput = updateSummary;
+      updateSummary();
+
+      overlay.style.display = 'flex';
+
+      cancelBtn.onclick = () => { overlay.style.display = 'none'; };
+      confirmBtn.onclick = () => {
+        overlay.style.display = 'none';
+        const count = parseInt(slider.value, 10);
+        const manualIds = allEvIds.slice(startIndex, startIndex + count);
+
+        if (typeof window.fixOnlyMismatchedEvents === 'function') {
+          const fixedLines = window.fixOnlyMismatchedEvents(window.fullRusLines, window.fullJapLines, manualIds);
+          if (fixedLines) {
+            window.fullRusLines = fixedLines;
+            window.restoreModeEnabled = true;
+            const syncBtn = document.getElementById('syncEditorBtn');
+            if (syncBtn) syncBtn.style.display = '';
+            if (typeof window.updatePreviewArea === 'function') {
+              window.updatePreviewArea();
+            }
           }
         }
-      } else if (typeof window.safeRestoreStructure === 'function') {
-        window.safeRestoreStructure();
-      } else if (typeof window.immediateRestoreStructure === 'function') {
-        window.immediateRestoreStructure();
-      } else {
-        window.restoreModeEnabled = true;
-        alert("Жёсткий режим восстановления структуры активирован.\nИзменения CommonEvent будут применены только при сохранении!");
-      }
+      };
     };
+
+
 
     // === Обработчик кнопки исправления ошибок Script ===
     document.getElementById('fixScriptBtn').onclick = function () {
