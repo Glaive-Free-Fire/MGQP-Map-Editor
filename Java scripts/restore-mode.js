@@ -129,18 +129,72 @@
    * @param {string[]} jpLines - Массив строк японского файла.
    * @returns {string[] | null} - Массив строк исправленного файла или null в случае отсутствия ошибок.
    */
-  global.fixOnlyMismatchedEvents = function (ruLines, jpLines) {
+  global.fixOnlyMismatchedEvents = function (ruLines, jpLines, manualRangeIds = null) {
     const ruContent = ruLines.join('\n');
     const jpContent = jpLines.join('\n');
     const checkResult = window.checkMapStructureMatch(jpContent, ruContent);
 
     const mismatchedEventIds = new Set();
+    
+    // 1. Добавляем ID из ручного диапазона (если есть)
+    if (manualRangeIds && Array.isArray(manualRangeIds)) {
+      manualRangeIds.forEach(id => mismatchedEventIds.add(parseInt(id, 10)));
+    }
+
+    // 2. Авто-добавление на основе анализа структуры
     if (checkResult.grouped) {
       checkResult.grouped.forEach(ev => {
         if (ev.pages && ev.pages.some(p => !p.ok)) {
           mismatchedEventIds.add(parseInt(ev.eid, 10));
         }
       });
+    }
+
+    // --- ПАТЧ: Принудительно добавляем события с логическими ошибками (Имя без STA и Рассинхрон) ---
+    if (window.textBlocks) {
+      for (let i = 0; i < window.textBlocks.length; i++) {
+        const block = window.textBlocks[i];
+        if (block.isDeleted || block.type !== 'ShowText' || block.hasIgnoreMarker) continue;
+
+        // 1. Проверка Имя без STA
+        let hasNameError = false;
+        if (window.isNameBlock(block.text)) {
+          let precedingStructuralBlock = null;
+          for (let j = i - 1; j >= 0; j--) {
+            const prev = window.textBlocks[j];
+            if (prev.isDeleted) continue;
+            if (prev.type !== 'ShowText' && prev.type !== undefined) {
+              precedingStructuralBlock = prev;
+              break;
+            }
+            if (prev.idx !== undefined && !window.isNameBlock(prev.text)) {
+              precedingStructuralBlock = prev;
+              break;
+            }
+          }
+          if (!precedingStructuralBlock || precedingStructuralBlock.type !== 'ShowTextAttributes') {
+            hasNameError = true;
+          }
+        }
+
+        // 2. Проверка Рассинхрон имен RU vs JP
+        let hasDesyncError = false;
+        if (block.japaneseLink) {
+          const ruHasName = window.isNameBlock(block.text) || /<[\\∾]{2}C\[6\]/.test(block.text);
+          const jpHasName = block.japaneseLink.type === 'name' || /^【.*?】/.test(block.japaneseLink.text);
+          if (ruHasName !== jpHasName) {
+            if (!block.manualPlus || ruHasName) {
+              hasDesyncError = true;
+            }
+          }
+        }
+
+        if (hasNameError || hasDesyncError) {
+          if (block.commonEventId !== undefined && block.commonEventId !== -1) {
+            mismatchedEventIds.add(parseInt(block.commonEventId, 10));
+          }
+        }
+      }
     }
 
     if (mismatchedEventIds.size === 0) {
@@ -970,6 +1024,45 @@
   // === Функция для проверки наличия ошибок структуры CommonEvent ===
   global.hasStructureErrors = function () {
     if (!window.fullJapLines || window.fullJapLines.length === 0) return false;
+    
+    // --- ПАТЧ: Проверка на логические ошибки структуры (Имя без STA) ---
+    if (window.textBlocks) {
+      for (let i = 0; i < window.textBlocks.length; i++) {
+        const block = window.textBlocks[i];
+        if (block.isDeleted || block.type !== 'ShowText' || !window.isNameBlock(block.text) || block.hasIgnoreMarker) continue;
+        
+        let precedingStructuralBlock = null;
+        for (let j = i - 1; j >= 0; j--) {
+          const prev = window.textBlocks[j];
+          if (prev.isDeleted) continue;
+          if (prev.type !== 'ShowText' && prev.type !== undefined) {
+            precedingStructuralBlock = prev;
+            break;
+          }
+          if (prev.idx !== undefined && !window.isNameBlock(prev.text)) {
+            precedingStructuralBlock = prev;
+            break;
+          }
+        }
+        if (!precedingStructuralBlock || precedingStructuralBlock.type !== 'ShowTextAttributes') {
+          return true; // Логическое нарушение структуры: Имя без STA
+        }
+
+        // --- НОВАЯ ПРОВЕРКА: Рассинхрон имен RU vs JP ---
+        if (block.japaneseLink) {
+          const ruHasName = window.isNameBlock(block.text) || /<[\\∾]{2}C\[6\]/.test(block.text);
+          const jpHasName = block.japaneseLink.type === 'name' || /^【.*?】/.test(block.japaneseLink.text);
+
+          if (ruHasName !== jpHasName) {
+            // Игнорируем логичные продолжения диалогов
+            if (!block.manualPlus || ruHasName) {
+              return true; // Рассинхрон имен обнаружен
+            }
+          }
+        }
+      }
+    }
+
     const jpContent = window.fullJapLines.join('\n');
     const ruContent = getActualRuContent();
     const result = window.checkMapStructureMatch(jpContent, ruContent);

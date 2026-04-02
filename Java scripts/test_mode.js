@@ -2027,6 +2027,57 @@ setTimeout(function () {
       const jpLines = (window.fullJapLines && window.fullJapLines.length > 0) ? window.fullJapLines : null;
       const allErrors = window.checkForLineLevelErrors(currentLines, jpLines);
 
+      // === ДОБАВЛЕНО: ПРОВЕРКА НА РАССИНХРОН ИМЕН ===
+      if (window.textBlocks) {
+        window.textBlocks.forEach((block, i) => {
+          if (block.isDeleted || block.type !== 'ShowText' || !block.japaneseLink || block.hasIgnoreMarker) return;
+
+          // Проверяем наличие имени
+          const ruHasName = window.isNameBlock(block.text) || /<[\\∾]{2}C\[6\]/.test(block.text);
+          const jpHasName = block.japaneseLink.type === 'name' || /^【.*?】/.test(block.japaneseLink.text);
+
+          if (ruHasName !== jpHasName) {
+            // Игнорируем переносы строк (продолжения диалогов), если у них логично нет имени
+            if (block.manualPlus && !ruHasName) return;
+
+            window.allErrorIndices.add(i); // Подсвечиваем блок красным
+            
+            allErrors.push({
+              line: block.idx !== undefined ? block.idx : -1,
+              type: 'Рассинхронизация',
+              msg: ruHasName
+                ? 'Рассинхронизация: В RU строке есть имя, а в JP оригинале нет.'
+                : 'Рассинхронизация: В JP оригинале есть имя, а в RU строке нет.',
+              isDesyncError: true
+            });
+          }
+        });
+      }
+      // === КОНЕЦ ДОБАВЛЕННОГО КОДА ===
+
+      // === ПРОВЕРКА: Незакрытые кавычки в тексте ShowText ===
+      if (window.textBlocks) {
+        window.textBlocks.forEach((block, i) => {
+          if (block.isDeleted || block.type !== 'ShowText' || block.hasIgnoreMarker) return;
+          const text = block.text || '';
+          // В внутреннем формате редактора кавычки в диалоге выглядят как ∾" (экранированные).
+          // Считаем ВСЕ символы " в тексте — каждый ∾" содержит один ",
+          // поэтому простой подсчёт всех " даёт правильный результат.
+          // Если итоговое количество нечётное — кавычка открыта, но не закрыта в этом блоке.
+          const quoteCount = (text.match(/"/g) || []).length;
+          if (quoteCount % 2 !== 0) {
+            window.allErrorIndices.add(i);
+            allErrors.push({
+              line: block.idx !== undefined ? block.idx : -1,
+              type: 'Незакрытая кавычка',
+              msg: 'Незакрытая кавычка: нечётное количество " в строке. Кавычка открыта, но не закрыта (или наоборот).',
+              isUnclosedQuote: true
+            });
+          }
+        });
+      }
+      // === КОНЕЦ ПРОВЕРКИ КАВЫЧЕК ===
+
       // 4. Обновляем список красных строк (allErrorIndices)
       let scriptErrorsCount = 0;
       let indentErrorsCount = 0;
@@ -2034,6 +2085,8 @@ setTimeout(function () {
       let colorTagErrorsCount = 0;
       let trailingNewlineCount = 0;
       let templateErrorsCount = 0;
+      let desyncErrorsCount = 0;
+      let unclosedQuoteCount = 0;
 
       // Фильтруем ошибки, которые нам интересны
       allErrors.forEach(err => {
@@ -2081,12 +2134,24 @@ setTimeout(function () {
           if (blockIndex !== undefined) window.allErrorIndices.add(blockIndex);
           templateErrorsCount++;
         }
+
+        // Обработка ошибок рассинхронизации имен
+        if (err.type === 'Рассинхронизация') {
+          if (blockIndex !== undefined) window.allErrorIndices.add(blockIndex);
+          desyncErrorsCount++;
+        }
+
+        // Обработка незакрытых кавычек
+        if (err.type === 'Незакрытая кавычка') {
+          if (blockIndex !== undefined) window.allErrorIndices.add(blockIndex);
+          unclosedQuoteCount++;
+        }
       });
 
       // 5. Обновляем интерфейс (Лампочка, Кнопки, Список ошибок)
       const lamp = document.getElementById('matchLamp');
 
-      if (scriptErrorsCount > 0 || indentErrorsCount > 0 || itemMismatchCount > 0 || colorTagErrorsCount > 0 || trailingNewlineCount > 0 || templateErrorsCount > 0) {
+      if (scriptErrorsCount > 0 || indentErrorsCount > 0 || itemMismatchCount > 0 || colorTagErrorsCount > 0 || trailingNewlineCount > 0 || templateErrorsCount > 0 || desyncErrorsCount > 0 || unclosedQuoteCount > 0) {
         if (lamp) {
           lamp.style.background = '#f66';
           let titleMsg = '';
@@ -2096,8 +2161,10 @@ setTimeout(function () {
           if (colorTagErrorsCount > 0) titleMsg += `\n + Разорванных тегов: ${colorTagErrorsCount}`;
           if (trailingNewlineCount > 0) titleMsg += `\n + Лишних переносов: ${trailingNewlineCount}`;
           if (templateErrorsCount > 0) titleMsg += `\n + Ошибок шаблонов: ${templateErrorsCount}`;
+          if (desyncErrorsCount > 0) titleMsg += `\n + Рассинхрон имён: ${desyncErrorsCount}`;
+          if (unclosedQuoteCount > 0) titleMsg += `\n + Незакрытых кавычек: ${unclosedQuoteCount}`;
 
-          if (!lamp.title.includes('Ошибок скрипта') && !lamp.title.includes('Ошибок отступов') && !lamp.title.includes('Ошибок ID предметов') && !lamp.title.includes('Разорванных тегов') && !lamp.title.includes('Лишних переносов') && !lamp.title.includes('Ошибок шаблонов')) {
+          if (!lamp.title.includes('Ошибок скрипта') && !lamp.title.includes('Ошибок отступов') && !lamp.title.includes('Ошибок ID предметов') && !lamp.title.includes('Разорванных тегов') && !lamp.title.includes('Лишних переносов') && !lamp.title.includes('Ошибок шаблонов') && !lamp.title.includes('Рассинхрон имён') && !lamp.title.includes('Незакрытых кавычек')) {
             lamp.title += titleMsg;
           }
         }
@@ -2115,7 +2182,7 @@ setTimeout(function () {
           let extraHtml = '<div class="auto-detect-errors" style="margin-top:10px; border-top:1px solid #ccc; padding-top:5px;">';
           extraHtml += '<b>Обнаруженные ошибки (Live):</b><ul style="color:#d00; margin-top:4px;">';
           allErrors.forEach(err => {
-            if (err.type === 'Ошибка скрипта' || err.isFixableIndent || err.isItemIdMismatchLine || err.type === 'Ошибка тега цвета' || err.type === 'Лишний перенос' || err.type === 'Ошибка шаблона') {
+            if (err.type === 'Ошибка скрипта' || err.isFixableIndent || err.isItemIdMismatchLine || err.type === 'Ошибка тега цвета' || err.type === 'Лишний перенос' || err.type === 'Ошибка шаблона' || err.type === 'Рассинхронизация' || err.type === 'Незакрытая кавычка') {
               // Если это ошибка скрипта, проверяем на пустой msg
               const displayMsg = err.msg || err.reason || 'Неизвестная ошибка';
               extraHtml += `<li><b>Строка ${err.line + 1}</b>: ${displayMsg}</li>`;
@@ -2123,7 +2190,7 @@ setTimeout(function () {
           });
           extraHtml += '</ul></div>';
 
-          if (indentErrorsCount > 0 || scriptErrorsCount > 0 || itemMismatchCount > 0 || colorTagErrorsCount > 0 || trailingNewlineCount > 0 || templateErrorsCount > 0) {
+          if (indentErrorsCount > 0 || scriptErrorsCount > 0 || itemMismatchCount > 0 || colorTagErrorsCount > 0 || trailingNewlineCount > 0 || templateErrorsCount > 0 || desyncErrorsCount > 0 || unclosedQuoteCount > 0) {
             diffsDiv.insertAdjacentHTML('beforeend', extraHtml);
           }
         }
