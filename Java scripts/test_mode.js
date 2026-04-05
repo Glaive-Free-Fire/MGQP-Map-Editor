@@ -683,7 +683,12 @@ setTimeout(function () {
     const hasExistingDN = linesToUse.some(l => /^[\s\uFEFF]*Display Name\s*=/.test(l));
 
     let lineOffset = 0;
-    if ((isMapFile || (window.mapDisplayName && window.mapDisplayName.trim()) || hasExistingDN) && (!isCommonEventFile || isMapFile)) {
+    
+    // === ДОБАВЛЕНО УСЛОВИЕ: Только для первой части ===
+    const isFirstChunk = (typeof window.currentChunkIndex !== 'undefined') ? (window.currentChunkIndex === 0) : true;
+
+    // Вставляем Display Name только если это первый чанк (или чанков вообще нет)
+    if (isFirstChunk && (isMapFile || (window.mapDisplayName && window.mapDisplayName.trim()) || hasExistingDN) && (!isCommonEventFile || isMapFile)) {
       let displayNameLine = `Display Name = "${window.mapDisplayName || ''}"`;
       let foundDisplayName = false;
       for (let i = 0; i < newLines.length; i++) {
@@ -860,7 +865,23 @@ setTimeout(function () {
       }
     }
 
-    return exportLines;
+    // === АВТО-ИСПРАВЛЕНИЕ СЛИПАНИЯ СТРОК ПЕРЕД СОХРАНЕНИЕМ ===
+    const finalExportLines = [];
+    
+    for (let i = 0; i < exportLines.length; i++) {
+      const currentLine = exportLines[i];
+      const trimmed = currentLine.trim();
+      
+      // Если это структурная строка, проверяем предыдущую
+      if (/^(CommonEvent \d+|Page \d+)/.test(trimmed)) {
+        if (finalExportLines.length > 0 && finalExportLines[finalExportLines.length - 1].trim() !== '') {
+          finalExportLines.push(''); // Вставляем спасительную пустую строку
+        }
+      }
+      finalExportLines.push(currentLine);
+    }
+    
+    return finalExportLines;
   };
 
   // Обеспечиваем, чтобы алиас тоже указывал на новую функцию
@@ -1461,6 +1482,20 @@ setTimeout(function () {
     // 2. Добавляем проверку отступов для строк с #+
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
+
+      // === ПРОВЕРКА НА СЛИПАНИЕ СТРОК ===
+      const trimmedLineForSpace = lines[i].trim();
+      if (/^(CommonEvent \d+|Page \d+)/.test(trimmedLineForSpace)) {
+        if (i > 0 && lines[i - 1].trim() !== '') {
+          errors.push({
+            line: i,
+            type: 'Слипание строк',
+            msg: `Отсутствует пустая строка перед блоком ${trimmedLineForSpace.split(' ')[0]} (будет авто-исправлено при сохранении)`,
+            isDesyncError: false
+          });
+        }
+      }
+      // ==================================
 
       if (/#\+/.test(line)) {
         let prevLine = null;
@@ -2086,6 +2121,7 @@ setTimeout(function () {
       let trailingNewlineCount = 0;
       let templateErrorsCount = 0;
       let desyncErrorsCount = 0;
+      let gluedLinesCount = 0;
       let unclosedQuoteCount = 0;
 
       // Фильтруем ошибки, которые нам интересны
@@ -2141,6 +2177,10 @@ setTimeout(function () {
           desyncErrorsCount++;
         }
 
+        if (err.type === 'Слипание строк') {
+          gluedLinesCount++;
+        }
+
         // Обработка незакрытых кавычек
         if (err.type === 'Незакрытая кавычка') {
           if (blockIndex !== undefined) window.allErrorIndices.add(blockIndex);
@@ -2151,7 +2191,7 @@ setTimeout(function () {
       // 5. Обновляем интерфейс (Лампочка, Кнопки, Список ошибок)
       const lamp = document.getElementById('matchLamp');
 
-      if (scriptErrorsCount > 0 || indentErrorsCount > 0 || itemMismatchCount > 0 || colorTagErrorsCount > 0 || trailingNewlineCount > 0 || templateErrorsCount > 0 || desyncErrorsCount > 0 || unclosedQuoteCount > 0) {
+      if (scriptErrorsCount > 0 || indentErrorsCount > 0 || itemMismatchCount > 0 || colorTagErrorsCount > 0 || trailingNewlineCount > 0 || templateErrorsCount > 0 || desyncErrorsCount > 0 || gluedLinesCount > 0 || unclosedQuoteCount > 0) {
         if (lamp) {
           lamp.style.background = '#f66';
           let titleMsg = '';
@@ -2162,9 +2202,10 @@ setTimeout(function () {
           if (trailingNewlineCount > 0) titleMsg += `\n + Лишних переносов: ${trailingNewlineCount}`;
           if (templateErrorsCount > 0) titleMsg += `\n + Ошибок шаблонов: ${templateErrorsCount}`;
           if (desyncErrorsCount > 0) titleMsg += `\n + Рассинхрон имён: ${desyncErrorsCount}`;
+          if (gluedLinesCount > 0) titleMsg += `\n + Слипание строк: ${gluedLinesCount}`;
           if (unclosedQuoteCount > 0) titleMsg += `\n + Незакрытых кавычек: ${unclosedQuoteCount}`;
 
-          if (!lamp.title.includes('Ошибок скрипта') && !lamp.title.includes('Ошибок отступов') && !lamp.title.includes('Ошибок ID предметов') && !lamp.title.includes('Разорванных тегов') && !lamp.title.includes('Лишних переносов') && !lamp.title.includes('Ошибок шаблонов') && !lamp.title.includes('Рассинхрон имён') && !lamp.title.includes('Незакрытых кавычек')) {
+          if (!lamp.title.includes('Ошибок скрипта') && !lamp.title.includes('Ошибок отступов') && !lamp.title.includes('Ошибок ID предметов') && !lamp.title.includes('Разорванных тегов') && !lamp.title.includes('Лишних переносов') && !lamp.title.includes('Ошибок шаблонов') && !lamp.title.includes('Рассинхрон имён') && !lamp.title.includes('Незакрытых кавычек') && !lamp.title.includes('Слипание строк')) {
             lamp.title += titleMsg;
           }
         }
@@ -2182,7 +2223,7 @@ setTimeout(function () {
           let extraHtml = '<div class="auto-detect-errors" style="margin-top:10px; border-top:1px solid #ccc; padding-top:5px;">';
           extraHtml += '<b>Обнаруженные ошибки (Live):</b><ul style="color:#d00; margin-top:4px;">';
           allErrors.forEach(err => {
-            if (err.type === 'Ошибка скрипта' || err.isFixableIndent || err.isItemIdMismatchLine || err.type === 'Ошибка тега цвета' || err.type === 'Лишний перенос' || err.type === 'Ошибка шаблона' || err.type === 'Рассинхронизация' || err.type === 'Незакрытая кавычка') {
+            if (err.type === 'Ошибка скрипта' || err.isFixableIndent || err.isItemIdMismatchLine || err.type === 'Ошибка тега цвета' || err.type === 'Лишний перенос' || err.type === 'Ошибка шаблона' || err.type === 'Рассинхронизация' || err.type === 'Слипание строк' || err.type === 'Незакрытая кавычка') {
               // Если это ошибка скрипта, проверяем на пустой msg
               const displayMsg = err.msg || err.reason || 'Неизвестная ошибка';
               extraHtml += `<li><b>Строка ${err.line + 1}</b>: ${displayMsg}</li>`;
@@ -2190,7 +2231,7 @@ setTimeout(function () {
           });
           extraHtml += '</ul></div>';
 
-          if (indentErrorsCount > 0 || scriptErrorsCount > 0 || itemMismatchCount > 0 || colorTagErrorsCount > 0 || trailingNewlineCount > 0 || templateErrorsCount > 0 || desyncErrorsCount > 0 || unclosedQuoteCount > 0) {
+          if (indentErrorsCount > 0 || scriptErrorsCount > 0 || itemMismatchCount > 0 || colorTagErrorsCount > 0 || trailingNewlineCount > 0 || templateErrorsCount > 0 || desyncErrorsCount > 0 || gluedLinesCount > 0 || unclosedQuoteCount > 0) {
             diffsDiv.insertAdjacentHTML('beforeend', extraHtml);
           }
         }

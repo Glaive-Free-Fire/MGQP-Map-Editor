@@ -1315,7 +1315,6 @@
   global.autoFixNameTagErrors = function (silent = false) {
     if (!window.textBlocks) return;
 
-    if (typeof pushUndo === 'function') pushUndo();
 
     let blocksToFix_Prefix = [];
     let blocksToFix_MissingTag = [];
@@ -1485,12 +1484,6 @@
 
     if (totalFixes === 0 && preCleanedCount === 0) {
       if (!silent) alert('Ошибок в тегах имён для исправления не найдено.');
-      if (typeof window.undoStack === 'object' && window.undoStack.length > 0) {
-        window.undoStack.pop();
-        if (typeof document.getElementById === 'function' && document.getElementById('undoBtn')) {
-          document.getElementById('undoBtn').disabled = window.undoStack.length === 0;
-        }
-      }
       return;
     }
 
@@ -1568,7 +1561,6 @@
 
     if (!confirmed) return;
 
-    if (typeof pushUndo === 'function') pushUndo();
 
     let modifiedLines = window.fullRusLines.slice();
     let modifiedCount = 0;
@@ -1734,7 +1726,6 @@
 
     let fixedCount = 0;
 
-    if (typeof pushUndo === 'function') pushUndo();
 
     for (let i = window.textBlocks.length - 1; i >= 0; i--) {
       const block = window.textBlocks[i];
@@ -1815,12 +1806,6 @@
       if (typeof updateRedIndices === 'function') updateRedIndices();
     } else {
       alert('Шаблоны для исправления или объединения не найдены.');
-      if (typeof window.undoStack === 'object' && window.undoStack.length > 0) {
-        window.undoStack.pop();
-        if (typeof document.getElementById === 'function' && document.getElementById('undoBtn')) {
-          document.getElementById('undoBtn').disabled = window.undoStack.length === 0;
-        }
-      }
     }
   };
 })(window);
