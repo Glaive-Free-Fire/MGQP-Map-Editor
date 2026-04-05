@@ -1,4 +1,4 @@
-# MGQP Map Editor v1.5.12
+# MGQP Map Editor v1.5.15
 
 **A modern web-based tool for editing and batch-fixing RPG Maker XP map/event files, with advanced support for translation workflows (RU/JP), structure validation, and mass error correction.**
 
@@ -21,6 +21,9 @@
 - **Export & Copy:** Download the edited file or copy all extracted text for external use.
 - **Batch "All OK" Message:** If all files are correct in batch mode, a green congratulatory message is shown.
 - **Split Lines Button:** New button to automatically split all long text blocks in the editor according to the selected wrapping mode.
+- **Large File Handling:** Automatically splits files over 5000 lines into "chunks" to maintain browser performance. Includes navigation controls and seamless re-assembly on save.
+- **Session Caching:** Automatic background saving of your work every 5 minutes to `localStorage`. Restore your session after a browser crash or accidental tab closure.
+- **Structural Integrity:** Japanese files are split at the exact same CommonEvent boundaries as Russian files to prevent desynchronization.
 - **Update Editor Button:** After restoring structure, you can now update the editor with the fixed file without reloading it manually.
 - **New Error Types:** Additional error types are now detected and highlighted, including new syntax and structure issues.
 - **Red Download Button:** The "Download edited file" button turns red if there are unresolved errors, preventing accidental saving.
@@ -95,8 +98,9 @@
 
 5.  **Preview & Export:**
     -   Switch to the "Preview" tab to see the exact file that will be saved, including all generated blocks and structure corrections.
-    -   The **Download edited file** button will turn red if there are unresolved errors, and saving will be blocked until they are fixed.
-    -   Click "Download edited file" to save your changes, or "Copy all extracted" to copy the text.
+    -   The **Download edited file** button will turn red if there are unresolved errors.
+    -   Click "Download edited file" to save your changes. The editor will automatically concatenate all chunks into a single file.
+    -   **NEW:** If you accidentally close the browser, look for the **Restore last session** notification in the bottom-left corner to recover your work. to copy the text.
 
 ### 2. Japanese-Only Translation Mode
 
@@ -166,6 +170,31 @@
 -   **Japanese Text Ignore Marker:** Use `##` at the end of ShowText lines to exclude them from Japanese text error detection.
 -   **Empty ShowText Processing:** Empty ShowText blocks are properly matched with Japanese counterparts but hidden from the editor interface.
 -   **Special Template Recognition:** Automatic detection and handling of special text patterns for improved translation workflow.
+
+---
+
+## Changelog (v1.5.15)
+
+### Large File Handling & Performance
+- **Chunking System**: Implemented a system to split files over 5000 lines into manageable parts (chunks). This prevents browser DOM performance degradation. 
+- **Marker-Based Synchronization**: Improved `splitIntoChunks` to use CommonEvent IDs as markers. Japanese files are now split at the exact same logical points as Russian files, eliminating end-of-chunk desynchronization.
+- **Chunk Navigation**: Added UI buttons (Prev/Next Chunk) and a counter (e.g., "Part 1/5") to easy navigate large files.
+- **Safe Loading**: Added `isNewFile` protection to `loadChunk` to prevent old editor content from overwriting new files during the loading process.
+
+### Protection & Recovery
+- **localStorage Auto-Save**: Added a background timer (5 mins) that caches the entire project state (all chunks, names, files) to the browser's local storage.
+- **Session Recovery**: Added a "Restore Session" notification that appears on startup if a crash or accidental closure is detected.
+- **Automatic Cache Clearing**: The cache is cleanly removed once the file is successfully downloaded using the "Save" button.
+
+### Validation & Error Detection
+- **"Glued" Line Detection**: New check for missing empty lines before `CommonEvent` and `Page` markers. These "glued" lines are now flagged as errors and **automatically fixed** during the save process.
+- **Unclosed Quote Tracking**: Added detection for unmatched double quotes `"` in `ShowText` blocks to prevent script crashes in the engine.
+- **Display Name Fix**: The `Display Name` header is now restricted to the first chunk only, preventing duplication in multi-part files.
+
+### UI Cleanup & Optimization
+- **Undo/Redo Removal**: Safely removed deprecated UI buttons and legacy history tracking code to streamline the codebase.
+- **Wrap/Slash Mode Removal**: Removed the "Wrap Mode" and "Slash Wrap" buttons and all associated complex event listeners, significantly reducing CPU load during typing.
+- **State Reset**: Loading any new file now correctly clears previous error indices, block arrays, and map metadata to ensure a clean slate.
 
 ---
 
