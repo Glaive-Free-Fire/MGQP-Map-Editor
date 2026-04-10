@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8">
-  <title>MGQP Map Editor v1.5.15</title>
+  <title>MGQP Map Editor v1.5.16</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="Java scripts/main_script.js"></script>
   <script src="Java scripts/restore-mode.js"></script>
@@ -242,9 +242,12 @@
 </head>
 
 <body>
-  <div id="restoreNotification" style="position: fixed; bottom: 20px; left: 20px; background-color: #2c3e50; color: #fff; padding: 15px 20px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); display: none; z-index: 10000; font-family: sans-serif; align-items: center; gap: 20px;">
-    <span id="restoreAction" style="cursor: pointer; text-decoration: underline; font-weight: bold;">Восстановить последнюю сессию</span>
-    <span id="closeRestoreBtn" title="Закрыть и очистить кэш" style="cursor: pointer; font-weight: bold; color: #e74c3c; font-size: 18px;">✕</span>
+  <div id="restoreNotification"
+    style="position: fixed; bottom: 20px; left: 20px; background-color: #2c3e50; color: #fff; padding: 15px 20px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); display: none; z-index: 10000; font-family: sans-serif; align-items: center; gap: 20px;">
+    <span id="restoreAction" style="cursor: pointer; text-decoration: underline; font-weight: bold;">Восстановить
+      последнюю сессию</span>
+    <span id="closeRestoreBtn" title="Закрыть и очистить кэш"
+      style="cursor: pointer; font-weight: bold; color: #e74c3c; font-size: 18px;">✕</span>
   </div>
   <div id="restoreDialogOverlay">
     <div id="restoreDialog">
@@ -264,10 +267,14 @@
   <div class="control-panel">
     <button id="splitAllBtn" class="control-btn">Разделить Строки</button>
 
-    <div style="display:flex; gap:5px; align-items:center; margin-left: 10px; border-left: 2px solid #ccc; padding-left: 10px;">
-      <button id="prevChunkBtn" class="control-btn" style="display:none; background:#ffeb3b; font-weight:bold;">Пред. Часть🖹</button>
-      <span id="chunkIndicator" style="display:none; font-weight:bold; font-size:14px; white-space:nowrap;">Часть 1/1</span>
-      <button id="nextChunkBtn" class="control-btn" style="display:none; background:#ffeb3b; font-weight:bold;">След. Часть🖹</button>
+    <div
+      style="display:flex; gap:5px; align-items:center; margin-left: 10px; border-left: 2px solid #ccc; padding-left: 10px;">
+      <button id="prevChunkBtn" class="control-btn" style="display:none; background:#ffeb3b; font-weight:bold;">Пред.
+        Часть🖹</button>
+      <span id="chunkIndicator" style="display:none; font-weight:bold; font-size:14px; white-space:nowrap;">Часть
+        1/1</span>
+      <button id="nextChunkBtn" class="control-btn" style="display:none; background:#ffeb3b; font-weight:bold;">След.
+        Часть🖹</button>
     </div>
 
     <!-- Старые стрелки теперь для навигации по «красным» строкам -->
@@ -391,7 +398,7 @@
     // === 1. Глобальные переменные для полного файла ===
     window.fullRusLines = [];
     window.fullJapLines = [];
-    
+
     // Переменные для работы с частями (чанками)
     window.fileChunksRU = [];
     window.fileChunksJP = [];
@@ -403,7 +410,7 @@
     window.autoSaveInterval = null;
 
     // Функция, которая отмечает, что файл был изменен
-    window.markAsChanged = function() {
+    window.markAsChanged = function () {
       if (!window.hasUnsavedChanges) {
         window.hasUnsavedChanges = true;
         // Запускаем/перезапускаем таймер на 5 минут (300 000 миллисекунд)
@@ -413,9 +420,9 @@
     };
 
     // Функция сохранения в кэш браузера
-    window.saveSessionToCache = function() {
+    window.saveSessionToCache = function () {
       if (!window.hasUnsavedChanges) return; // Не сохраняем, если нет изменений
-      
+
       try {
         // Обязательно обновляем активную часть файла перед сохранением кэша
         if (window.fileChunksRU && window.fileChunksRU.length > 0 && window.textBlocks) {
@@ -428,7 +435,7 @@
           loadedFileName: window.loadedFileName,
           currentChunkIndex: window.currentChunkIndex
         };
-        
+
         // Сохраняем в локальное хранилище браузера
         localStorage.setItem('mgqp_editor_session', JSON.stringify(sessionData));
         window.hasUnsavedChanges = false; // Сбрасываем флаг до следующих изменений
@@ -439,9 +446,9 @@
     };
 
     // Проверяем наличие кэша при запуске страницы
-    document.addEventListener('DOMContentLoaded', function() {
+    document.addEventListener('DOMContentLoaded', function () {
       // Отслеживаем ввод текста в редакторе (чтобы запускать таймер)
-      document.getElementById('editor').addEventListener('input', function(e) {
+      document.getElementById('editor').addEventListener('input', function (e) {
         if (e.target.tagName === 'TEXTAREA') {
           window.markAsChanged();
         }
@@ -450,31 +457,31 @@
       const savedSession = localStorage.getItem('mgqp_editor_session');
       if (savedSession) {
         document.getElementById('restoreNotification').style.display = 'flex';
-        
+
         // Кнопка: Восстановить
-        document.getElementById('restoreAction').onclick = function() {
+        document.getElementById('restoreAction').onclick = function () {
           try {
             const data = JSON.parse(localStorage.getItem('mgqp_editor_session'));
             window.fileChunksRU = data.fileChunksRU;
             window.fileChunksJP = data.fileChunksJP || [];
             window.loadedFileName = data.loadedFileName || 'Восстановленный_файл.txt';
             window.currentChunkIndex = data.currentChunkIndex || 0;
-            
+
             if (document.getElementById('fileNameDisplay')) {
               document.getElementById('fileNameDisplay').textContent = "Файл: " + window.loadedFileName + " (Восстановлено)";
             }
-            
+
             // Загружаем нужную часть в редактор
             window.loadChunk(window.currentChunkIndex);
-            
+
             document.getElementById('restoreNotification').style.display = 'none';
-          } catch(e) {
+          } catch (e) {
             alert('Ошибка при восстановлении сессии. Кэш поврежден.');
           }
         };
-        
+
         // Кнопка: Закрыть (Очистить)
-        document.getElementById('closeRestoreBtn').onclick = function() {
+        document.getElementById('closeRestoreBtn').onclick = function () {
           localStorage.removeItem('mgqp_editor_session');
           document.getElementById('restoreNotification').style.display = 'none';
         };
@@ -484,7 +491,7 @@
 
     // Функция разбивки на части
     window.chunkEventMarkers = []; // Глобально храним метки разрывов для синхронизации
-    window.splitIntoChunks = function(lines, referenceMarkers = null) {
+    window.splitIntoChunks = function (lines, referenceMarkers = null) {
       const chunks = [];
       let currentChunk = [];
       const markers = []; // Собираем метки разрывов (CommonEvent IDs)
@@ -492,11 +499,11 @@
       if (referenceMarkers && referenceMarkers.length > 0) {
         markerSet = new Set(referenceMarkers);
       }
-      
+
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         const match = line.match(/^[\s\uFEFF]*CommonEvent (\d+)/);
-        
+
         if (match) {
           const eventId = match[1];
           if (markerSet) {
@@ -527,7 +534,7 @@
     };
 
     // Функция загрузки конкретной части в редактор (добавлен параметр isNewFile)
-    window.loadChunk = function(index, isNewFile = false) {
+    window.loadChunk = function (index, isNewFile = false) {
       // 1. Сохраняем текущие изменения в активный чанк (только если это НЕ новый файл!)
       if (!isNewFile && window.fileChunksRU && window.fileChunksRU.length > 0 && window.textBlocks && window.textBlocks.length > 0) {
         window.fileChunksRU[window.currentChunkIndex] = window.generateFinalFileLines();
@@ -536,11 +543,19 @@
       // 2. Устанавливаем новый индекс
       window.currentChunkIndex = index;
 
+      // Вычисляем смещение строк для единой нумерации
+      window.globalLineOffset = 0;
+      if (window.fileChunksRU) {
+        for (let i = 0; i < index; i++) {
+          window.globalLineOffset += window.fileChunksRU[i].length;
+        }
+      }
+
       // 3. Загружаем нужную часть русского файла
       window.fullRusLines = window.fileChunksRU[index].slice();
       window.originalLines = window.fullRusLines.slice();
       originalLines = window.fullRusLines.slice(); // для совместимости
-      
+
       // 4. Загружаем нужную часть японского файла (если есть)
       if (window.fileChunksJP && window.fileChunksJP.length > index) {
         window.fullJapLines = window.fileChunksJP[index].slice();
@@ -569,7 +584,7 @@
       const prevBtn = document.getElementById('prevChunkBtn');
       const nextBtn = document.getElementById('nextChunkBtn');
       const indicator = document.getElementById('chunkIndicator');
-      
+
       if (window.fileChunksRU.length > 1) {
         indicator.textContent = `Часть ${index + 1}/${window.fileChunksRU.length}`;
         indicator.style.display = '';
@@ -580,20 +595,20 @@
         prevBtn.style.display = 'none';
         nextBtn.style.display = 'none';
       }
-      
+
       // Скроллим наверх
       window.scrollTo(0, 0);
-      
+
       // Отмечаем как измененное, чтобы запустить таймер
       if (window.markAsChanged) window.markAsChanged();
     };
 
     // Привязываем события к кнопкам
-    document.addEventListener('DOMContentLoaded', function() {
-      document.getElementById('prevChunkBtn').onclick = function() {
+    document.addEventListener('DOMContentLoaded', function () {
+      document.getElementById('prevChunkBtn').onclick = function () {
         if (window.currentChunkIndex > 0) window.loadChunk(window.currentChunkIndex - 1);
       };
-      document.getElementById('nextChunkBtn').onclick = function() {
+      document.getElementById('nextChunkBtn').onclick = function () {
         if (window.currentChunkIndex < window.fileChunksRU.length - 1) window.loadChunk(window.currentChunkIndex + 1);
       };
     });
@@ -864,14 +879,22 @@
           if (window.isNameBlock(block.text)) {
             let precedingStructuralBlock = null;
             for (let j = i - 1; j >= 0; j--) {
-              if (textBlocks[j].type !== 'ShowText' && textBlocks[j].type !== undefined) {
-                precedingStructuralBlock = textBlocks[j];
-                break;
+              const prev = textBlocks[j];
+              if (prev.isDeleted) continue;
+
+              if (prev.type === 'ShowTextAttributes') {
+                precedingStructuralBlock = prev;
+                break; // Нашли правильный атрибут
               }
-              if (textBlocks[j].idx !== undefined && !window.isNameBlock(textBlocks[j].text)) {
-                precedingStructuralBlock = textBlocks[j];
-                break;
+              if (prev.type === 'ShowText' && window.isNameBlock(prev.text)) {
+                precedingStructuralBlock = prev;
+                break; // Наткнулись на предыдущего говорящего ДО нахождения STA — Ошибка!
               }
+              if (prev.type !== 'ShowText' && prev.type !== undefined) {
+                precedingStructuralBlock = prev;
+                break; // Наткнулись на другую команду (Script, Label и т.д.) — Ошибка!
+              }
+              // Просто продолжение диалога без имени — идём дальше назад
             }
             if (!precedingStructuralBlock || precedingStructuralBlock.type !== 'ShowTextAttributes') {
               if (!block.hasIgnoreMarker) {
@@ -884,6 +907,7 @@
               }
             }
           }
+
 
           // <<< НАЧАЛО НОВОЙ ПРОВЕРКИ: ShowTextAttributes -> ShowText (без имени) >>>
           if (block.type === 'ShowTextAttributes') {
@@ -1166,20 +1190,20 @@
       const reader = new FileReader();
       reader.onload = function (evt) {
         const lines = evt.target.result.split('\n');
-        
+
         // === СБРОС СТАРЫХ ДАННЫХ ПЕРЕД ЗАГРУЗКОЙ НОВОГО ФАЙЛА ===
         window.textBlocks = []; // Очищаем старые блоки (важно!)
         if (window.allErrorIndices) window.allErrorIndices.clear(); // Сбрасываем подсветку ошибок
         window.mapDisplayName = ""; // Сбрасываем старое имя карты
         window.hasUnsavedChanges = false; // Сбрасываем таймер автосохранения
-        
+
         // === РАЗБИВАЕМ ФАЙЛ НА ЧАСТИ ===
         const splitResult = window.splitIntoChunks(lines);
         window.fileChunksRU = splitResult.chunks;
         window.chunkEventMarkers = splitResult.markers; // Запоминаем точки разрыва
         window.fileChunksJP = []; // Сбрасываем старый японский
         window.currentChunkIndex = 0;
-        
+
         // Загружаем первую часть в редактор (передаем true, так как это новый файл)
         window.loadChunk(0, true);
 
@@ -1191,7 +1215,7 @@
           const japReader = new FileReader();
           japReader.onload = function (jEvt) {
             const jLines = jEvt.target.result.split('\n');
-            
+
             // === РАЗБИВАЕМ ЯПОНСКИЙ ФАЙЛ по тем же меткам ===
             window.fileChunksJP = window.splitIntoChunks(jLines, window.chunkEventMarkers).chunks;
 
@@ -1976,10 +2000,12 @@
         // Создаем заголовок в зависимости от типа блока
         if (block.idx !== undefined) {
           // Блок из оригинального русского файла
-          label.textContent = `${block.type || 'Block'} [строка ${block.idx + 1}]:`;
+          const offset = window.globalLineOffset || 0;
+          label.textContent = `${block.type || 'Block'} [строка ${block.idx + 1 + offset}]:`;
         } else if (block.japIdx !== undefined) {
           // Плейсхолдер для блока из японского файла
-          label.textContent = `${block.type || 'Block'} [JP строка ${block.japIdx + 1}]:`;
+          const offset = window.globalLineOffset || 0;
+          label.textContent = `${block.type || 'Block'} [JP строка ${block.japIdx + 1 + offset}]:`;
         } else {
           // Настоящее «продолжение», добавленное пользователем
           label.textContent = '[продолжение]:';
@@ -2762,7 +2788,7 @@
         }
       } else {
         // Запасной вариант, если редактор пуст
-        exportLines = window.generateFinalFileLines(); 
+        exportLines = window.generateFinalFileLines();
       }
 
       // Логика скачивания файла (с учетом чекбокса)
@@ -2777,7 +2803,7 @@
       a.href = URL.createObjectURL(blob);
       a.download = saveName;
       a.click();
-      
+
       // === ОЧИСТКА КЭША ПОСЛЕ СОХРАНЕНИЯ ===
       localStorage.removeItem('mgqp_editor_session');
       if (window.autoSaveInterval) clearInterval(window.autoSaveInterval);
@@ -3595,7 +3621,8 @@
                 const lineInfo = linePointers.length > 0 ? `<span style="color:#555; background:#eee; padding: 2px 5px; border-radius:3px; font-size:12px; margin-right:8px;">${linePointers.join(' | ')}</span>` : '';
                 // ✨ КОНЕЦ ИЗМЕНЕНИЯ
 
-                html += `<div style='color:#b00; margin-left:12px; margin-bottom:8px;'>${branchEndInfo}${lineInfo}<b>Строка ${err.line}:</b> ${err.msg}<br>`;
+                const offset = window.globalLineOffset || 0;
+                html += `<div style='color:#b00; margin-left:12px; margin-bottom:8px;'>${branchEndInfo}${lineInfo}<b>Строка ${err.line + offset}:</b> ${err.msg}<br>`;
                 if (err.jp || err.ru) {
                   html += `<div style='font-size:13px; margin-top:2px;'><span style='color:#444;'>JP:</span> <pre style='display:inline; background:#f7f7f7; border-radius:4px; padding:2px 6px;'>${(err.jp || '').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre><br><span style='color:#444;'>RU:</span> <pre style='display:inline; background:#f7f7f7; border-radius:4px; padding:2px 6px;'>${(err.ru || '').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre></div>`;
                 }
