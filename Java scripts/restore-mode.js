@@ -163,14 +163,20 @@
           for (let j = i - 1; j >= 0; j--) {
             const prev = window.textBlocks[j];
             if (prev.isDeleted) continue;
+
+            if (prev.type === 'ShowTextAttributes') {
+              precedingStructuralBlock = prev;
+              break; // Нашли правильный атрибут
+            }
+            if (prev.type === 'ShowText' && window.isNameBlock(prev.text)) {
+              precedingStructuralBlock = prev;
+              break; // Наткнулись на предыдущего говорящего ДО нахождения STA — Ошибка!
+            }
             if (prev.type !== 'ShowText' && prev.type !== undefined) {
               precedingStructuralBlock = prev;
-              break;
+              break; // Наткнулись на другую команду — Ошибка!
             }
-            if (prev.idx !== undefined && !window.isNameBlock(prev.text)) {
-              precedingStructuralBlock = prev;
-              break;
-            }
+            // Простое продолжение диалога без имени — продолжаем искать выше
           }
           if (!precedingStructuralBlock || precedingStructuralBlock.type !== 'ShowTextAttributes') {
             hasNameError = true;
@@ -182,9 +188,34 @@
         if (block.japaneseLink) {
           const ruHasName = window.isNameBlock(block.text) || /<[\\∾]{2}C\[6\]/.test(block.text);
           const jpHasName = block.japaneseLink.type === 'name' || /^【.*?】/.test(block.japaneseLink.text);
+          
           if (ruHasName !== jpHasName) {
-            if (!block.manualPlus || ruHasName) {
-              hasDesyncError = true;
+            // === НОВОЕ ИСКЛЮЧЕНИЕ ДЛЯ ДЛИННЫХ ДИАЛОГОВ ===
+            let isAllowedDesync = false;
+            if (ruHasName && !jpHasName) {
+              let currentRuNameMatch = block.text.match(/<[\\∾]{2}C\[6\](.*?)∾∾C\[0\]>/);
+              let currentRuName = currentRuNameMatch ? currentRuNameMatch[1] : null;
+
+              let lastSeenRuName = null;
+              for (let j = i - 1; j >= 0; j--) {
+                const prev = window.textBlocks[j];
+                if (prev.isDeleted) continue;
+                if (prev.type === 'ShowText' && (window.isNameBlock(prev.text) || /<[\\∾]{2}C\[6\]/.test(prev.text))) {
+                  const prevNameMatch = prev.text.match(/<[\\∾]{2}C\[6\](.*?)∾∾C\[0\]>/);
+                  if (prevNameMatch) lastSeenRuName = prevNameMatch[1];
+                  break;
+                }
+              }
+              if (currentRuName && lastSeenRuName && currentRuName === lastSeenRuName) {
+                isAllowedDesync = true; // Диалог разбит, прощаем
+              }
+            }
+            // ==============================================
+
+            if (!isAllowedDesync) {
+              if (!block.manualPlus || ruHasName) {
+                hasDesyncError = true;
+              }
             }
           }
         }
@@ -1035,14 +1066,20 @@
         for (let j = i - 1; j >= 0; j--) {
           const prev = window.textBlocks[j];
           if (prev.isDeleted) continue;
+
+          if (prev.type === 'ShowTextAttributes') {
+            precedingStructuralBlock = prev;
+            break; // Нашли правильный атрибут
+          }
+          if (prev.type === 'ShowText' && window.isNameBlock(prev.text)) {
+            precedingStructuralBlock = prev;
+            break; // Наткнулись на предыдущего говорящего ДО STA — Ошибка!
+          }
           if (prev.type !== 'ShowText' && prev.type !== undefined) {
             precedingStructuralBlock = prev;
-            break;
+            break; // Наткнулись на другую команду — Ошибка!
           }
-          if (prev.idx !== undefined && !window.isNameBlock(prev.text)) {
-            precedingStructuralBlock = prev;
-            break;
-          }
+          // Простое продолжение диалога без имени — продолжаем искать выше
         }
         if (!precedingStructuralBlock || precedingStructuralBlock.type !== 'ShowTextAttributes') {
           return true; // Логическое нарушение структуры: Имя без STA
@@ -1054,6 +1091,28 @@
           const jpHasName = block.japaneseLink.type === 'name' || /^【.*?】/.test(block.japaneseLink.text);
 
           if (ruHasName !== jpHasName) {
+            
+            // === НОВОЕ ИСКЛЮЧЕНИЕ ДЛЯ ДЛИННЫХ ДИАЛОГОВ ===
+            if (ruHasName && !jpHasName) {
+              let currentRuNameMatch = block.text.match(/<[\\∾]{2}C\[6\](.*?)∾∾C\[0\]>/);
+              let currentRuName = currentRuNameMatch ? currentRuNameMatch[1] : null;
+
+              let lastSeenRuName = null;
+              for (let j = i - 1; j >= 0; j--) {
+                const prev = window.textBlocks[j];
+                if (prev.isDeleted) continue;
+                if (prev.type === 'ShowText' && (window.isNameBlock(prev.text) || /<[\\∾]{2}C\[6\]/.test(prev.text))) {
+                  const prevNameMatch = prev.text.match(/<[\\∾]{2}C\[6\](.*?)∾∾C\[0\]>/);
+                  if (prevNameMatch) lastSeenRuName = prevNameMatch[1];
+                  break;
+                }
+              }
+              if (currentRuName && lastSeenRuName && currentRuName === lastSeenRuName) {
+                continue; // Имя совпадает с предыдущим, прощаем ошибку и идем к следующему блоку
+              }
+            }
+            // ==============================================
+
             // Игнорируем логичные продолжения диалогов
             if (!block.manualPlus || ruHasName) {
               return true; // Рассинхрон имен обнаружен
@@ -1605,43 +1664,21 @@
     const hasIndentErrors = window.hasIndentErrors();
     const hasTagsErrors = window.hasNameTagErrors();
 
-    // <<< ИЗМЕНЕНИЕ 2: Новая, полная логика проверки шаблонов >>>
-    // Регулярка для японского (разделенного) шаблона (строго требует слова привязанности)
-    const splitRegex = /(<[\\∾]+[CcСс]\[6\].*?)([\\∾]+[CcСс]\[0\]>)\s*[\(\（]?((?:友好度|Уровень симпатии|Привязанность:?)[：:]?\s*)([\\∾]+)([VvВв]\[\d+\])[\)\）]?([\s\S]*)$/i;
-    // Регулярка для старого русского шаблона (строго требует слова привязанности)
-    const oldRegex = /(<[\\∾]+[CcСс]\[6\](?:(?![\\∾]+[CcСс]\[8\]|[\\∾]+[CcСс]\[0\]>).)*?)\s*[\(\（]?((?:友好度|Уровень симпатии|Привязанность:?)\s*)([\\∾]+)([VvВв]\[\d+\])[\)\）]?([\\∾]+[CcСс]\[0\]>)([\s\S]*)$/i;
-
+    // <<< ИЗМЕНЕНИЕ 2: Умная логика проверки шаблонов >>>
     let hasAffectionErrors = false;
     if (window.textBlocks) {
       for (let i = 0; i < window.textBlocks.length; i++) {
         const block = window.textBlocks[i];
         if (block.type !== 'ShowText' || block.isDeleted) continue;
+        const text = block.text;
 
-        const matchSplit = block.text.match(splitRegex);
-        const matchOld = block.text.match(oldRegex);
+        const isSplitFormat = /<[\\∾]+[CcСс]\[6\].*?[\\∾]+[CcСс]\[0\]>[^<]*?(?:友好度|Уровень симпатии|Привязанность).*?[VvВв]\[\d+\]/i.test(text);
+        const hasAffectionInsideTag = /<[\\∾]+[CcСс]\[6\].*?(?:友好度|Уровень симпатии|Привязанность).*?[VvВв]\[\d+\].*?[\\∾]+[CcСс]\[0\]>/i.test(text);
+        const isPerfectFormat = /<[\\∾]+[CcСс]\[6\].*?[\\∾]+[CcСс]\[8\]\(\s*(?:友好度|Уровень симпатии|Привязанность).*?[VvВв]\[\d+\]\s*\)[\\∾]+[CcСс]\[0\]>/i.test(text);
 
-        // Если нашли любой из устаревших форматов — показываем кнопку!
-        if (matchSplit || matchOld) {
+        if (isSplitFormat || (hasAffectionInsideTag && !isPerfectFormat)) {
           hasAffectionErrors = true;
           break;
-        }
-
-        // Проверяем на ошибки СЛИЯНИЯ (старый split: диалог пустой, следующий блок — не имя)
-        if (matchSplit) {
-          const dialoguePart = matchSplit[6];
-          if (dialoguePart.trim() === '') {
-            if ((i + 1) < window.textBlocks.length) {
-              const nextBlock = window.textBlocks[i + 1];
-              if (nextBlock.type === 'ShowText' &&
-                !nextBlock.isDeleted &&
-                !window.isNameBlock(nextBlock.text) &&
-                !nextBlock.manualPlus &&
-                !nextBlock.generated) {
-                hasAffectionErrors = true;
-                break;
-              }
-            }
-          }
         }
       }
     }
@@ -1713,16 +1750,19 @@
   };
 
   /**
-   * Новая функция для исправления шаблонов "Привязанности".
-   * Находит блоки, меняет текст, исправляет `∾` И ОБЪЕДИНЯЕТ их со следующей строкой диалога.
+   * Финальная функция для исправления шаблонов "Привязанности".
+   * Использует универсальную регулярку V3, синхронизированную с логикой обнаружения в test_mode.js.
    */
   global.fixAffectionTemplates = function () {
     if (!window.textBlocks) return;
 
-    // Регулярка для японского (разделенного) шаблона (строго требует слова привязанности)
+    // Регулярка для разорванного шаблона (Привязанность ПОСЛЕ закрывающего C[0]>)
     const splitRegex = /(<[\\∾]+[CcСс]\[6\].*?)([\\∾]+[CcСс]\[0\]>)\s*[\(\（]?((?:友好度|Уровень симпатии|Привязанность:?)[：:]?\s*)([\\∾]+)([VvВв]\[\d+\])[\)\）]?([\s\S]*)$/i;
-    // Регулярка для старого русского шаблона (строго требует слова привязанности)
-    const oldRegex = /(<[\\∾]+[CcСс]\[6\](?:(?![\\∾]+[CcСс]\[8\]|[\\∾]+[CcСс]\[0\]>).)*?)\s*[\(\（]?((?:友好度|Уровень симпатии|Привязанность:?)\s*)([\\∾]+)([VvВв]\[\d+\])[\)\）]?([\\∾]+[CcСс]\[0\]>)([\s\S]*)$/i;
+
+    // <<< УНИВЕРСАЛЬНАЯ РЕГУЛЯРКА >>>
+    // Ищет только железобетонные якоря: C[6], слово Привязанность, V[n], C[0]>
+    // Захватывает шаблоны с ЛЮБЫМИ опечатками (нет скобок, нет C[8], лишние пробелы и т.д.)
+    const insideRegex = /<[\\∾]+[CcСс]\[6\](.*?)(?:友好度|Уровень симпатии|Привязанность).*?([VvВв]\[\d+\]).*?[\\∾]+[CcСс]\[0\]>([\s\S]*)$/i;
 
     let fixedCount = 0;
 
@@ -1732,36 +1772,46 @@
 
       if (block.type !== 'ShowText' || block.isDeleted) continue;
 
-      const matchSplit = block.text.match(splitRegex);
-      const matchOld = block.text.match(oldRegex);
+      const text = block.text;
 
-      if (!matchSplit && !matchOld) continue; // Это не блок-шаблон
+      // Если шаблон уже идеальный — пропускаем
+      const isPerfectFormat = /<[\\∾]+[CcСс]\[6\].*?[\\∾]+[CcСс]\[8\]\(\s*(?:友好度|Уровень симпатии|Привязанность).*?[VvВв]\[\d+\]\s*\)[\\∾]+[CcСс]\[0\]>/i.test(text);
+      if (isPerfectFormat) continue;
 
-      let tagStart, tagEnd, variable, dialoguePart;
+      const matchSplit = splitRegex.exec(text);
+      const matchInside = insideRegex.exec(text);
+
+      if (!matchSplit && !matchInside) continue;
+
+      let namePart = "";
+      let variable = "";
+      let dialoguePart = "";
 
       if (matchSplit) {
-        tagStart = matchSplit[1];
-        tagEnd = matchSplit[2];
+        namePart = matchSplit[1].replace(/<[\\∾]+[CcСс]\[6\]/i, '').trim();
         variable = matchSplit[5];
         dialoguePart = matchSplit[6];
-      } else {
-        tagStart = matchOld[1];
-        variable = matchOld[4];
-        tagEnd = matchOld[5];
-        dialoguePart = matchOld[6];
+      } else if (matchInside) {
+        // Аккуратно извлекаем имя, вычищая застрявший C[8] и прилипшие скобки/двоеточия
+        namePart = matchInside[1]
+          .replace(/[\\∾]+[CcСс]\[8\]/gi, '')
+          .trim()
+          .replace(/[\(\uff08\:]+$/, '')
+          .trim();
+        variable = matchInside[2];
+        dialoguePart = matchInside[3];
       }
 
       let nextBlockToDelete = null;
       let nextBlockJapLink = null;
 
+      // Если диалог пустой, ищем его в следующем блоке (для разорванных строк)
       if (dialoguePart.trim() === '') {
         if ((i + 1) < window.textBlocks.length) {
           const nextBlock = window.textBlocks[i + 1];
           if (nextBlock.type === 'ShowText' &&
             !nextBlock.isDeleted &&
-            !window.isNameBlock(nextBlock.text) &&
-            !nextBlock.manualPlus &&
-            !nextBlock.generated) {
+            !window.isNameBlock(nextBlock.text)) {
             dialoguePart = nextBlock.text;
             nextBlockJapLink = nextBlock.japaneseLink;
             nextBlockToDelete = nextBlock;
@@ -1771,7 +1821,7 @@
 
       fixedCount++;
 
-      const prefixMatch = block.text.match(/^(∾\n)\s*/);
+      const prefixMatch = text.match(/^(∾\n)\s*/);
       const prefix = prefixMatch ? prefixMatch[1] : '';
 
       if (!nextBlockToDelete && dialoguePart.startsWith('\n')) {
@@ -1779,17 +1829,21 @@
       }
 
       // --- НОВЫЙ ШАБЛОН: <∾∾C[6]Имя ∾∾C[8](Привязанность:∾∾V[ID])∾∾C[0]> ---
-      block.text = `${prefix}${tagStart} ∾∾C[8](Привязанность:∾∾${variable})${tagEnd}${dialoguePart}`;
+      block.text = `${prefix}<∾∾C[6]${namePart} ∾∾C[8](Привязанность:∾∾${variable})∾∾C[0]>${dialoguePart}`;
 
-      if (nextBlockJapLink && nextBlockJapLink.text) {
-        if (block.japaneseLink && block.japaneseLink.text) {
-          block.japaneseLink.text = block.japaneseLink.text + '\n' + nextBlockJapLink.text;
-        } else {
-          block.japaneseLink = nextBlockJapLink;
-        }
-      }
-
+      // БЕЗОПАСНОЕ СЛИЯНИЕ ЯПОНСКОГО ТЕКСТА
       if (nextBlockToDelete) {
+        if (nextBlockJapLink && nextBlockJapLink.text) {
+          if (block.japaneseLink && block.japaneseLink.text) {
+            // Если в текущем японском блоке УЖЕ ЕСТЬ перенос строки (диалог),
+            // НЕ приклеиваем следующий блок — иначе украдём соседнюю реплику!
+            if (!block.japaneseLink.text.includes('\n')) {
+              block.japaneseLink.text = block.japaneseLink.text + '\n' + nextBlockJapLink.text;
+            }
+          } else {
+            block.japaneseLink = nextBlockJapLink;
+          }
+        }
         nextBlockToDelete.isDeleted = true;
         nextBlockToDelete.japaneseLink = null;
       }
@@ -1803,7 +1857,11 @@
         if (typeof renderTextBlocks === 'function') renderTextBlocks();
       }
       if (typeof window.updateMatchLamp === 'function') window.updateMatchLamp();
-      if (typeof updateRedIndices === 'function') updateRedIndices();
+      if (typeof updateRedIndices === 'function') {
+        updateRedIndices();
+      } else if (typeof window.updateRedIndices === 'function') {
+        window.updateRedIndices();
+      }
     } else {
       alert('Шаблоны для исправления или объединения не найдены.');
     }

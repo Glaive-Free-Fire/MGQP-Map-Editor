@@ -115,7 +115,10 @@ window.updateRedIndices = function () {
     .map((_, i) => i)
     .filter(i => {
       const ta = window.textBlocks[i].dom?.rusInput;
-      return ta && window.getComputedStyle(ta).backgroundColor === 'rgb(255, 214, 214)';
+      if (!ta) return false;
+      const bg = window.getComputedStyle(ta).backgroundColor;
+      // Ловим ВСЕ оттенки ошибок (красные и розовые)
+      return bg.includes('255') && (bg.includes('214') || bg.includes('204') || bg.includes('136'));
     });
   if (window.redPointer >= window.redIndices.length) window.redPointer = -1;
   const prev = document.getElementById('prevRedBtn');

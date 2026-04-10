@@ -1995,31 +1995,33 @@ setTimeout(function () {
     }
 
     // --- НОВАЯ ПРОВЕРКА: Ошибки шаблона привязанности ---
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (!line.includes('ShowText([')) continue;
+    // Итерируем по textBlocks, чтобы использовать block.idx — реальный номер строки в файле
+    if (window.textBlocks) {
+      window.textBlocks.forEach((block) => {
+        if (block.type !== 'ShowText' || block.isDeleted || block.hasIgnoreMarker) return;
+        const text = block.text;
 
-      const startIdx = line.indexOf('["');
-      const endIdx = line.lastIndexOf('"]');
-      if (startIdx === -1 || endIdx === -1) continue;
-      const text = line.substring(startIdx + 2, endIdx);
+        // Проверяем, есть ли вообще упоминание привязанности внутри тега имени
+        const hasAffectionInsideTag = /<[\\∾]+[CcСс]\[6\].*?(?:友好度|Уровень симпатии|Привязанность).*?[VvВв]\[\d+\].*?[\\∾]+[CcСс]\[0\]>/i.test(text);
+        // Проверяем ИДЕАЛЬНЫЙ формат (строго C[8] и скобки)
+        const isPerfectFormat = /<[\\∾]+[CcСс]\[6\].*?[\\∾]+[CcСс]\[8\]\(\s*(?:友好度|Уровень симпатии|Привязанность).*?[VvВв]\[\d+\]\s*\)[\\∾]+[CcСс]\[0\]>/i.test(text);
+        // Ищем разорванный формат (Слово Привязанность находится ПОСЛЕ закрывающего C[0]>)
+        const isSplitFormat = /<[\\∾]+[CcСс]\[6\].*?[\\∾]+[CcСс]\[0\]>[^<]*?(?:友好度|Уровень симпатии|Привязанность).*?[VvВв]\[\d+\]/i.test(text);
 
-      // Ищем старый формат (Внутри тега имени НЕТ C[8], но ОБЯЗАТЕЛЬНО есть слово Привязанность/Симпатия)
-      const isOldFormat = /<[\\∾]+[CcСс]\[6\](?:(?![\\∾]+[CcСс]\[8\]|[\\∾]+[CcСс]\[0\]>).)*?(?:友好度|Уровень симпатии|Привязанность).*?[VvВв]\[\d+\][\)\）]?[\\∾]+[CcСс]\[0\]>/i.test(text);
+        // Если привязанность есть, но формат не идеален — это ошибка
+        const isOldFormat = hasAffectionInsideTag && !isPerfectFormat;
 
-      // Ищем разорванный формат (Слово Привязанность находится ПОСЛЕ закрывающего C[0]>)
-      const isSplitFormat = /<[\\∾]+[CcСс]\[6\].*?[\\∾]+[CcСс]\[0\]>[^<]*?(?:友好度|Уровень симпатии|Привязанность).*?[VvВв]\[\d+\]/i.test(text);
-
-      if (isOldFormat || isSplitFormat) {
-        errors.push({
-          label: `строка ${i + 1}`,
-          type: 'Ошибка шаблона',
-          reason: 'Устаревший или разорванный шаблон привязанности. Ожидается: <∾∾C[6]Имя ∾∾C[8](Привязанность:∾∾V[ID])∾∾C[0]>',
-          line: i,
-          msg: 'Неверный шаблон привязанности.',
-          isItemIdMismatchLine: true
-        });
-      }
+        if (isOldFormat || isSplitFormat) {
+          errors.push({
+            label: `строка ${block.idx + 1}`,
+            type: 'Ошибка шаблона',
+            reason: 'Устаревший или разорванный шаблон привязанности. Ожидается: <∾∾C[6]Имя ∾∾C[8](Привязанность:∾∾V[ID])∾∾C[0]>',
+            line: block.idx,
+            msg: 'Неверный шаблон привязанности.',
+            isItemIdMismatchLine: true
+          });
+        }
+      });
     }
 
     // === ФИНАЛЬНАЯ ФИЛЬТРАЦИЯ: Удаляем все ошибки для строк с ## ===
@@ -2074,6 +2076,31 @@ setTimeout(function () {
           if (ruHasName !== jpHasName) {
             // Игнорируем переносы строк (продолжения диалогов), если у них логично нет имени
             if (block.manualPlus && !ruHasName) return;
+
+            // === НОВОЕ ИСКЛЮЧЕНИЕ ДЛЯ ДЛИННЫХ ДИАЛОГОВ ===
+            // Если в RU есть имя, а в JP нет - проверяем, не является ли это 
+            // принудительным переносом длинного диалога одного и того же персонажа.
+            if (ruHasName && !jpHasName) {
+              let currentRuNameMatch = block.text.match(/<[\\∾]{2}C\[6\](.*?)∾∾C\[0\]>/);
+              let currentRuName = currentRuNameMatch ? currentRuNameMatch[1] : null;
+
+              let lastSeenRuName = null;
+              for (let j = i - 1; j >= 0; j--) {
+                const prev = window.textBlocks[j];
+                if (prev.isDeleted) continue;
+                if (prev.type === 'ShowText' && (window.isNameBlock(prev.text) || /<[\\∾]{2}C\[6\]/.test(prev.text))) {
+                  const prevNameMatch = prev.text.match(/<[\\∾]{2}C\[6\](.*?)∾∾C\[0\]>/);
+                  if (prevNameMatch) lastSeenRuName = prevNameMatch[1];
+                  break; // Нашли предыдущего говорящего
+                }
+              }
+              
+              // Если текущее имя совпадает с именем предыдущего говорящего, прощаем рассинхрон
+              if (currentRuName && lastSeenRuName && currentRuName === lastSeenRuName) {
+                return; // Выходим из текущей итерации, не фиксируя ошибку
+              }
+            }
+            // ==============================================
 
             window.allErrorIndices.add(i); // Подсвечиваем блок красным
             
@@ -2226,7 +2253,8 @@ setTimeout(function () {
             if (err.type === 'Ошибка скрипта' || err.isFixableIndent || err.isItemIdMismatchLine || err.type === 'Ошибка тега цвета' || err.type === 'Лишний перенос' || err.type === 'Ошибка шаблона' || err.type === 'Рассинхронизация' || err.type === 'Слипание строк' || err.type === 'Незакрытая кавычка') {
               // Если это ошибка скрипта, проверяем на пустой msg
               const displayMsg = err.msg || err.reason || 'Неизвестная ошибка';
-              extraHtml += `<li><b>Строка ${err.line + 1}</b>: ${displayMsg}</li>`;
+              const offset = window.globalLineOffset || 0;
+              extraHtml += `<li><b>Строка ${err.line + 1 + offset}</b>: ${displayMsg}</li>`;
             }
           });
           extraHtml += '</ul></div>';
@@ -2390,3 +2418,12 @@ setTimeout(function () {
     };
   }
 })();
+
+// Заставляем кнопку исправления мгновенно реагировать на ручное редактирование текста
+document.addEventListener('input', function(e) {
+  if (e.target && e.target.tagName === 'TEXTAREA') {
+    if (typeof window.updateFixButtonsVisibility === 'function') {
+      setTimeout(window.updateFixButtonsVisibility, 50);
+    }
+  }
+});
