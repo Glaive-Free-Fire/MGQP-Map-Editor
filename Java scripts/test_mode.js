@@ -450,7 +450,8 @@ window.checkMapStructureMatch = function (jpContent, ruContent) {
     let grouped = [];
     // Список команд, которые мы исключаем из проверки структуры (игнорируем их наличие/отсутствие)
     // Это позволяет менять структуру диалогов (делить строки, добавлять атрибуты) без ошибок.
-    const ignoredCommands = ['ShowText', 'ShowTextAttributes'];
+    // Теперь игнорируем ТОЛЬКО ShowText, так как их количество может не совпадать
+    const ignoredCommands = ['ShowText'];
 
     for (const [eid, jpEv] of Object.entries(jpEvents)) {
       const ruEv = ruEvents[eid];
@@ -489,8 +490,27 @@ window.checkMapStructureMatch = function (jpContent, ruContent) {
           }
 
           // 3. Также пропускаем сгенерированные строки #+ в русском файле (на всякий случай)
+          // Делаем это ДО проверки ShowTextAttributes, чтобы сгенерированные атрибуты не сопоставлялись с японским оригиналом.
           if (ruPage[j] && ruPage[j].raw.trim().endsWith('#+')) {
             j++;
+            continue;
+          }
+
+          // 2.5 Сравниваем ShowTextAttributes по содержимому!
+          if (jpCmd === 'ShowTextAttributes' && ruCmd === 'ShowTextAttributes') {
+            if (jpLine.raw.trim() !== ruLine.raw.trim() && !ruLine.raw.includes('##')) {
+              issues.push({
+                line: ruLine.lineNum + 1,
+                msg: `<b>Рассинхрон атрибутов:</b> содержимое ShowTextAttributes не совпадает с оригиналом.`,
+                jp: jpLine.raw,
+                ru: ruLine.raw,
+                jpLineNum: jpLine.lineNum,
+                ruLineNum: ruLine.lineNum,
+                jpContext: { before: jpPage[i - 1]?.raw, after: jpPage[i + 1]?.raw },
+                ruContext: { before: ruPage[j - 1]?.raw, after: ruPage[j + 1]?.raw }
+              });
+            }
+            i++; j++;
             continue;
           }
 
@@ -1704,56 +1724,10 @@ setTimeout(function () {
 
     } else {
       // === ВАРИАНТ Б: ГРАММАТИЧЕСКАЯ ПРОВЕРКА (FALLBACK) ===
-      let expectedLevel = 0;
-      let inPage = false;
-
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        if (!line.trim()) continue;
-
-        const indentMatch = line.match(/^\s*/);
-        const currentIndent = indentMatch ? indentMatch[0].length : 0;
-        const trimmed = line.trim();
-
-        if (/^CommonEvent\s+\d+/.test(trimmed) || /^Name\s*=/.test(trimmed)) {
-          expectedLevel = 0; inPage = false; continue;
-        }
-        if (/^Page\s+\d+/.test(trimmed)) {
-          inPage = true; expectedLevel = 4; continue;
-        }
-        if (!inPage) continue;
-
-        let targetIndent = expectedLevel;
-
-        // Блоки, уменьшающие отступ (закрывающие) ИЛИ "When/Else" (которые выравниваются по родителю)
-        const isCloser = /^BranchEnd/.test(trimmed) || /^RepeatAbove/.test(trimmed) || /^LoopEnd/.test(trimmed);
-        const isMidBlock = /^Else/.test(trimmed) || /^When/.test(trimmed); // Добавили When
-
-        if (isCloser || isMidBlock) {
-          targetIndent = Math.max(4, expectedLevel - 2);
-        }
-
-        const alreadyHasError = errors.some(e => e.line === i);
-        if (!alreadyHasError && currentIndent !== targetIndent) {
-          errors.push({
-            label: `строка ${i + 1}`,
-            type: 'Ошибка вложенности',
-            reason: `Ожидался отступ ${targetIndent}, найдено ${currentIndent}`,
-            line: i,
-            msg: `Неверная вложенность (ожидался отступ ${targetIndent}, найдено ${currentIndent})`,
-            expectedIndent: ' '.repeat(targetIndent),
-            isFixableIndent: true
-          });
-        }
-
-        // Обновление уровня для следующих строк
-        if (isCloser) {
-          expectedLevel = Math.max(4, expectedLevel - 2);
-        } else if (/^ConditionalBranch/.test(trimmed) || /^Loop/.test(trimmed) || /^ShowChoices/.test(trimmed)) {
-          expectedLevel += 2;
-        }
-      }
+      // Отключено: теперь скрипт не пытается "угадывать" отступы по синтаксису, 
+      // если загружен только один файл. Это избавит нас от ложных ошибок.
     }
+
 
     // Обновляем глобальную кнопку ChangeItems (если есть блоки с красным фоном и локальными кнопками)
     if (typeof window.updateGlobalChangeItemsBtn === 'function') {
