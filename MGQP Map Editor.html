@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8">
-  <title>MGQP Map Editor v1.5.16</title>
+  <title>MGQP Map Editor v1.5.17</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="Java scripts/main_script.js"></script>
   <script src="Java scripts/restore-mode.js"></script>
@@ -2104,27 +2104,45 @@
         div.appendChild(minusBtn);
         // --- КОНЕЦ ПРАВИЛЬНОГО БЛОКА ---
 
+        // Инициализируем глобальную память переводов
+        window.globalTranslationMemory = window.globalTranslationMemory || new Map();
+
         // --- Расширенная обработка дубликатов японского текста ---
-        // Ищем дубликаты по japaneseLink (если есть) или по block.text (если нет японского файла)
         if (block.type === 'ShowText') {
           try {
             // Хелпер для нормализации текста (игнорируем индексы в скобках)
             const getNorm = t => t ? t.trim().replace(/\[\d+\]/g, '[#]') : '';
 
             let origIdx = -1;
+            let globalSourceText = null;
 
-            // Если есть японский файл, ищем ТОЛЬКО по japaneseLink
             if (block.japaneseLink && block.japaneseLink.text) {
               const currentJapNorm = getNorm(block.japaneseLink.text);
+
+              // 1. Сначала ищем дубликат в ТЕКУЩЕЙ части файла
               origIdx = textBlocks.findIndex((b, idx2) =>
                 idx2 < i &&
                 b.japaneseLink &&
                 b.japaneseLink.text &&
                 getNorm(b.japaneseLink.text) === currentJapNorm
               );
-            }
-            // ИНАЧЕ (если японского файла нет), ищем по русскому тексту
-            else {
+
+              // 2. Если в текущей части не нашли, ищем в ГЛОБАЛЬНОЙ памяти
+              if (origIdx === -1 && window.globalTranslationMemory.has(currentJapNorm)) {
+                const entry = window.globalTranslationMemory.get(currentJapNorm);
+                // Показываем кнопку только если запись пришла из ДРУГОЙ части файла
+                if (entry.chunk !== window.currentChunkIndex) {
+                  globalSourceText = entry.text;
+                }
+              }
+
+              // 3. Запоминаем текущую строку в память для будущих частей (если она уже переведена)
+              if (!block.text.includes('ТРЕБУЕТСЯ ПЕРЕВОД')) {
+                window.globalTranslationMemory.set(currentJapNorm, { text: block.text, chunk: window.currentChunkIndex });
+              }
+
+            } else {
+              // Если японского файла нет, ищем только по русскому тексту (старая логика)
               const currentTextNorm = getNorm(block.text);
               origIdx = textBlocks.findIndex((b, idx2) =>
                 idx2 < i &&
@@ -2135,34 +2153,32 @@
               );
             }
 
-            // Если оригинал найден, показываем кнопку "Дубликат"
-            if (origIdx !== -1) {
+            // Если оригинал найден локально ИЛИ глобально, показываем кнопку
+            if (origIdx !== -1 || globalSourceText !== null) {
               const rusInputEl = block.dom && block.dom.rusInput;
               if (rusInputEl) {
                 const dupBtn = document.createElement('button');
                 dupBtn.className = 'control-btn duplicate-fix-btn';
                 dupBtn.textContent = 'Дубликат';
-                dupBtn.title = `Повтор строки ${textBlocks[origIdx].idx !== undefined ? textBlocks[origIdx].idx + 1 : '?'}`;
+                // Подсказка покажет, откуда взят дубликат: из этой части или из памяти
+                dupBtn.title = origIdx !== -1 
+                  ? `Повтор строки ${textBlocks[origIdx].idx !== undefined ? textBlocks[origIdx].idx + 1 : '?'}` 
+                  : `Повтор из другой части файла (Память переводов)`;
                 dupBtn.style.marginLeft = '8px';
                 div.appendChild(dupBtn);
 
-                // <<< НАЧАЛО ИЗМЕНЕНИЯ: Функция копирует содержимое только из одного блока >>>
                 const collectText = start => {
-                  if (!textBlocks[start]) {
-                    return '';
-                  }
-                  // Копируем содержимое только из одного блока, без захвата следующих строк
+                  if (start === -1) return globalSourceText; // Возвращаем текст из глобальной памяти
+                  if (!textBlocks[start]) return '';
                   return textBlocks[start].text;
                 };
 
-                // Хелпер для "умной" подстановки ID из японского оригинала
                 const getSmartText = (source, targetBlock) => {
                   let text = source;
                   if (targetBlock.japaneseLink && targetBlock.japaneseLink.text) {
                     const jap = targetBlock.japaneseLink.text;
                     const japMatches = jap.match(/\[\d+\]/g);
                     const sourceMatches = source.match(/\[\d+\]/g);
-                    // Если количество тегов совпадает, заменяем их по порядку
                     if (japMatches && sourceMatches && japMatches.length === sourceMatches.length) {
                       let matchIdx = 0;
                       text = source.replace(/\[\d+\]/g, () => japMatches[matchIdx++]);
@@ -2170,34 +2186,10 @@
                   }
                   return text;
                 };
-                // <<< КОНЕЦ ИЗМЕНЕНИЯ >>>
 
-                // <<< НАЧАЛО ИЗМЕНЕНИЯ: Счётчик теперь считает символы в полном тексте диалога >>>
-                const getCharCount = blockIdx => {
-                  const text = collectText(blockIdx);
-                  if (textBlocks[blockIdx].type === 'ShowText' || textBlocks[blockIdx].type === undefined) {
-                    const info = getGameTextInfo(text);
-                    const visibleText = info.rawGameText
-                      .replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/g, '')
-                      .replace(/∾∾C\[\d+\]/g, '')
-                      .replace(/C\[\d+\]/g, '')
-                      .replace(/∾/g, '')
-                      .replace(/∿/g, '')
-                      .trim();
-                    return visibleText.length;
-                  } else {
-                    return text.replace(/∾/g, '').length;
-                  }
-                };
-                // <<< КОНЕЦ ИЗМЕНЕНИЯ >>>
-
-                // Функция обновления цвета кнопки
                 const updateDupStyle = () => {
                   const sourceText = collectText(origIdx);
-                  const currText = collectText(i);
-
-                  // Кнопка зеленая, если текущий текст совпадает с источником
-                  // С УЧЕТОМ того, что ID были автоматически подправлены под текущую японскую строку.
+                  const currText = collectText(i); // В нашей логике i - это текущий блок
                   const expectedText = getSmartText(sourceText, block);
 
                   if (currText === expectedText) {
@@ -2207,7 +2199,6 @@
                   }
                 };
 
-                // Клик: вставить объединённый текст со смарт-заменой ID
                 dupBtn.addEventListener('click', () => {
                   const sourceText = collectText(origIdx);
                   const smartText = getSmartText(sourceText, block);
@@ -2216,8 +2207,8 @@
                   updateDupStyle();
                 });
 
-                // Слушатели изменений на всех связанных ShowText
                 const attachListeners = start => {
+                  if (start === -1) return; // Для глобальных строк слушатель в текущем DOM не вешаем
                   let end = start + 1;
                   while (
                     end < textBlocks.length &&
@@ -2231,11 +2222,11 @@
                 attachListeners(origIdx);
                 attachListeners(i);
 
-                // Инициализация цвета
                 updateDupStyle();
               }
             }
           } catch (e) {
+            console.error('Ошибка дубликатов:', e);
           }
         }
 
@@ -2248,6 +2239,11 @@
           const oldText = textBlocks[i].text;
           // ---
           textBlocks[i].text = textarea.value;
+          // <<< ОБНОВЛЯЕМ ГЛОБАЛЬНУЮ ПАМЯТЬ ПРИ РУЧНОМ ВВОДЕ >>>
+          if (block.japaneseLink && block.japaneseLink.text && !textarea.value.includes('ТРЕБУЕТСЯ ПЕРЕВОД')) {
+             const getNorm = t => t ? t.trim().replace(/\[\d+\]/g, '[#]') : '';
+             window.globalTranslationMemory.set(getNorm(block.japaneseLink.text), { text: textarea.value, chunk: window.currentChunkIndex });
+          }
           updateAll(); // Эта функция обновляет фон самого поля ввода
 
           // --- НАЧАЛО ИСПРАВЛЕНИЯ ---
