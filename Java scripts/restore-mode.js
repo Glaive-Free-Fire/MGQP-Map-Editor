@@ -1414,6 +1414,17 @@
               continue;
             }
           }
+
+          // === НОВОЕ ПРАВИЛО: STA #+ разрывает незаконченное предложение ===
+          // Если предыдущий ShowText не заканчивается на знак препинания - это мусорный STA
+          if (prevBlock.type === 'ShowText') {
+            const text = prevBlock.text || '';
+            const hasTerminalPunctuation = /[.!?…"»][\s]*$/.test(text);
+            if (!hasTerminalPunctuation) {
+              blocksToPreClean.push(block);
+              continue;
+            }
+          }
         }
       }
     }
@@ -1866,4 +1877,45 @@
       alert('Шаблоны для исправления или объединения не найдены.');
     }
   };
+  // === Функция для удаления висячих ShowTextAttributes ===
+  global.removeOrphanedAttributes = function() {
+    let changesMade = false;
+    if (!window.textBlocks) return false;
+
+    for (let i = 0; i < window.textBlocks.length; i++) {
+        let block = window.textBlocks[i];
+        if (block.isDeleted) continue;
+
+        if (block.type === 'ShowTextAttributes') {
+            let hasTextAhead = false;
+            
+            // Взгляд вперед: проверяем, идет ли следом текст
+            for (let j = i + 1; j < window.textBlocks.length; j++) {
+                let nextBlock = window.textBlocks[j];
+                
+                // Пропускаем удаленные блоки, пустые строки и комментарии
+                if (nextBlock.isDeleted || nextBlock.type === 'EmptyLine' || nextBlock.type === 'Comment') {
+                    continue; 
+                }
+                
+                // Если следом идет текст — всё отлично
+                if (nextBlock.type === 'ShowText') {
+                    hasTextAhead = true;
+                }
+                
+                // Как только встретили ЛЮБУЮ другую значащую команду (ConditionalBranch, ShowPicture и т.д.),
+                // или другой ShowTextAttributes — останавливаем поиск.
+                break; 
+            }
+
+            // Если текста впереди не оказалось — удаляем этот висячий атрибут
+            if (!hasTextAhead) {
+                block.isDeleted = true;
+                changesMade = true;
+            }
+        }
+    }
+    return changesMade;
+  };
+
 })(window);

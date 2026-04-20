@@ -901,6 +901,11 @@ setTimeout(function () {
       finalExportLines.push(currentLine);
     }
     
+    // === ДОБАВЛЕНО: Финальная чистка лишних пустых строк перед сохранением ===
+    if (window.cleanUpExtraEmptyLines && window.fullJapLines && window.fullJapLines.length > 0) {
+      return window.cleanUpExtraEmptyLines(finalExportLines, window.fullJapLines);
+    }
+    
     return finalExportLines;
   };
 
@@ -1782,6 +1787,51 @@ setTimeout(function () {
     // Эта проверка уже выполняется в оригинальной функции checkForLineLevelErrors из main_script.js
     // с логикой сравнения с японским оригиналом, поэтому здесь мы её не дублируем
 
+    // --- НОВАЯ ПРОВЕРКА: Тег имени в строках-продолжениях (#+) ---
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (line.startsWith('ShowText') && /#\+/.test(line)) {
+        if (/<[\\∾]{2}C\[6\]/.test(line)) {
+          errors.push({
+            label: `строка ${i + 1}`,
+            type: 'Логическая ошибка',
+            reason: 'Тег имени недопустим в строке-продолжении (маркер #+).',
+            line: i,
+            msg: 'Тег имени в строке-продолжении (#+).',
+            isDesyncError: true,
+            isNameInTailError: true
+          });
+        }
+      }
+    }
+
+    // --- НОВАЯ ПРОВЕРКА: Пустые строки между ShowText ---
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      // Ищем строки, начинающиеся на ShowText или ShowTextAttributes
+      if (/^ShowText/.test(line)) {
+        let j = i - 1;
+        let emptyCount = 0;
+        
+        // Идём вверх и считаем пустые строки
+        while (j >= 0 && lines[j].trim() === '') {
+          emptyCount++;
+          j--;
+        }
+        
+        // Если нашли пустые строки, и строка перед ними тоже ShowText
+        if (emptyCount > 0 && j >= 0 && /^ShowText/.test(lines[j].trim())) {
+          errors.push({
+            label: `строка ${i}`, 
+            type: 'Структурная ошибка',
+            reason: 'Недопустимая пустая строка между командами ShowText. Уберите лишний перенос (Enter).',
+            line: i - 1, // Привязываем ошибку к пустой строке
+            msg: 'Пустая строка внутри диалогового блока.'
+          });
+        }
+      }
+    }
+
     // --- ПРОВЕРКА: Лишние пробелы в конце строк ---
     for (let i = 0; i < lines.length; i++) {
       if (/[ \t]+$/.test(lines[i])) {
@@ -1998,7 +2048,231 @@ setTimeout(function () {
       });
     }
 
+    // === НОВАЯ ПРОВЕРКА: Лишние пустые строки (2+ подряд) ===
+    if (optionalJpLines && optionalJpLines.length > 0) {
+      let emptyCountRu = 0;
+      let emptyCountJp = 0;
+      let startIdxRu = -1;
+      let startIdxJp = -1;
+
+      for (let i = 0; i <= lines.length; i++) {
+        const isEmpty = i < lines.length && lines[i].trim() === '';
+        
+        if (isEmpty) {
+          if (emptyCountRu === 0) startIdxRu = i;
+          emptyCountRu++;
+        } else {
+          // Группа пустых строк RU закончилась
+          if (emptyCountRu >= 2) {
+            // Считаем соответствующие пустые строки в JP
+            // Находим синхронную позицию в JP файле
+            let jpPos = 0;
+            let ruPos = 0;
+            
+            // Простой подход: считаем пустые строки в JP на тех же строках
+            // Если startIdxRu валиден, ищем соответствующую позицию в JP
+            let jpEmptyCount = 0;
+            let matched = false;
+            
+            // Смотрим на ту же строку в JP
+            if (startIdxRu < optionalJpLines.length) {
+              // Считаем пустые строки в JP начиная с этой позиции
+              let j = startIdxRu;
+              while (j < optionalJpLines.length && optionalJpLines[j].trim() === '') {
+                jpEmptyCount++;
+                j++;
+              }
+            }
+            
+            // Если в JP меньше пустых строк - ошибка
+            if (jpEmptyCount < emptyCountRu) {
+              errors.push({
+                label: `строка ${startIdxRu + 1}`,
+                type: 'Структурная ошибка',
+                reason: `Лишние пустые строки: в RU файле ${emptyCountRu} пустых строк подряд, которых нет в JP оригинале.`,
+                line: startIdxRu,
+                msg: `Лишние пустые строки: в RU файле ${emptyCountRu} пустых строк подряд, которых нет в JP оригинале.`,
+                isDesyncError: true
+              });
+            }
+          }
+          emptyCountRu = 0;
+          startIdxRu = -1;
+        }
+      }
+    }
+
+    // === ДОБАВЛЕНО: ПРОВЕРКА НА РАССИНХРОН ИМЕН ===
+    if (window.textBlocks) {
+      window.textBlocks.forEach((block, i) => {
+        if (block.isDeleted || block.type !== 'ShowText' || block.hasIgnoreMarker) return;
+        const ruHasName = window.isNameBlock(block.text) || /<[\\∾]{2}C\[6\]/.test(block.text);
+        if ((block.manualPlus || block.generated) && ruHasName) return;
+        if (!block.japaneseLink) return;
+        const jpHasName = block.japaneseLink.type === 'name' || /^【.*?】/.test(block.japaneseLink.text);
+
+        if (ruHasName !== jpHasName) {
+          if (block.manualPlus && !ruHasName) return;
+          if (ruHasName && !jpHasName) {
+            let currentRuNameMatch = block.text.match(/<[\\∾]{2}C\[6\](.*?)∾∾C\[0\]>/);
+            let currentRuName = currentRuNameMatch ? currentRuNameMatch[1] : null;
+            let lastSeenRuName = null;
+            let chainBroken = false;
+            for (let j = i - 1; j >= 0; j--) {
+              const prev = window.textBlocks[j];
+              if (prev.isDeleted) continue;
+              if (prev.type === 'ShowTextAttributes') continue;
+              if (prev.type === 'ShowText') {
+                const prevHasName = window.isNameBlock(prev.text) || /<[\\∾]{2}C\[6\]/.test(prev.text);
+                if (prevHasName) {
+                  const prevNameMatch = prev.text.match(/<[\\∾]{2}C\[6\](.*?)∾∾C\[0\]>/);
+                  if (prevNameMatch) lastSeenRuName = prevNameMatch[1];
+                  break;
+                } else {
+                  if (!prev.manualPlus && !prev.generated) { chainBroken = true; break; }
+                }
+              } else {
+                chainBroken = true; break;
+              }
+            }
+            if (!chainBroken && currentRuName && lastSeenRuName && currentRuName === lastSeenRuName) return; 
+          }
+          errors.push({
+            label: `строка ${block.idx !== undefined ? block.idx + 1 : 'продолжение'}`,
+            line: block.idx !== undefined ? block.idx : -1,
+            type: 'Логическая ошибка',
+            reason: ruHasName ? 'Лишнее имя: в RU есть тег имени, хотя в оригинале здесь повествование (или диалог был прерван).' : 'Пропущено имя: в JP оригинале говорит персонаж, а в RU — просто текст.',
+            msg: ruHasName ? 'Лишнее имя: в RU есть тег имени, хотя в оригинале здесь повествование (или диалог был прерван).' : 'Пропущено имя: в JP оригинале говорит персонаж, а в RU — просто текст.',
+            isDesyncError: true
+          });
+        }
+      });
+    }
+
+    // === ДОБАВЛЕНО: ПРОВЕРКА НА РАЗРЫВЫ ПРЕДЛОЖЕНИЙ ShowTextAttributes ===
+    if (window.textBlocks) {
+      window.textBlocks.forEach((block, i) => {
+        if (block.isDeleted || block.type !== 'ShowTextAttributes' || block.hasIgnoreMarker) return;
+        // Проверяем только сгенерированные STA (manualPlus или generated)
+        if (!block.manualPlus && !block.generated) return;
+        
+        // Ищем предыдущий ShowText блок
+        let prevShowText = null;
+        for (let j = i - 1; j >= 0; j--) {
+          const prev = window.textBlocks[j];
+          if (prev.isDeleted) continue;
+          if (prev.type === 'ShowText') {
+            prevShowText = prev;
+            break;
+          }
+          if (prev.type !== 'ShowTextAttributes') break;
+        }
+        
+        // Если нашли предыдущий ShowText, проверяем конец его текста
+        if (prevShowText) {
+          const text = prevShowText.text || '';
+          // Проверяем, заканчивается ли текст на знак препинания (. ! ? ... " »)
+          const hasTerminalPunctuation = /[.!?…"»][\s]*$/.test(text);
+          
+          if (!hasTerminalPunctuation) {
+            // === НОВОЕ: Проверяем, является ли разрыв вынужденным (4+ строки ShowText) ===
+            let showTextCount = 0;
+            for (let j = i - 1; j >= 0; j--) {
+              const prevBlock = window.textBlocks[j];
+              if (prevBlock.isDeleted) continue;
+              if (prevBlock.type === 'ShowTextAttributes') break; // Останавливаемся на другом STA
+              if (prevBlock.type === 'ShowText') showTextCount++;
+              if (prevBlock.type !== 'ShowText' && prevBlock.type !== 'ShowTextAttributes') break;
+            }
+            
+            // Если меньше 4 строк ShowText - это преждевременный разрыв, генерируем ошибку
+            if (showTextCount < 4) {
+              errors.push({
+                label: `строка ${block.idx !== undefined ? block.idx + 1 : 'продолжение'}`,
+                line: block.idx !== undefined ? block.idx : -1,
+                type: 'Ошибка компоновки',
+                reason: 'Атрибут ShowTextAttributes разрывает незаконченное предложение.',
+                msg: 'Атрибут ShowTextAttributes разрывает незаконченное предложение.'
+              });
+            }
+            // Если 4 или больше - это вынужденный разрыв, ошибку НЕ генерируем
+          }
+        }
+      });
+    }
+
+    // === ДОБАВЛЕНО: ПРОВЕРКА НА ВИСЯЧИЕ ShowTextAttributes ===
+    if (window.textBlocks) {
+      window.textBlocks.forEach((block, i) => {
+        if (block.isDeleted || block.type !== 'ShowTextAttributes' || block.hasIgnoreMarker) return;
+        
+        let hasTextAhead = false;
+        for (let j = i + 1; j < window.textBlocks.length; j++) {
+          let nextBlock = window.textBlocks[j];
+          if (nextBlock.isDeleted || nextBlock.type === 'EmptyLine' || nextBlock.type === 'Comment') continue;
+          
+          if (nextBlock.type === 'ShowText') {
+            hasTextAhead = true;
+          }
+          break; 
+        }
+        
+        if (!hasTextAhead) {
+          errors.push({
+            label: `строка ${block.idx !== undefined ? block.idx + 1 : 'продолжение'}`,
+            line: block.idx !== undefined ? block.idx : -1,
+            type: 'Ошибка компоновки',
+            reason: 'Висячий атрибут ShowTextAttributes. После него нет диалога.',
+            msg: 'Висячий атрибут ShowTextAttributes. После него нет диалога.'
+          });
+        }
+      });
+    }
+
+    // === ПРОВЕРКА НА ЛИШНИЕ ПУСТЫЕ СТРОКИ (Live-режим) ===
+    if (window.textBlocks) {
+      window.textBlocks.forEach((block, i) => {
+        if (block.isDeleted || block.hasIgnoreMarker) return;
+        if (block.text.trim() === '') {
+          const prevBlock = i > 0 ? window.textBlocks[i - 1] : null;
+          if (prevBlock && prevBlock.text.trim() === '' && !prevBlock.isDeleted) {
+            const jpIsEmpty = block.japaneseLink && block.japaneseLink.text.trim() === '';
+            if (!jpIsEmpty && block.idx !== undefined) {
+              errors.push({
+                label: `строка ${block.idx + 1}`,
+                line: block.idx,
+                type: 'Структурная ошибка',
+                reason: 'Лишняя пустая строка (Live).',
+                msg: 'Лишняя пустая строка (Live).'
+              });
+            }
+          }
+        }
+      });
+    }
+
+    // === ПРОВЕРКА: Незакрытые кавычки в тексте ShowText ===
+    if (window.textBlocks) {
+      window.textBlocks.forEach((block, i) => {
+        if (block.isDeleted || block.type !== 'ShowText' || block.hasIgnoreMarker) return;
+        const text = block.text || '';
+        const quoteCount = (text.match(/"/g) || []).length;
+        if (quoteCount % 2 !== 0 && block.idx !== undefined) {
+          errors.push({
+            label: `строка ${block.idx + 1}`,
+            line: block.idx,
+            type: 'Незакрытая кавычка',
+            reason: 'Незакрытая кавычка: нечётное количество " в строке.',
+            msg: 'Незакрытая кавычка: нечётное количество " в строке.',
+            isUnclosedQuote: true
+          });
+        }
+      });
+    }
+
     // === ФИНАЛЬНАЯ ФИЛЬТРАЦИЯ: Удаляем все ошибки для строк с ## ===
+    // Также удаляем дубликаты ошибок (одинаковые label + reason)
+    const seenErrors = new Set();
     return errors.filter(err => {
       // Если у ошибки есть ссылка на строку
       if (err.line !== undefined && lines[err.line] !== undefined) {
@@ -2007,6 +2281,13 @@ setTimeout(function () {
           return false; // Игнорируем ошибку
         }
       }
+
+      // Удаляем дубликаты на основе label и reason
+      const errorKey = `${err.label}|${err.reason}`;
+      if (seenErrors.has(errorKey)) {
+        return false; // Пропускаем дубликат
+      }
+      seenErrors.add(errorKey);
       return true;
     });
   };
@@ -2037,82 +2318,7 @@ setTimeout(function () {
       // Передаем также японские линии для сверки отступов и скриптов (если есть)
       const jpLines = (window.fullJapLines && window.fullJapLines.length > 0) ? window.fullJapLines : null;
       const allErrors = window.checkForLineLevelErrors(currentLines, jpLines);
-
-      // === ДОБАВЛЕНО: ПРОВЕРКА НА РАССИНХРОН ИМЕН ===
-      if (window.textBlocks) {
-        window.textBlocks.forEach((block, i) => {
-          if (block.isDeleted || block.type !== 'ShowText' || !block.japaneseLink || block.hasIgnoreMarker) return;
-
-          // Проверяем наличие имени
-          const ruHasName = window.isNameBlock(block.text) || /<[\\∾]{2}C\[6\]/.test(block.text);
-          const jpHasName = block.japaneseLink.type === 'name' || /^【.*?】/.test(block.japaneseLink.text);
-
-          if (ruHasName !== jpHasName) {
-            // Игнорируем переносы строк (продолжения диалогов), если у них логично нет имени
-            if (block.manualPlus && !ruHasName) return;
-
-            // === НОВОЕ ИСКЛЮЧЕНИЕ ДЛЯ ДЛИННЫХ ДИАЛОГОВ ===
-            // Если в RU есть имя, а в JP нет - проверяем, не является ли это 
-            // принудительным переносом длинного диалога одного и того же персонажа.
-            if (ruHasName && !jpHasName) {
-              let currentRuNameMatch = block.text.match(/<[\\∾]{2}C\[6\](.*?)∾∾C\[0\]>/);
-              let currentRuName = currentRuNameMatch ? currentRuNameMatch[1] : null;
-
-              let lastSeenRuName = null;
-              for (let j = i - 1; j >= 0; j--) {
-                const prev = window.textBlocks[j];
-                if (prev.isDeleted) continue;
-                if (prev.type === 'ShowText' && (window.isNameBlock(prev.text) || /<[\\∾]{2}C\[6\]/.test(prev.text))) {
-                  const prevNameMatch = prev.text.match(/<[\\∾]{2}C\[6\](.*?)∾∾C\[0\]>/);
-                  if (prevNameMatch) lastSeenRuName = prevNameMatch[1];
-                  break; // Нашли предыдущего говорящего
-                }
-              }
-              
-              // Если текущее имя совпадает с именем предыдущего говорящего, прощаем рассинхрон
-              if (currentRuName && lastSeenRuName && currentRuName === lastSeenRuName) {
-                return; // Выходим из текущей итерации, не фиксируя ошибку
-              }
-            }
-            // ==============================================
-
-            window.allErrorIndices.add(i); // Подсвечиваем блок красным
-            
-            allErrors.push({
-              line: block.idx !== undefined ? block.idx : -1,
-              type: 'Рассинхронизация',
-              msg: ruHasName
-                ? 'Рассинхронизация: В RU строке есть имя, а в JP оригинале нет.'
-                : 'Рассинхронизация: В JP оригинале есть имя, а в RU строке нет.',
-              isDesyncError: true
-            });
-          }
-        });
-      }
-      // === КОНЕЦ ДОБАВЛЕННОГО КОДА ===
-
-      // === ПРОВЕРКА: Незакрытые кавычки в тексте ShowText ===
-      if (window.textBlocks) {
-        window.textBlocks.forEach((block, i) => {
-          if (block.isDeleted || block.type !== 'ShowText' || block.hasIgnoreMarker) return;
-          const text = block.text || '';
-          // В внутреннем формате редактора кавычки в диалоге выглядят как ∾" (экранированные).
-          // Считаем ВСЕ символы " в тексте — каждый ∾" содержит один ",
-          // поэтому простой подсчёт всех " даёт правильный результат.
-          // Если итоговое количество нечётное — кавычка открыта, но не закрыта в этом блоке.
-          const quoteCount = (text.match(/"/g) || []).length;
-          if (quoteCount % 2 !== 0) {
-            window.allErrorIndices.add(i);
-            allErrors.push({
-              line: block.idx !== undefined ? block.idx : -1,
-              type: 'Незакрытая кавычка',
-              msg: 'Незакрытая кавычка: нечётное количество " в строке. Кавычка открыта, но не закрыта (или наоборот).',
-              isUnclosedQuote: true
-            });
-          }
-        });
-      }
-      // === КОНЕЦ ПРОВЕРКИ КАВЫЧЕК ===
+      window.allLineLevelErrors = allErrors; // Экспортируем ошибки для локальных кнопок
 
       // 4. Обновляем список красных строк (allErrorIndices)
       let scriptErrorsCount = 0;
@@ -2122,6 +2328,7 @@ setTimeout(function () {
       let trailingNewlineCount = 0;
       let templateErrorsCount = 0;
       let desyncErrorsCount = 0;
+      let structErrorsCount = 0;
       let gluedLinesCount = 0;
       let unclosedQuoteCount = 0;
 
@@ -2173,9 +2380,15 @@ setTimeout(function () {
         }
 
         // Обработка ошибок рассинхронизации имен
-        if (err.type === 'Рассинхронизация') {
+        if (err.type === 'Логическая ошибка' && err.isDesyncError) {
           if (blockIndex !== undefined) window.allErrorIndices.add(blockIndex);
           desyncErrorsCount++;
+        }
+
+        // Обработка структурных ошибок (лишние пустые строки)
+        if (err.type === 'Структурная ошибка') {
+          if (blockIndex !== undefined) window.allErrorIndices.add(blockIndex);
+          structErrorsCount++;
         }
 
         if (err.type === 'Слипание строк') {
@@ -2192,7 +2405,7 @@ setTimeout(function () {
       // 5. Обновляем интерфейс (Лампочка, Кнопки, Список ошибок)
       const lamp = document.getElementById('matchLamp');
 
-      if (scriptErrorsCount > 0 || indentErrorsCount > 0 || itemMismatchCount > 0 || colorTagErrorsCount > 0 || trailingNewlineCount > 0 || templateErrorsCount > 0 || desyncErrorsCount > 0 || gluedLinesCount > 0 || unclosedQuoteCount > 0) {
+      if (scriptErrorsCount > 0 || indentErrorsCount > 0 || itemMismatchCount > 0 || colorTagErrorsCount > 0 || trailingNewlineCount > 0 || templateErrorsCount > 0 || desyncErrorsCount > 0 || structErrorsCount > 0 || gluedLinesCount > 0 || unclosedQuoteCount > 0) {
         if (lamp) {
           lamp.style.background = '#f66';
           let titleMsg = '';
@@ -2202,11 +2415,12 @@ setTimeout(function () {
           if (colorTagErrorsCount > 0) titleMsg += `\n + Разорванных тегов: ${colorTagErrorsCount}`;
           if (trailingNewlineCount > 0) titleMsg += `\n + Лишних переносов: ${trailingNewlineCount}`;
           if (templateErrorsCount > 0) titleMsg += `\n + Ошибок шаблонов: ${templateErrorsCount}`;
-          if (desyncErrorsCount > 0) titleMsg += `\n + Рассинхрон имён: ${desyncErrorsCount}`;
+          if (desyncErrorsCount > 0) titleMsg += `\n + Ошибок рассинхрона имён: ${desyncErrorsCount}`;
+          if (structErrorsCount > 0) titleMsg += `\n + Структурных ошибок: ${structErrorsCount}`;
           if (gluedLinesCount > 0) titleMsg += `\n + Слипание строк: ${gluedLinesCount}`;
           if (unclosedQuoteCount > 0) titleMsg += `\n + Незакрытых кавычек: ${unclosedQuoteCount}`;
 
-          if (!lamp.title.includes('Ошибок скрипта') && !lamp.title.includes('Ошибок отступов') && !lamp.title.includes('Ошибок ID предметов') && !lamp.title.includes('Разорванных тегов') && !lamp.title.includes('Лишних переносов') && !lamp.title.includes('Ошибок шаблонов') && !lamp.title.includes('Рассинхрон имён') && !lamp.title.includes('Незакрытых кавычек') && !lamp.title.includes('Слипание строк')) {
+          if (!lamp.title.includes('Ошибок скрипта') && !lamp.title.includes('Ошибок отступов') && !lamp.title.includes('Ошибок ID предметов') && !lamp.title.includes('Разорванных тегов') && !lamp.title.includes('Лишних переносов') && !lamp.title.includes('Ошибок шаблонов') && !lamp.title.includes('Ошибок рассинхрона имён') && !lamp.title.includes('Структурных ошибок') && !lamp.title.includes('Незакрытых кавычек') && !lamp.title.includes('Слипание строк')) {
             lamp.title += titleMsg;
           }
         }
@@ -2224,7 +2438,7 @@ setTimeout(function () {
           let extraHtml = '<div class="auto-detect-errors" style="margin-top:10px; border-top:1px solid #ccc; padding-top:5px;">';
           extraHtml += '<b>Обнаруженные ошибки (Live):</b><ul style="color:#d00; margin-top:4px;">';
           allErrors.forEach(err => {
-            if (err.type === 'Ошибка скрипта' || err.isFixableIndent || err.isItemIdMismatchLine || err.type === 'Ошибка тега цвета' || err.type === 'Лишний перенос' || err.type === 'Ошибка шаблона' || err.type === 'Рассинхронизация' || err.type === 'Слипание строк' || err.type === 'Незакрытая кавычка') {
+            if (err.type === 'Ошибка скрипта' || err.isFixableIndent || err.isItemIdMismatchLine || err.type === 'Ошибка тега цвета' || err.type === 'Лишний перенос' || err.type === 'Ошибка шаблона' || err.type === 'Рассинхронизация' || err.type === 'Логическая ошибка' || err.type === 'Структурная ошибка' || err.type === 'Слипание строк' || err.type === 'Незакрытая кавычка') {
               // Если это ошибка скрипта, проверяем на пустой msg
               const displayMsg = err.msg || err.reason || 'Неизвестная ошибка';
               const offset = window.globalLineOffset || 0;
@@ -2233,7 +2447,7 @@ setTimeout(function () {
           });
           extraHtml += '</ul></div>';
 
-          if (indentErrorsCount > 0 || scriptErrorsCount > 0 || itemMismatchCount > 0 || colorTagErrorsCount > 0 || trailingNewlineCount > 0 || templateErrorsCount > 0 || desyncErrorsCount > 0 || gluedLinesCount > 0 || unclosedQuoteCount > 0) {
+          if (indentErrorsCount > 0 || scriptErrorsCount > 0 || itemMismatchCount > 0 || colorTagErrorsCount > 0 || trailingNewlineCount > 0 || templateErrorsCount > 0 || desyncErrorsCount > 0 || structErrorsCount > 0 || gluedLinesCount > 0 || unclosedQuoteCount > 0) {
             diffsDiv.insertAdjacentHTML('beforeend', extraHtml);
           }
         }
@@ -2401,3 +2615,63 @@ document.addEventListener('input', function(e) {
     }
   }
 });
+
+// === АВТОМАТИЧЕСКАЯ ОЧИСТКА ЛИШНИХ ПУСТЫХ СТРОК ===
+window.cleanUpExtraEmptyLines = function(ruLines, jpLines) {
+  if (!jpLines || jpLines.length === 0) return ruLines;
+
+  let result = [];
+  let jpIndex = 0;
+  let emptyCountRu = 0;
+
+  for (let i = 0; i < ruLines.length; i++) {
+    const line = ruLines[i];
+    
+    // Если строка пустая (или состоит только из пробелов) — считаем её
+    if (line.trim() === '') {
+      emptyCountRu++;
+      continue; 
+    }
+
+    // Как только встретили текст после пустых строк
+    if (emptyCountRu > 0) {
+      let emptyCountJp = 0;
+      let foundInJp = false;
+      
+      // Ищем эту же строку в японском оригинале (заглядываем на 10 строк вперед на случай рассинхрона)
+      for (let j = jpIndex; j < Math.min(jpIndex + 10, jpLines.length); j++) {
+        if (jpLines[j].trim() === '') {
+          emptyCountJp++;
+        } else if (jpLines[j].trim() === line.trim()) {
+          foundInJp = true;
+          jpIndex = j + 1; // Успешно синхронизировались
+          break;
+        }
+      }
+
+      if (foundInJp) {
+        // Оставляем столько пустых строк, сколько в оригинале (но не меньше 1 и не больше, чем было в RU)
+        let targetEmpty = Math.max(1, emptyCountJp);
+        targetEmpty = Math.min(emptyCountRu, targetEmpty);
+        for (let k = 0; k < targetEmpty; k++) result.push('');
+      } else {
+        // Если строку не нашли в JP (например, это переведенный текст), 
+        // просто сжимаем мусор (2+ пустые строки) до 1 штуки
+        let targetEmpty = emptyCountRu >= 2 ? 1 : emptyCountRu;
+        for (let k = 0; k < targetEmpty; k++) result.push('');
+      }
+      emptyCountRu = 0; // Сбрасываем счетчик
+    }
+
+    // Добавляем саму непустую строку
+    result.push(line);
+  }
+
+  // Обрабатываем пустые строки, если они остались в самом хвосте файла
+  if (emptyCountRu > 0) {
+    let targetEmpty = emptyCountRu >= 2 ? 1 : emptyCountRu;
+    for (let k = 0; k < targetEmpty; k++) result.push('');
+  }
+
+  return result;
+};

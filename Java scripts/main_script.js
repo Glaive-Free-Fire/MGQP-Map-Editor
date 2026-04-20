@@ -200,9 +200,13 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines) {
       const commandType = match[1];
       const commandText = match[2];
       const trailingContent = match[3] || '';
-      const translatableCommands = ['Script', 'ScriptMore', 'Label', 'JumpToLabel', 'Name', 'ShowTextAttributes'];
+      const translatableCommands = ['Script', 'ScriptMore', 'Label', 'JumpToLabel', 'Name', 'ShowTextAttributes', 'ConditionalBranch', 'Empty'];
+      const technicalCommands = ['PlaySE', 'PlayBGM', 'PlayME', 'TransferPlayer', 'ChangeGold', 'ChangeItems', 'ChangeWeapons', 'ChangeArmors', 'ControlSwitches', 'ControlVariables', 'ControlSelfSwitch'];
       if (translatableCommands.includes(commandType)) {
         tempBlocks.push({ text: commandText, type: commandType, originalIdx: idx, line: line, trailingContent: trailingContent });
+      } else if (technicalCommands.includes(commandType)) {
+        // Извлекаем технические команды для проверки соответствия японскому файлу
+        tempBlocks.push({ text: commandText, type: commandType, originalIdx: idx, line: line, trailingContent: trailingContent, isTechnical: true });
       }
     } else if ((match = line.match(nameValueRegex))) {
       const commandType = match[1];
@@ -306,7 +310,7 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines) {
     }
 
     // --- Проверка на Ошибку 2 (Добавить тег) и Ошибку 3 (Удалить STA) ---
-    if (block.type === 'ShowTextAttributes' && block.manualPlus) {
+    if (block.type === 'ShowTextAttributes' && (block.manualPlus || block.generated)) {
 
       let nextRelevantBlock = null;
       let nextRelevantBlockIndex = -1;
@@ -428,6 +432,73 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines) {
           });
         }
       }
+
+      // --- Проверка: ShowTextAttributes разрывает незаконченное предложение ---
+      // Ищем предыдущий ShowText блок
+      let prevShowText = null;
+      for (let j = i - 1; j >= 0; j--) {
+        if (textBlocks[j].type === 'ShowText') {
+          prevShowText = textBlocks[j];
+          break;
+        }
+        if (textBlocks[j].type !== 'ShowTextAttributes') break;
+      }
+      
+      // Если нашли предыдущий ShowText, проверяем конец его текста
+      if (prevShowText) {
+        const text = prevShowText.text || '';
+        // Проверяем, заканчивается ли текст на знак препинания (. ! ? ... " »)
+        const hasTerminalPunctuation = /[.!?…"»][\s]*$/.test(text);
+        
+        if (!hasTerminalPunctuation && !block.hasIgnoreMarker) {
+          // Проверяем, является ли разрыв вынужденным (4+ строки ShowText)
+          let showTextCount = 0;
+          for (let j = i - 1; j >= 0; j--) {
+            const prevBlock = textBlocks[j];
+            if (prevBlock.isDeleted) continue;
+            if (prevBlock.type === 'ShowTextAttributes') break;
+            if (prevBlock.type === 'ShowText') showTextCount++;
+            if (prevBlock.type !== 'ShowText' && prevBlock.type !== 'ShowTextAttributes') break;
+          }
+          
+          // Если меньше 4 строк ShowText - это преждевременный разрыв, генерируем ошибку
+          if (showTextCount < 4) {
+            errors.push({
+              label: `строка ${block.idx + 1}`,
+              type: 'Ошибка компоновки',
+              reason: 'Атрибут ShowTextAttributes разрывает незаконченное предложение.'
+            });
+          }
+        }
+      }
+    }
+
+    // --- Проверка: Висячий ShowTextAttributes (нет текста после него) ---
+    if (block.type === 'ShowTextAttributes') {
+      let hasTextAhead = false;
+      for (let j = i + 1; j < textBlocks.length; j++) {
+        let nextBlock = textBlocks[j];
+        if (nextBlock.isDeleted || nextBlock.type === 'EmptyLine' || nextBlock.type === 'Comment') continue;
+        
+        if (nextBlock.type === 'ShowText') {
+          hasTextAhead = true;
+          break; // Нашли ShowText - всё ок
+        } else if (nextBlock.type === 'ShowTextAttributes') {
+          // Ещё один ShowTextAttributes - продолжаем поиск (это может быть разделение на окна)
+          continue;
+        } else {
+          // Другой тип блока - останавливаемся
+          break;
+        }
+      }
+      
+      if (!hasTextAhead && !block.hasIgnoreMarker) {
+        errors.push({
+          label: `строка ${block.idx + 1}`,
+          type: 'Ошибка компоновки',
+          reason: 'Висячий атрибут ShowTextAttributes. После него нет диалога.'
+        });
+      }
     }
 
     // --- Other checks (length, Japanese text, etc.) ---
@@ -467,9 +538,333 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines) {
       }
     }
   });
+
   // =================================================================
-  // END: All checks
+  // ПРОВЕРКА: Огрызки строк и позиция ShowTextAttributes в разделах подарков
+  // =================================================================
+  // Раздел подарков начинается с ConditionalBranch с параметрами [1, 11, 0, 2, 0] или похожими
+  // Внутри такого раздела:
+  // 1. Не должно быть коротких ShowText с #+, которые не начинаются с "Привязанность"
+  // 2. ShowTextAttributes должен быть только на нечётных позициях (1, 3, 5, 7...)
+
+  for (let i = 0; i < tempBlocks.length; i++) {
+    const block = tempBlocks[i];
+    // Ищем ConditionalBranch — потенциальный раздел подарков
+    if (block.line && /^\s*ConditionalBranch\(/.test(block.line)) {
+      // Сначала собираем все блоки раздела и проверяем, содержит ли он "Привязанность"
+      const sectionBlocks = [];
+      let j = i + 1;
+      while (j < tempBlocks.length) {
+        const innerBlock = tempBlocks[j];
+        if (innerBlock.line && (/^\s*Empty\(/.test(innerBlock.line) || /^\s*ConditionalBranch\(/.test(innerBlock.line))) {
+          break;
+        }
+        sectionBlocks.push(innerBlock);
+        j++;
+      }
+      
+      // Проверяем, содержит ли раздел строки начинающиеся с "Привязанность" — признак раздела подарков
+      // В обычных диалогах "Привязанность" может быть в имени или внутри текста, но не в начале
+      const hasAffinityText = sectionBlocks.some(b => {
+        if (b.type !== 'ShowText') return false;
+        const rawText = b.text.replace(/^"(.*)"$/, '$1');
+        // Удаляем теги цвета и переносы в начале для проверки
+        const cleanedText = rawText.replace(/^\\n/, '').replace(/^[\\∾]+C\[\d+\].*?[\\∾]+C\[0\]>/, '');
+        // Проверяем, что текст начинается с "Привязанность"
+        return /^Привязанность/.test(cleanedText);
+      });
+      
+      if (!hasAffinityText) continue; // Не раздел подарков — пропускаем
+      
+      // Это раздел подарков — применяем проверки
+      let positionInGift = 0;
+      
+      for (let k = 0; k < sectionBlocks.length; k++) {
+        const innerBlock = sectionBlocks[k];
+        positionInGift++;
+        
+        // Проверка 1: ShowText с #+ должен начинаться с "Привязанность"
+        if (innerBlock.type === 'ShowText' && innerBlock.trailingContent && /#\+/.test(innerBlock.trailingContent)) {
+          const rawText = innerBlock.text.replace(/^"(.*)"$/, '$1');
+          const startsWithAffinity = /^Привязанность/.test(rawText) || /^\\nПривязанность/.test(rawText);
+          
+          if (!startsWithAffinity && !innerBlock.hasIgnoreMarker) {
+            errors.push({
+              label: `строка ${innerBlock.originalIdx + 1}`,
+              type: 'Ошибка компоновки',
+              reason: 'Обнаружен огрызок строки в разделе подарков. Строка с #+ должна начинаться с "Привязанность".'
+            });
+          }
+        }
+        
+        // Проверка 2: ShowTextAttributes должен быть только на позициях 1, 6, 11...
+        if (innerBlock.type === 'ShowTextAttributes' && !innerBlock.hasIgnoreMarker) {
+          if (positionInGift % 5 !== 1) {
+            errors.push({
+              label: `строка ${innerBlock.originalIdx + 1}`,
+              type: 'Ошибка компоновки',
+              reason: `ShowTextAttributes в разделе подарков должен быть на позиции 1, 6, 11..., а не на позиции ${positionInGift}.`
+            });
+          }
+        }
+      }
+    }
+  }
+  // =================================================================
+  // END: Gift section check
+  // =================================================================
+
+  // =================================================================
+  // START: Проверка технических команд с японским файлом
+  // =================================================================
+  console.log('[DEBUG TECHNICAL] Начало проверки технических команд');
+  console.log('[DEBUG TECHNICAL] optionalJpLines:', optionalJpLines ? optionalJpLines.length : 'null');
+  
+  if (optionalJpLines && optionalJpLines.length > 0) {
+    // Парсим японские технические команды
+    const jpTempBlocks = [];
+    const jpOtherRegex = /^\s*(\w+)\(\[([\s\S]*?)\]\)/;
+    
+    optionalJpLines.forEach((line, idx) => {
+      if (/^\s*Display Name\s*=/.test(line)) return;
+      
+      let match;
+      if ((match = line.match(jpOtherRegex))) {
+        const commandType = match[1];
+        const commandText = match[2];
+        const technicalCommands = ['ConditionalBranch', 'PlaySE', 'PlayBGM', 'PlayME', 'TransferPlayer', 'ChangeGold', 'ChangeItems', 'ChangeWeapons', 'ChangeArmors', 'ControlSwitches', 'ControlVariables', 'ControlSelfSwitch'];
+        if (technicalCommands.includes(commandType)) {
+          jpTempBlocks.push({ text: commandText, type: commandType, originalIdx: idx, isTechnical: true });
+          console.log(`[DEBUG TECHNICAL] JP: ${commandType} at idx ${idx}: ${commandText}`);
+        }
+      }
+    });
+
+    console.log(`[DEBUG TECHNICAL] Найдено JP технических команд: ${jpTempBlocks.length}`);
+
+    // Сопоставляем русские и японские технические команды по типу и позиции
+    const ruTechnicalBlocks = tempBlocks.filter(b => b.isTechnical);
+    const jpTechnicalBlocks = jpTempBlocks.filter(b => b.isTechnical);
+    
+    console.log(`[DEBUG TECHNICAL] Найдено RU технических команд: ${ruTechnicalBlocks.length}`);
+    
+    // Отслеживаем использованные JP блоки
+    const usedJpIndices = new Set();
+    
+    ruTechnicalBlocks.forEach((ruBlock) => {
+      console.log(`[DEBUG TECHNICAL] RU: ${ruBlock.type} at idx ${ruBlock.originalIdx}: ${ruBlock.text}`);
+      // Последовательное сопоставление по порядку появления команд одного типа
+      const jpBlock = jpTechnicalBlocks.find((jp) => 
+        jp.type === ruBlock.type && 
+        !usedJpIndices.has(jp.originalIdx) // Ещё не использован
+      );
+
+      if (jpBlock) {
+        console.log(`[DEBUG TECHNICAL] Сопоставлен с JP at idx ${jpBlock.originalIdx}: ${jpBlock.text}`);
+        usedJpIndices.add(jpBlock.originalIdx); // Помечаем как использованный
+        // Сравниваем значения
+        if (ruBlock.text !== jpBlock.text) {
+          console.log(`[DEBUG TECHNICAL] ОШИБКА: значения не совпадают!`);
+          errors.push({
+            label: `строка ${ruBlock.originalIdx + 1}`,
+            type: 'Ошибка технической команды',
+            reason: `Значение команды ${ruBlock.type} не совпадает с японским файлом. RU: "${ruBlock.text}", JP: "${jpBlock.text}"`
+          });
+        } else {
+          console.log(`[DEBUG TECHNICAL] Значения совпадают`);
+        }
+      } else {
+        console.log(`[DEBUG TECHNICAL] Не найден соответствующий JP блок для ${ruBlock.type} at idx ${ruBlock.originalIdx}`);
+      }
+    });
+  } else {
+    console.log('[DEBUG TECHNICAL] optionalJpLines отсутствует или пуст');
+  }
+  // =================================================================
+  // END: Проверка технических команд с японским файлом
   // =================================================================
 
   return errors;
+};
+
+// === ИСПРАВЛЕННАЯ ФУНКЦИЯ ДЛЯ ИСПРАВЛЕНИЯ ДЛИННЫХ ДИАЛОГОВ (v7.5) ===
+window.fixLongDialogues = function(silent = false) {
+  // textBlocks определён в глобальной области видимости в HTML
+  const longDialogueGroups = [];
+  const checkedIndices = new Set();
+
+  // ШАГ 1: Поиск ВСЕХ длинных диалогов
+  textBlocks.forEach((block, i) => {
+    if (checkedIndices.has(i) || block.isDeleted || block.type !== 'ShowText') {
+      return;
+    }
+
+    let dialogueBlockIndices = [];
+    let lineCount = 0;
+    let counterIndex = i;
+
+    while (counterIndex < textBlocks.length) {
+      const currentDialogueBlock = textBlocks[counterIndex];
+
+      if (currentDialogueBlock.isDeleted) {
+        checkedIndices.add(counterIndex);
+        counterIndex++;
+        continue;
+      }
+
+      if (
+        currentDialogueBlock.type !== 'ShowText' ||
+        (counterIndex > i && window.isNameBlock(currentDialogueBlock.text))
+      ) {
+        break;
+      }
+
+      dialogueBlockIndices.push(counterIndex);
+      checkedIndices.add(counterIndex);
+      lineCount++;
+      counterIndex++;
+    }
+
+    if (lineCount >= 5) {
+      longDialogueGroups.push(dialogueBlockIndices);
+    }
+  });
+
+  if (longDialogueGroups.length === 0) {
+    if (!silent) alert('Проблемных диалогов не найдено.');
+    return;
+  }
+
+  let fixedCount = 0;
+
+  // ШАГ 2: Обрабатываем найденные группы в обратном порядке
+  for (let i = longDialogueGroups.length - 1; i >= 0; i--) {
+    const groupIndices = longDialogueGroups[i];
+
+    // ШАГ 3: Вставляем атрибуты, строго соблюдая лимит не более 4 строк
+    let chunkStart = 0;
+    let insertedInGroup = 0;
+
+    // Пока остаток группы больше 4 строк, мы должны его разбивать
+    while (groupIndices.length - chunkStart > 4) {
+      let targetEnd = chunkStart + 3; // 4-я строка в текущем чанке
+      let cutIndex = targetEnd;
+      let safeInsertionFound = false;
+
+      // Ищем строку с завершающим знаком препинания в пределах последних 3 строк чанка
+      // Не отступаем дальше, чем начало чанка!
+      const searchStart = Math.max(targetEnd - 2, chunkStart);
+
+      for (let k = targetEnd; k >= searchStart; k--) {
+        // Учитываем смещение от уже добавленных элементов в эту группу
+        const blockIndex = groupIndices[k] + insertedInGroup;
+        const block = textBlocks[blockIndex];
+
+        if (block && block.type === 'ShowText') {
+          const text = block.text || '';
+          const hasTerminalPunctuation = /[.!?…"»][\s]*$/.test(text);
+
+          if (hasTerminalPunctuation) {
+            cutIndex = k;
+            safeInsertionFound = true;
+            break;
+          }
+        }
+      }
+
+      // Вычисляем реальную точку вставки в массиве textBlocks
+      const insertionPoint = groupIndices[cutIndex] + 1 + insertedInGroup;
+      const startIndex = groupIndices[0]; // Индекс начала всей группы диалога (не смещается)
+
+      // <<< Проверяем контекст (isNarration и lastKnownNameTag) >>>
+      let isNarration = true;
+      let lastKnownNameTag = null;
+
+      // 1. Ищем "якорь" — последний ShowTextAttributes (без #+)
+      let anchorStaIndex = -1;
+      let m = startIndex - 1;
+      while (m >= 0) {
+        const prev = textBlocks[m];
+        if (prev.isDeleted) { m--; continue; }
+        if (prev.type === 'ShowTextAttributes') {
+          if (!prev.manualPlus && !prev.generated) {
+            anchorStaIndex = m;
+            break;
+          }
+          m--; continue;
+        }
+        if (prev.type === 'ShowText') { m--; continue; }
+        break;
+      }
+
+      // 2. Ищем "родителя" — первый ShowText ПОСЛЕ якоря (до начала группы включительно)
+      let parentBlock = null;
+      if (anchorStaIndex !== -1) {
+        m = anchorStaIndex + 1;
+        while (m <= startIndex) {
+          const candidate = textBlocks[m];
+          if (candidate.isDeleted) { m++; continue; }
+          if (candidate.type === 'ShowText') {
+            parentBlock = candidate;
+            break;
+          }
+          if (candidate.type === 'ShowTextAttributes' && candidate.manualPlus) {
+            m++; continue;
+          }
+          break;
+        }
+      }
+
+      if (parentBlock) {
+        if (window.isNameBlock(parentBlock.text)) {
+          isNarration = false;
+          const nameMatch = parentBlock.text.match(/(<∾∾C\[6\].*?∾∾C\[0\]>)/);
+          if (nameMatch) lastKnownNameTag = nameMatch[1];
+        } else {
+          isNarration = true;
+        }
+      }
+
+      // Если это ДИАЛОГ, добавляем тег имени к блоку, который будет сразу после нового STA
+      if (!isNarration && lastKnownNameTag) {
+        const nextBlock = textBlocks[insertionPoint];
+        if (nextBlock && nextBlock.type === 'ShowText' && !window.isNameBlock(nextBlock.text)) {
+          nextBlock.text = `∾\n${lastKnownNameTag}${nextBlock.text}`;
+        }
+      }
+
+      // Ищем атрибуты *до* начала этой группы
+      let parentAttrText = '"",0,0,2';
+      for (let k = startIndex - 1; k >= 0; k--) {
+        if (textBlocks[k].type === 'ShowTextAttributes') {
+          parentAttrText = textBlocks[k].text;
+          break;
+        }
+      }
+
+      const newAttributesBlock = {
+        type: 'ShowTextAttributes',
+        text: parentAttrText,
+        idx: undefined,
+        generated: true,
+        manualPlus: true
+      };
+
+      textBlocks.splice(insertionPoint, 0, newAttributesBlock);
+      insertedInGroup++;
+      fixedCount++;
+
+      // Следующий чанк начинается сразу после места разреза
+      chunkStart = cutIndex + 1;
+    }
+  }
+
+  if (!silent) alert(`Исправлено ${fixedCount} проблемных мест в длинных диалогах.`);
+
+  if (typeof window.updateMatchLamp === 'function') {
+    window.updateMatchLamp();
+  }
+
+  // renderTextBlocks() и window.updateFixButtonsVisibility() вызываются из HTML
+  // они определены там, где textBlocks доступен
 };

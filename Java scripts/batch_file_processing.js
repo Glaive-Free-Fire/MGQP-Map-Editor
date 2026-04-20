@@ -1,6 +1,8 @@
 let ruFiles = {};
 let jpFiles = {};
-let batchResults = []; // Сохраняем результаты проверки для последующего исправления
+let batchResults = [];
+let batchErrorTypes = {}; // Хранит все типы ошибок и их количество
+let batchFixOptions = {}; // Хранит выбранные опции исправления // Сохраняем результаты проверки для последующего исправления
 
 // Функции для управления панелью отчёта
 function clearBatchReport() {
@@ -158,6 +160,78 @@ function getFileText(file) {
   });
 }
 
+// Функция для создания UI с чекбоксами выбора типов ошибок
+function createErrorTypeCheckboxes() {
+  const checkboxPanel = document.createElement('div');
+  checkboxPanel.id = 'batchErrorTypeCheckboxes';
+  checkboxPanel.style.marginTop = '15px';
+  checkboxPanel.style.padding = '12px';
+  checkboxPanel.style.background = '#f5f5f5';
+  checkboxPanel.style.border = '1px solid #ddd';
+  checkboxPanel.style.borderRadius = '6px';
+  
+  const title = document.createElement('div');
+  title.textContent = 'Выберите типы ошибок для автоматического исправления:';
+  title.style.fontWeight = 'bold';
+  title.style.marginBottom = '10px';
+  title.style.color = '#333';
+  checkboxPanel.appendChild(title);
+  
+  // Определяем поддерживаемые типы исправлений
+  const supportedFixes = {
+    'Структурные ошибки': true,  // restoreRussianStructureWithMissing
+    'Ошибка форматирования (лишние пробелы)': true,  // trimEnd
+    'Ошибка шаблона': true,  // fixAffectionTemplates
+    'Ошибка компоновки (ShowTextAttributes)': true,  // частично поддерживается
+    'Ошибка строки (длина > 50)': false,  // не поддерживается автоматически
+    'Ошибка строки (японский текст)': false,  // не поддерживается автоматически
+    'Ошибка кода (неправильные теги)': false,  // не поддерживается автоматически
+    'Ошибка компоновки (огрызки в подарках)': false,  // не поддерживается автоматически
+    'Ошибка компоновки (позиция ShowTextAttributes)': false  // не поддерживается автоматически
+  };
+  
+  // Создаём чекбоксы для каждого типа ошибки
+  Object.keys(batchErrorTypes).forEach(errorType => {
+    const isSupported = Object.keys(supportedFixes).some(key => errorType.includes(key.split('(')[0].trim()));
+    const count = batchErrorTypes[errorType];
+    
+    const checkboxDiv = document.createElement('div');
+    checkboxDiv.style.marginBottom = '8px';
+    checkboxDiv.style.display = 'flex';
+    checkboxDiv.style.alignItems = 'center';
+    
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.id = `fix_${errorType}`;
+    checkbox.checked = isSupported; // По умолчанию отмечены только поддерживаемые
+    checkbox.disabled = !isSupported; // Неподдерживаемые отключены
+    checkbox.style.marginRight = '8px';
+    
+    // Сохраняем выбор
+    checkbox.addEventListener('change', () => {
+      batchFixOptions[errorType] = checkbox.checked;
+    });
+    batchFixOptions[errorType] = checkbox.checked;
+    
+    const label = document.createElement('label');
+    label.htmlFor = `fix_${errorType}`;
+    label.textContent = `${errorType} (${count})`;
+    label.style.cursor = isSupported ? 'pointer' : 'default';
+    
+    if (!isSupported) {
+      label.style.textDecoration = 'line-through';
+      label.style.color = '#999';
+      label.title = 'Этот тип ошибки пока не поддерживается для автоматического исправления';
+    }
+    
+    checkboxDiv.appendChild(checkbox);
+    checkboxDiv.appendChild(label);
+    checkboxPanel.appendChild(checkboxDiv);
+  });
+  
+  return checkboxPanel;
+}
+
 // Функция для создания элементов управления исправлением
 function createFixControls() {
   const batchContent = document.getElementById('tabContentBatch');
@@ -200,6 +274,12 @@ function createFixControls() {
   fixBtn.onclick = batchFixAllFiles;
 
   fixControls.appendChild(fixBtn);
+
+  // Добавляем чекбоксы для выбора типов ошибок
+  if (Object.keys(batchErrorTypes).length > 0) {
+    const checkboxPanel = createErrorTypeCheckboxes();
+    fixControls.appendChild(checkboxPanel);
+  }
 
   // Создаем панель отчета внутри контейнера исправления
   const reportPanel = document.createElement('div');
@@ -293,8 +373,8 @@ async function batchFixAllFiles() {
 
         let currentFixedLines = ruLines.slice(); // Начинаем с оригинальных RU строк
 
-        // === ЭТАП 1: Исправляем СТРУКТУРНЫЕ ошибки (если они есть) ===
-        if (result.hasStructError) {
+        // === ЭТАП 1: Исправляем СТРУКТУРНЫЕ ошибки (если они есть и выбран чекбокс) ===
+        if (result.hasStructError && batchFixOptions['Структурные ошибки']) {
           console.log(`[Этап 1] Исправление структуры для: ${fileName}`);
           addBatchReportLine(`→ ${fileName}: исправление структуры...`, 'info');
           const checkResult = window.checkMapStructureMatch(jpLines.join('\n'), ruLines.join('\n'));
@@ -335,7 +415,11 @@ async function batchFixAllFiles() {
         window.extractJapaneseTexts(window.fullJapLines); // Это связывает блоки, что критично для autoFixNameTagErrors
 
         // === ПРИОРИТЕТ 1: Исправляем ОШИБКИ С ВЫСОКИМ ПРИОРИТЕТОМ (лишние пробелы в конце строки) ===
-        addBatchReportLine(`  → ${fileName}: проверка ошибок высокого приоритета...`, 'info');
+        // Проверяем, выбран ли чекбокс для ошибок форматирования
+        const fixFormatErrors = Object.keys(batchFixOptions).some(key => key.includes('Ошибка форматирования') && batchFixOptions[key]);
+        
+        if (fixFormatErrors) {
+          addBatchReportLine(`  → ${fileName}: проверка ошибок высокого приоритета...`, 'info');
 
         let highPriorityErrorsFixed = 0;
         let maxHighPriorityPasses = 3;
@@ -385,9 +469,14 @@ async function batchFixAllFiles() {
         if (highPriorityPass >= maxHighPriorityPasses) {
           addBatchReportLine(`    [ПРЕДУПРЕЖДЕНИЕ] Достигнут лимит проходов для ошибок высокого приоритета (${maxHighPriorityPasses})`, 'warning');
         }
+        } // Конец блока if (fixFormatErrors)
 
         // === ПРИОРИТЕТ 2: Исправляем ОШИБКИ С НИЗКИМ ПРИОРИТЕТОМ (ошибки шаблона) ===
-        addBatchReportLine(`  → ${fileName}: проверка ошибок низкого приоритета...`, 'info');
+        // Проверяем, выбран ли чекбокс для ошибок шаблона
+        const fixTemplateErrors = Object.keys(batchFixOptions).some(key => key.includes('Ошибка шаблона') && batchFixOptions[key]);
+        
+        if (fixTemplateErrors) {
+          addBatchReportLine(`  → ${fileName}: проверка ошибок низкого приоритета...`, 'info');
 
         // Проверяем наличие ошибок шаблона
         const templateErrors = window.checkForLineLevelErrors(currentFixedLines).filter(e =>
@@ -447,13 +536,18 @@ async function batchFixAllFiles() {
         } else {
           addBatchReportLine(`    ✓ Ошибок низкого приоритета не обнаружено`, 'success');
         }
+        } // Конец блока if (fixTemplateErrors)
 
         // === ЭТАП 2.3: Исправляем ОСТАЛЬНЫЕ ОШИБКИ (отступы, длинные диалоги, теги имён) ===
-        addBatchReportLine(`  → ${fileName}: проверка остальных ошибок...`, 'info');
-        const indentErrors = window.checkForLineLevelErrors(currentFixedLines).filter(e => e.isFixableIndent);
+        // Проверяем, выбран ли чекбокс для ошибок компоновки (включая отступы)
+        const fixCompositionErrors = Object.keys(batchFixOptions).some(key => key.includes('Ошибка компоновки') && batchFixOptions[key]);
+        
+        if (fixCompositionErrors) {
+          addBatchReportLine(`  → ${fileName}: проверка остальных ошибок...`, 'info');
+          const indentErrors = window.checkForLineLevelErrors(currentFixedLines).filter(e => e.isFixableIndent);
 
-        if (indentErrors.length > 0) {
-          addBatchReportLine(`    Обнаружено ${indentErrors.length} ошибок отступов, исправляем...`, 'info');
+          if (indentErrors.length > 0) {
+            addBatchReportLine(`    Обнаружено ${indentErrors.length} ошибок отступов, исправляем...`, 'info');
 
           // Исправляем отступы в обратном порядке (чтобы индексы не сбивались)
           for (let i = indentErrors.length - 1; i >= 0; i--) {
@@ -484,9 +578,14 @@ async function batchFixAllFiles() {
 
           addBatchReportLine(`    ✓ Исправлено ${indentErrors.length} ошибок отступов`, 'success');
         }
+        } // Конец блока if (fixCompositionErrors)
 
         // === ЭТАП 2.3.1: Исправляем ОШИБКИ СКРИПТОВ (двойные слэши) через блоки ===
-        addBatchReportLine(`  → ${fileName}: проверка ошибок скриптов...`, 'info');
+        // Проверяем, выбран ли чекбокс для ошибок скрипта
+        const fixScriptErrors = Object.keys(batchFixOptions).some(key => key.includes('Ошибка скрипта') && batchFixOptions[key]);
+        
+        if (fixScriptErrors) {
+          addBatchReportLine(`  → ${fileName}: проверка ошибок скриптов...`, 'info');
         // Передаем японские строки для точной проверки (критично для избежания ложных срабатываний)
         const scriptErrors = window.checkForLineLevelErrors(currentFixedLines, jpLines).filter(e =>
           e.type === 'Ошибка скрипта' && e.reason.includes('двойные слэши')
@@ -526,10 +625,15 @@ async function batchFixAllFiles() {
         } else {
           addBatchReportLine(`    ✓ Ошибок скриптов не обнаружено`, 'success');
         }
+        } // Конец блока if (fixScriptErrors)
 
 
         // 2c. Запускаем фиксеры в цикле, пока они вносят изменения
-        addBatchReportLine(`  → ${fileName}: запуск цикла исправления...`, 'info');
+        // Проверяем, выбран ли чекбокс для ошибок компоновки (включая длинные диалоги и теги)
+        const fixCompositionErrorsForLoop = Object.keys(batchFixOptions).some(key => key.includes('Ошибка компоновки') && batchFixOptions[key]);
+        
+        if (fixCompositionErrorsForLoop) {
+          addBatchReportLine(`  → ${fileName}: запуск цикла исправления...`, 'info');
         let pass = 0;
         const MAX_PASSES = 5; // Защита от бесконечного цикла
 
@@ -537,8 +641,14 @@ async function batchFixAllFiles() {
           pass++;
           let errorsFoundThisPass = {
             longDialogues: false,
-            nameTags: false
+            nameTags: false,
+            orphanedAttributes: false
           };
+
+          // Удаляем висячие ShowTextAttributes перед другими исправлениями
+          if (window.removeOrphanedAttributes()) {
+            errorsFoundThisPass.orphanedAttributes = true;
+          }
 
           // --- Проверка 1: Ищем ошибки длинных диалогов ---
           // Для этого нам нужно сгенерировать текущее состояние файла в строки
@@ -591,6 +701,7 @@ async function batchFixAllFiles() {
         if (pass >= MAX_PASSES) {
           addBatchReportLine(`    [ПРЕДУПРЕЖДЕНИЕ] Достигнут лимит проходов (${MAX_PASSES}). Возможен бесконечный цикл.`, 'warning');
         }
+        } // Конец блока if (fixCompositionErrorsForLoop)
 
         // 2d. Генерируем финальный контент файла из ИТОГОВОГО состояния
         const finalLines = window.generateFinalFileLines();
@@ -693,6 +804,8 @@ async function batchCheckAllFiles() {
 
   // Очищаем предыдущие результаты
   batchResults = [];
+  batchErrorTypes = {}; // Очищаем типы ошибок
+  batchFixOptions = {}; // Очищаем опции исправления
 
   // Сохраняем результаты для фильтрации
   const results = [];
@@ -753,12 +866,32 @@ async function batchCheckAllFiles() {
       continue;
     }
 
-    // 1. Проверяем ошибки на уровне строк с помощью новой функции
-    // Важно: передаем японские строки для корректной синхронизации отступов
     let jpLines = null;
     if (typeof jpText === 'string') {
       jpLines = jpText.split(/\r?\n/);
     }
+
+    // === НОВОЕ: Создаем контекст блоков для проверки логических ошибок ===
+    window.originalLines = ruLines.slice();
+    window.fullRusLines = ruLines.slice();
+    window.fullJapLines = jpLines.slice();
+    window.textBlocks = [];
+    window.japBlocks = [];
+    
+    // Временно отключаем рендеринг UI, чтобы не тормозить пакетную проверку
+    const originalRender = window.renderTextBlocks;
+    window.renderTextBlocks = function() {}; 
+    
+    try {
+      if (typeof window.extractTexts === 'function') window.extractTexts();
+      if (typeof window.extractJapaneseTexts === 'function') window.extractJapaneseTexts(window.fullJapLines);
+    } catch(e) {
+      console.error("Ошибка создания блоков для пакетной проверки:", e);
+    } finally {
+      window.renderTextBlocks = originalRender;
+    }
+    // =====================================================================
+
     const lineLevelErrors = window.checkForLineLevelErrors(ruLines, jpLines);
 
     // 2. Проверяем ошибки структуры, как и раньше
@@ -766,6 +899,24 @@ async function batchCheckAllFiles() {
     const structResult = window.checkMapStructureMatch(jpText, ruText);
 
     const structErrorCount = structResult.grouped ? structResult.grouped.reduce((acc, ev) => acc + ev.pages.reduce((a, p) => a + (p.errors ? p.errors.length : 0), 0), 0) : 0;
+
+    // Собираем типы ошибок для чекбоксов
+    lineLevelErrors.forEach(err => {
+      const errorKey = `${err.type}`;
+      if (!batchErrorTypes[errorKey]) {
+        batchErrorTypes[errorKey] = 0;
+      }
+      batchErrorTypes[errorKey]++;
+    });
+
+    // Если есть структурные ошибки, добавляем их
+    if (structErrorCount > 0) {
+      if (!batchErrorTypes['Структурные ошибки']) {
+        batchErrorTypes['Структурные ошибки'] = 0;
+      }
+      batchErrorTypes['Структурные ошибки'] += structErrorCount;
+    }
+
     const totalErrorCount = structErrorCount + lineLevelErrors.length;
 
     const summary = document.createElement('div');
