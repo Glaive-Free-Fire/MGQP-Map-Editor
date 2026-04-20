@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 
 <head>
   <meta charset="UTF-8">
-  <title>MGQP Map Editor v1.5.17</title>
+  <title>MGQP Map Editor v1.5.25</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="Java scripts/main_script.js"></script>
   <script src="Java scripts/restore-mode.js"></script>
@@ -1391,8 +1391,12 @@
           const commandText = match[2];
           const trailingContent = match[3] || '';
           const translatableCommands = ['Script', 'ScriptMore', 'Label', 'JumpToLabel', 'Name', 'ShowTextAttributes'];
+          const technicalCommands = ['ConditionalBranch', 'PlaySE', 'PlayBGM', 'PlayME', 'TransferPlayer', 'ChangeGold', 'ChangeItems', 'ChangeWeapons', 'ChangeArmors', 'ControlSwitches', 'ControlVariables', 'ControlSelfSwitch'];
           if (translatableCommands.includes(commandType)) {
             tempBlocks.push({ text: commandText, type: commandType, originalIdx: idx, line: line, commonEventId: currentEventId, trailingContent: trailingContent });
+          } else if (technicalCommands.includes(commandType)) {
+            // Извлекаем технические команды целиком (с именем команды) для последующего сопоставления
+            tempBlocks.push({ text: commandText, type: commandType, originalIdx: idx, line: line, commonEventId: currentEventId, trailingContent: trailingContent, isTechnical: true });
           }
         } else if ((match = line.match(nameValueRegex))) {
           const commandType = match[1];
@@ -1524,12 +1528,16 @@
           const commandType = match[1];
           const commandText = match[2];
           const translatableCommands = ['Script', 'ScriptMore', 'Label', 'JumpToLabel', 'Name', 'ShowTextAttributes'];
+          const technicalCommands = ['ConditionalBranch', 'PlaySE', 'PlayBGM', 'PlayME', 'TransferPlayer', 'ChangeGold', 'ChangeItems', 'ChangeWeapons', 'ChangeArmors', 'ControlSwitches', 'ControlVariables', 'ControlSelfSwitch'];
           if (translatableCommands.includes(commandType)) {
             if (commandType === 'Label' && !(/[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(commandText))) {
               // Пустой Label без JP — пропускаем
             } else {
               tempBlocks.push({ text: commandText, type: commandType, originalIdx: idx, commonEventId: currentEventId });
             }
+          } else if (technicalCommands.includes(commandType)) {
+            // Извлекаем технические команды целиком (с именем команды) для последующего сопоставления
+            tempBlocks.push({ text: commandText, type: commandType, originalIdx: idx, commonEventId: currentEventId, isTechnical: true });
           }
         } else if ((match = line.match(nameValueRegex))) {
           // Обрабатываем только Name = "..."
@@ -2754,6 +2762,12 @@
           exportLines.splice(anchorPosition + 1, 0, ...linesToInsert);
         }
       });
+      
+      // === ДОБАВЛЕНО: Финальная чистка лишних пустых строк перед сохранением ===
+      if (window.fullJapLines && window.fullJapLines.length > 0) {
+        exportLines = window.cleanUpExtraEmptyLines(exportLines, window.fullJapLines);
+      }
+      
       return exportLines;
     }
 
@@ -2953,178 +2967,9 @@
       return true;
     }
 
-    // === НОВАЯ ФУНКЦИЯ ДЛЯ ИСПРАВЛЕНИЯ ДЛИННЫХ ДИАЛОГОВ (v7.4) ===
-    function fixLongDialogues(silent = false) {
-      const longDialogueGroups = [];
-      const checkedIndices = new Set();
-
-      // ШАГ 1: Используем ИСПРАВЛЕННУЮ логику для поиска ВСЕХ длинных диалогов
-      // (Эта логика теперь идентична v7.3 в updateMatchLamp)
-      textBlocks.forEach((block, i) => {
-        if (checkedIndices.has(i) || block.isDeleted || block.type !== 'ShowText') {
-          return;
-        }
-
-        let dialogueBlockIndices = [];
-        let lineCount = 0;
-        let counterIndex = i;
-
-        while (counterIndex < textBlocks.length) {
-          const currentDialogueBlock = textBlocks[counterIndex];
-
-          // --- Условие ПРОПУСКА (Continue) ---
-          if (currentDialogueBlock.isDeleted) {
-            checkedIndices.add(counterIndex);
-            counterIndex++;
-            continue; // Пропускаем удаленные блоки (например, STA)
-          }
-
-          // --- Условия ОСТАНОВКИ (Break) ---
-          if (
-            currentDialogueBlock.type !== 'ShowText' || // 1. Это не ShowText
-            (counterIndex > i && window.isNameBlock(currentDialogueBlock.text)) // 2. Это ShowText, но с именем (начало нового диалога)
-          ) {
-            break;
-          }
-
-          // --- ОШИБОЧНАЯ ПРОВЕРКА ИНДЕКСА УДАЛЕНА ---
-
-          // --- Условие ПОДСЧЕТА ---
-          dialogueBlockIndices.push(counterIndex);
-          checkedIndices.add(counterIndex);
-          lineCount++;
-          counterIndex++;
-        }
-
-        if (lineCount >= 5) {
-          longDialogueGroups.push(dialogueBlockIndices);
-        }
-      });
-
-      if (longDialogueGroups.length === 0) {
-        if (!silent) alert('Проблемных диалогов не найдено.'); // Эта строка теперь будет срабатывать только если их ДЕЙСТВИТЕЛЬНО нет
-        return;
-      }
-
-      let fixedCount = 0;
-
-      // ШАГ 2: Обрабатываем найденные группы в обратном порядке
-      for (let i = longDialogueGroups.length - 1; i >= 0; i--) {
-        const groupIndices = longDialogueGroups[i];
-
-        // ШАГ 3: Вставляем атрибуты после КАЖДОЙ 4-й строки
-        for (let j = 3; j < groupIndices.length; j += 4) {
-          const insertionPointIndexInGroup = j;
-          const insertionPoint = groupIndices[insertionPointIndexInGroup] + 1;
-          const startIndex = groupIndices[0];
-
-          // <<< НАЧАЛО ИСПРАВЛЕНИЯ v24: Проверяем контекст >>>
-          let isNarration = true; // По умолчанию считаем, что это повествование
-          let lastKnownNameTag = null;
-
-          // 1. Ищем "якорь" — последний ShowTextAttributes (без #+)
-          let anchorStaIndex = -1;
-          let k = startIndex - 1;
-          while (k >= 0) {
-            const prev = textBlocks[k];
-            if (prev.isDeleted) { k--; continue; }
-
-            if (prev.type === 'ShowTextAttributes') {
-              if (!prev.manualPlus && !prev.generated) {
-                anchorStaIndex = k;
-                break;
-              }
-              k--;
-              continue;
-            }
-
-            if (prev.type === 'ShowText') {
-              k--;
-              continue;
-            }
-
-            break;
-          }
-
-          // 2. Ищем "родителя" — первый ShowText ПОСЛЕ якоря (и ДО начала нашей группы)
-          let parentBlock = null;
-          if (anchorStaIndex !== -1) {
-            k = anchorStaIndex + 1;
-            while (k < startIndex) {
-              const candidate = textBlocks[k];
-              if (candidate.isDeleted) { k++; continue; }
-
-              if (candidate.type === 'ShowText') {
-                parentBlock = candidate;
-                break;
-              }
-
-              if (candidate.type === 'ShowTextAttributes' && candidate.manualPlus) {
-                k++;
-                continue;
-              }
-
-              break;
-            }
-          }
-
-          if (parentBlock) {
-            if (window.isNameBlock(parentBlock.text)) {
-              isNarration = false;
-              const nameMatch = parentBlock.text.match(/(<∾∾C\[6\].*?∾∾C\[0\]>)/);
-              if (nameMatch) lastKnownNameTag = nameMatch[1];
-            } else {
-              isNarration = true;
-            }
-          }
-
-          // Если это ДИАЛОГ, мы должны исправить следующую строку
-          if (!isNarration && lastKnownNameTag) {
-            // Блок, который будет СЛЕДУЮЩИМ (он еще не сдвинут)
-            const nextBlock = textBlocks[insertionPoint];
-            if (nextBlock && nextBlock.type === 'ShowText' && !window.isNameBlock(nextBlock.text)) {
-              // Добавляем тег имени к блоку, который будет после STA #+
-              nextBlock.text = `∾\n${lastKnownNameTag}${nextBlock.text}`;
-            }
-          }
-          // <<< КОНЕЦ ИСПРАВЛЕНИЯ v24 >>>
-
-          let parentAttrText = '"",0,0,2';
-          // Ищем атрибуты *до* начала этой группы
-          let startBlockIndexInTextBlocks = groupIndices[0];
-          for (let k = startBlockIndexInTextBlocks - 1; k >= 0; k--) {
-            if (textBlocks[k].type === 'ShowTextAttributes') {
-              parentAttrText = textBlocks[k].text;
-              break;
-            }
-          }
-
-          const newAttributesBlock = {
-            type: 'ShowTextAttributes',
-            text: parentAttrText,
-            idx: undefined,
-            generated: true,
-            manualPlus: true // <<< ИСПРАВЛЕНО
-          };
-
-          textBlocks.splice(insertionPoint, 0, newAttributesBlock);
-          fixedCount++;
-        }
-      }
-
-      if (!silent) alert(`Исправлено ${fixedCount} проблемных мест в длинных диалогах.`);
-
-      if (typeof window.updateMatchLamp === 'function') {
-        window.updateMatchLamp();
-      }
-
-      renderTextBlocks();
-
-      // Повторная проверка на наличие других ошибок после исправлений
-      if (typeof window.updateFixButtonsVisibility === 'function') {
-        window.updateFixButtonsVisibility();
-      }
-    }
+    // === ФУНКЦИЯ fixLongDialogues ПЕРЕОПРЕДЕЛЕНА В fixLongDialogues_v7.5.js ===
+    // Встроенная версия удалена из-за повреждений при редактировании
+    // Исправленная версия загружается из отдельного файла
 
     document.getElementById('hideLabelCheckbox').addEventListener('change', function () {
       renderTextBlocks();
@@ -3137,8 +2982,6 @@
     // === ОПТИМИЗИРОВАННЫЙ ОБРАБОТЧИК для кнопки "Разделить Строки" ===
     document.getElementById('splitAllBtn').onclick = function () {
       let hasSplitted = false;
-
-      // 1. Проходим и просто делим строки (без вставок атрибутов)
       for (let i = textBlocks.length - 1; i >= 0; i--) {
         if (splitDialogueBlock(i, textBlocks)) {
           hasSplitted = true;
@@ -3296,6 +3139,57 @@
           // Если ошибки нет или тип не тот
           const fixSlashBtn = blockDiv?.querySelector('.fix-slash-btn');
           if (fixSlashBtn) fixSlashBtn.remove();
+        }
+        // --- КОНЕЦ ЛОГИКИ КНОПКИ ---
+
+        // --- ЛОГИКА КНОПКИ "ИГНОРИРОВАТЬ ИМЯ В ХВОСТЕ (##)" ---
+        let isNameInTail = false;
+        if (window.allLineLevelErrors && block.idx !== undefined) {
+           isNameInTail = window.allLineLevelErrors.some(e => e.line === block.idx && e.isNameInTailError);
+        }
+
+        if (hasError && isNameInTail) {
+          let ignoreBtn = blockDiv.querySelector('.ignore-tail-btn');
+          if (!ignoreBtn) {
+            ignoreBtn = document.createElement('button');
+            ignoreBtn.className = 'ignore-tail-btn';
+            ignoreBtn.textContent = 'Пометить как исключение (##)';
+            ignoreBtn.style.backgroundColor = '#ff9800'; // Оранжевый цвет для привлечения внимания
+            ignoreBtn.style.color = '#fff';
+            ignoreBtn.style.marginLeft = '8px';
+            ignoreBtn.style.fontSize = '11px';
+            ignoreBtn.style.border = 'none';
+            ignoreBtn.style.padding = '2px 6px';
+            ignoreBtn.style.cursor = 'pointer';
+            ignoreBtn.title = 'Добавить маркер ## к строке в файле, чтобы игнорировать эту ошибку.';
+
+            ignoreBtn.onclick = function () {
+              if (block.idx !== undefined && window.originalLines && window.originalLines[block.idx]) {
+                // Добавляем маркер прямо в сырую строку файла
+                window.originalLines[block.idx] = window.originalLines[block.idx].trimEnd() + ' ##';
+                if (window.fullRusLines) {
+                   window.fullRusLines[block.idx] = window.originalLines[block.idx];
+                }
+                block.hasIgnoreMarker = true; // Устанавливаем флаг пропуска для UI
+                
+                // Мгновенно пересчитываем ошибки и перерисовываем цвета
+                if (typeof window.updateMatchLamp === 'function') window.updateMatchLamp();
+                if (typeof window.updateRedIndices === 'function') window.updateRedIndices();
+              }
+            };
+
+            // Добавляем кнопку рядом с кнопкой "-" (минус)
+            const minusBtn = Array.from(blockDiv.querySelectorAll('button')).find(b => b.textContent === '-');
+            if (minusBtn) {
+              minusBtn.parentNode.insertBefore(ignoreBtn, minusBtn.nextSibling);
+            } else {
+              blockDiv.appendChild(ignoreBtn);
+            }
+          }
+        } else {
+          // Если ошибки больше нет, скрываем кнопку
+          const ignoreBtn = blockDiv?.querySelector('.ignore-tail-btn');
+          if (ignoreBtn) ignoreBtn.remove();
         }
         // --- КОНЕЦ ЛОГИКИ КНОПКИ ---
 
