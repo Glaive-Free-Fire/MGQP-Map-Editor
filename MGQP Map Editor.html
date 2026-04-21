@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8">
-  <title>MGQP Map Editor v1.5.25</title>
+  <title>MGQP Map Editor v1.5.26</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="Java scripts/main_script.js"></script>
   <script src="Java scripts/restore-mode.js"></script>
@@ -394,7 +394,7 @@
     // Глобальные массивы инициализируем сразу
     window.textBlocks = window.textBlocks || [];
     window.japBlocks = window.japBlocks || [];
-    window.allErrorIndices = new Set(); // <<< ДОБАВЬТЕ ЭТУ СТРОКУ
+    window.allErrorIndices = new Set();
     // === 1. Глобальные переменные для полного файла ===
     window.fullRusLines = [];
     window.fullJapLines = [];
@@ -403,7 +403,14 @@
     window.fileChunksRU = [];
     window.fileChunksJP = [];
     window.currentChunkIndex = 0;
-    // ————————————————————————————————————————————
+    window.globalLineOffset = 0;
+
+    // Вспомогательная функция для форматирования номера строки с учетом глобального смещения
+    window.formatLineLabel = function(localIdx) {
+      const localLine = localIdx + 1;
+      const globalLine = localLine + (window.globalLineOffset || 0);
+      return globalLine > localLine ? `строка ${localLine}[${globalLine}]` : `строка ${localLine}`;
+    };
 
     // === АВТОСОХРАНЕНИЕ СЕССИИ (КЭШ) ===
     window.hasUnsavedChanges = false;
@@ -518,7 +525,7 @@
             }
           } else {
             // Логика по умолчанию (для главного файла)
-            if (currentChunk.length >= 5000) {
+            if (currentChunk.length >= 4000) {
               chunks.push(currentChunk);
               currentChunk = [];
               markers.push(eventId);
@@ -645,7 +652,7 @@
           const commandName = match[1];
           if (validCommands.includes(commandName)) {
             errors.push({
-              label: `строка ${index + 1}`,
+              label: window.formatLineLabel(index),
               type: 'Синтаксическая ошибка',
               reason: `Команда <b>${commandName}</b> записана с квадратными скобками. Правильно: <code>${commandName}([...])</code>, у вас: <code>${commandName}[...]</code>. Исправьте в исходном файле.`
             });
@@ -727,7 +734,7 @@
               // Игнорируем блоки с ##
               if (errorBlock && !errorBlock.hasIgnoreMarker) {
                 redLineErrors.push({
-                  label: errorBlock.idx !== undefined ? `строка ${errorBlock.idx + 1}` : '[продолжение]',
+                  label: errorBlock.idx !== undefined ? window.formatLineLabel(errorBlock.idx) : '[продолжение]',
                   type: 'Ошибка компоновки',
                   reason: `Часть слишком длинного диалога (${lineCount} строк). Требуется вставка ShowTextAttributes.`
                 });
@@ -747,13 +754,12 @@
                 .replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/g, '')
                 .replace(/∾∾[A-Z](\[\d+\])?/g, '')
                 .replace(/∾/g, '')
-                .replace(/∿/g, '')
                 .trim();
               return v.length;
             })());
             if (!block.hasIgnoreMarker && len > 50) {
               redLineErrors.push({
-                label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[продолжение]',
+                label: block.idx !== undefined ? window.formatLineLabel(block.idx) : '[продолжение]',
                 type: 'Ошибка строки',
                 reason: `Превышен лимит символов: ${len} > 50`
               });
@@ -761,9 +767,9 @@
             }
             if (!block.hasIgnoreMarker && info.isCorrupted) {
               redLineErrors.push({
-                label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[продолжение]',
+                label: block.idx !== undefined ? window.formatLineLabel(block.idx) : '[продолжение]',
                 type: 'Ошибка строки',
-                reason: 'Повреждён тег имени или синтаксис'
+                reason: 'Поврежден тег имени или синтаксис'
               });
               window.allErrorIndices.add(i);
             }
@@ -784,7 +790,7 @@
                 // Ошибка, если текст перед тегом НЕ заканчивается на "∾\n"
                 if (!block.hasIgnoreMarker && !/∾\n$/.test(textBeforeTag)) {
                   redLineErrors.push({
-                    label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[продолжение]',
+                    label: block.idx !== undefined ? window.formatLineLabel(block.idx) : '[продолжение]',
                     type: 'Ошибка тега имени',
                     reason: 'Тег имени должен начинаться с префикса `\\n` (в редакторе `∾` и перенос строки).'
                   });
@@ -815,7 +821,7 @@
 
               if (isAnError) {
                 redLineErrors.push({
-                  label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[продолжение]',
+                  label: block.idx !== undefined ? window.formatLineLabel(block.idx) : '[продолжение]',
                   type: 'Ошибка строки',
                   reason: 'Обнаружен японский текст'
                 });
@@ -827,7 +833,7 @@
           const brokenCodeRegex = /∾∾[IC]\[\d+\].*?(?<!∾)∾C\[0\]/;
           if (!block.hasIgnoreMarker && block.type === 'ShowText' && brokenCodeRegex.test(block.text)) {
             redLineErrors.push({
-              label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[продолжение]',
+              label: block.idx !== undefined ? window.formatLineLabel(block.idx) : '[продолжение]',
               type: 'Ошибка кода',
               reason: 'Неправильно экранирован закрывающий тег. Вероятно, вместо `∾∾C[0]` используется `∾C[0]`.'
             });
@@ -856,7 +862,7 @@
 
               if (isBroken && !block.hasIgnoreMarker) {
                 redLineErrors.push({
-                  label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[продолжение]',
+                  label: block.idx !== undefined ? window.formatLineLabel(block.idx) : '[продолжение]',
                   type: 'Ошибка шаблона',
                   reason: 'Требуется исправить шаблон привязанности и объединить строки.'
                 });
@@ -869,7 +875,7 @@
           if (!hasStructuralErrors && !isAffectionFixVisible && block.type === 'ShowText' && window.japBlocks && window.japBlocks.length > 0 &&
             !window.isNameBlock(block.text) && !block.japaneseLink && !block.generated && !block.manualPlus && !block.hasIgnoreMarker) {
             redLineErrors.push({
-              label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[продолжение]',
+              label: block.idx !== undefined ? window.formatLineLabel(block.idx) : '[продолжение]',
               type: 'Рекомендация',
               reason: 'Это дополнительная строка диалога. Добавьте в конец `#+` с помощью кнопки "Запомнить Доп. Строки".'
             });
@@ -899,7 +905,7 @@
             if (!precedingStructuralBlock || precedingStructuralBlock.type !== 'ShowTextAttributes') {
               if (!block.hasIgnoreMarker) {
                 redLineErrors.push({
-                  label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[строка-плейсхолдер]',
+                  label: block.idx !== undefined ? window.formatLineLabel(block.idx) : '[строка-плейсхолдер]',
                   type: 'Потенциальная ошибка',
                   reason: 'Строка с именем персонажа без предшествующей команды ShowTextAttributes'
                 });
@@ -1002,7 +1008,7 @@
                   // Если следующий блок имеет маркер игнора, ошибку не выдаём
                   if (!nextRelevantBlock || !nextRelevantBlock.hasIgnoreMarker) {
                     redLineErrors.push({
-                      label: `строка ${nextRelevantBlock.idx + 1}`,
+                      label: window.formatLineLabel(nextRelevantBlock.idx),
                       type: 'Ошибка компоновки',
                       reason: 'Эта строка должна содержать тег имени (\\n<\\C[6]Имя\\C[0]>), так как она идет после отмеченной (#+) ShowTextAttributes.'
                     });
@@ -3454,7 +3460,7 @@
           if (len > 50) {
             errors.push({
               idx: block.idx,
-              label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[продолжение]',
+              label: block.idx !== undefined ? window.formatLineLabel(block.idx) : '[продолжение]',
               type: 'ShowText',
               reason: `Превышен лимит символов: ${len} > 50`
             });
@@ -3462,7 +3468,7 @@
           if (info.isCorrupted) {
             errors.push({
               idx: block.idx,
-              label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[продолжение]',
+              label: block.idx !== undefined ? window.formatLineLabel(block.idx) : '[продолжение]',
               type: 'ShowText',
               reason: 'Повреждён тег имени (<∾∾C[6]...∾∾C[0]>) или синтаксис строки'
             });
@@ -3471,7 +3477,7 @@
           if (!block.hasIgnoreMarker && block.type !== 'Name' && block.type !== 'Comment' && block.type !== 'JumpToLabel' && block.type !== 'Label' && /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.text)) {
             errors.push({
               idx: block.idx,
-              label: block.idx !== undefined ? `строка ${block.idx + 1}` : '[продолжение]',
+              label: block.idx !== undefined ? window.formatLineLabel(block.idx) : '[продолжение]',
               type: block.type || 'ShowText',
               reason: 'Обнаружен японский текст в поле ввода'
             });
