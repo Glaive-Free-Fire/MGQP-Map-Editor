@@ -1,4 +1,4 @@
-# MGQP Map Editor v1.5.25
+# MGQP Map Editor v1.5.26
 
 **A modern web-based tool for editing and batch-fixing RPG Maker XP map/event files, with advanced support for translation workflows (RU/JP), structure validation, and mass error correction.**
 
