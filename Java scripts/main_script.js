@@ -163,13 +163,24 @@ document.addEventListener('DOMContentLoaded', function () {
  * Новая универсальная функция для поиска всех ошибок на уровне строк.
  * Принимает на вход строки файла и возвращает массив найденных ошибок.
  * @param {string[]} ruLines - Массив строк русского файла.
+ * @param {string[]} optionalJpLines - Опциональный массив строк японского файла.
+ * @param {number} globalOffset - Глобальное смещение строк (для крупных файлов, разбитых на части).
  * @returns {object[]} - Массив объектов с описанием ошибок.
  */
-window.checkForLineLevelErrors = function (ruLines, optionalJpLines) {
+window.checkForLineLevelErrors = function (ruLines, optionalJpLines, globalOffset = 0) {
   const errors = [];
   if (!ruLines || ruLines.length === 0) {
     return errors;
   }
+
+  // --- НОВОЕ: Вспомогательная функция для форматирования номера строки ---
+  // Генерирует строку вида "строка 245[7781]", где в скобках указана строка с учетом глобального смещения
+  const getLineLabel = (localIdx) => {
+    const localLine = localIdx + 1;
+    const globalLine = localLine + globalOffset;
+    // Если смещение больше нуля, показываем оба номера. Иначе — только локальный.
+    return globalOffset > 0 ? `строка ${localLine}[${globalLine}]` : `строка ${localLine}`;
+  };
 
   // =================================================================
   // START: Full parser copied from `extractTexts` in the HTML file
@@ -279,7 +290,7 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines) {
           const errorBlock = textBlocks[errorIndex];
           if (!errorBlock.hasIgnoreMarker) {
             errors.push({
-              label: `строка ${errorBlock.idx + 1}`,
+              label: getLineLabel(errorBlock.idx),
               type: 'Ошибка компоновки',
               reason: `Часть слишком длинного диалога (${lineCount} строк). Требуется вставка ShowTextAttributes.`
             });
@@ -301,7 +312,7 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines) {
         const isMissingPrefix = !/^∾\n/.test(text);
         if (isMissingPrefix && !block.hasIgnoreMarker) {
           errors.push({
-            label: `строка ${block.idx + 1}`,
+            label: getLineLabel(block.idx),
             type: 'Ошибка тега имени',
             reason: 'Тег имени должен начинаться с префикса `\\n` (в редакторе `∾` и перенос строки).'
           });
@@ -340,7 +351,7 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines) {
         if (prevBlock.manualPlus && nextRelevantBlock.manualPlus) {
           if (!block.generated && !block.hasIgnoreMarker) {
             errors.push({
-              label: `строка ${block.idx + 1}`,
+              label: getLineLabel(block.idx),
               type: 'Ошибка компоновки',
               reason: 'Этот ShowTextAttributes (#+) находится между двумя строками-продолжениями (#+) и будет удален.'
             });
@@ -350,7 +361,7 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines) {
         // --- Проверка на Ошибку 1 (Фаза 1 Очистки) ---
         if (window.isNameBlock(prevBlock.text) && !block.hasIgnoreMarker) {
           errors.push({
-            label: `строка ${block.idx + 1}`,
+            label: getLineLabel(block.idx),
             type: 'Ошибка компоновки',
             reason: 'Этот ShowTextAttributes (#+) находится сразу после строки с именем и будет удален.'
           });
@@ -426,7 +437,7 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines) {
       if (!isNarrationBlock) {
         if (!nextRelevantBlock.hasIgnoreMarker) {
           errors.push({
-            label: `строка ${nextRelevantBlock.idx + 1}`,
+            label: getLineLabel(nextRelevantBlock.idx),
             type: 'Ошибка компоновки',
             reason: 'Эта строка должна содержать тег имени (\\n<\\C[6]Имя\\C[0]>), так как она идет после отмеченной (#+) ShowTextAttributes.'
           });
@@ -464,7 +475,7 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines) {
           // Если меньше 4 строк ShowText - это преждевременный разрыв, генерируем ошибку
           if (showTextCount < 4) {
             errors.push({
-              label: `строка ${block.idx + 1}`,
+              label: getLineLabel(block.idx),
               type: 'Ошибка компоновки',
               reason: 'Атрибут ShowTextAttributes разрывает незаконченное предложение.'
             });
@@ -494,7 +505,7 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines) {
       
       if (!hasTextAhead && !block.hasIgnoreMarker) {
         errors.push({
-          label: `строка ${block.idx + 1}`,
+          label: getLineLabel(block.idx),
           type: 'Ошибка компоновки',
           reason: 'Висячий атрибут ShowTextAttributes. После него нет диалога.'
         });
@@ -506,7 +517,7 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines) {
       const metrics = window.getVisibleTextMetrics(block.text);
       if (metrics.length > 50 && !block.hasIgnoreMarker) {
         errors.push({
-          label: `строка ${block.idx + 1}`,
+          label: getLineLabel(block.idx),
           type: 'Ошибка строки',
           reason: `Превышен лимит символов: ${metrics.length} > 50`
         });
@@ -522,7 +533,7 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines) {
         }
         if (isAnError) {
           errors.push({
-            label: `строка ${block.idx + 1}`,
+            label: getLineLabel(block.idx),
             type: 'Ошибка строки',
             reason: 'Обнаружен японский текст'
           });
@@ -531,7 +542,7 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines) {
       const brokenCodeRegex = /∾∾[IC]\[\d+\].*?(?<!∾)∾C\[0\]/;
       if (brokenCodeRegex.test(block.text) && !block.hasIgnoreMarker) {
         errors.push({
-          label: `строка ${block.idx + 1}`,
+          label: getLineLabel(block.idx),
           type: 'Ошибка кода',
           reason: 'Неправильно экранирован закрывающий тег. Вероятно, вместо `∾∾C[0]` используется `∾C[0]`.'
         });
@@ -590,7 +601,7 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines) {
           
           if (!startsWithAffinity && !innerBlock.hasIgnoreMarker) {
             errors.push({
-              label: `строка ${innerBlock.originalIdx + 1}`,
+              label: getLineLabel(innerBlock.originalIdx),
               type: 'Ошибка компоновки',
               reason: 'Обнаружен огрызок строки в разделе подарков. Строка с #+ должна начинаться с "Привязанность".'
             });
@@ -601,7 +612,7 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines) {
         if (innerBlock.type === 'ShowTextAttributes' && !innerBlock.hasIgnoreMarker) {
           if (positionInGift % 5 !== 1) {
             errors.push({
-              label: `строка ${innerBlock.originalIdx + 1}`,
+              label: getLineLabel(innerBlock.originalIdx),
               type: 'Ошибка компоновки',
               reason: `ShowTextAttributes в разделе подарков должен быть на позиции 1, 6, 11..., а не на позиции ${positionInGift}.`
             });
@@ -666,7 +677,7 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines) {
         if (ruBlock.text !== jpBlock.text) {
           console.log(`[DEBUG TECHNICAL] ОШИБКА: значения не совпадают!`);
           errors.push({
-            label: `строка ${ruBlock.originalIdx + 1}`,
+            label: getLineLabel(ruBlock.originalIdx),
             type: 'Ошибка технической команды',
             reason: `Значение команды ${ruBlock.type} не совпадает с японским файлом. RU: "${ruBlock.text}", JP: "${jpBlock.text}"`
           });
