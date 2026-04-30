@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8">
-  <title>MGQP Map Editor v1.5.26</title>
+  <title>MGQP Map Editor v1.5.27</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="Java scripts/main_script.js"></script>
   <script src="Java scripts/restore-mode.js"></script>
@@ -481,6 +481,9 @@
             // Загружаем нужную часть в редактор
             window.loadChunk(window.currentChunkIndex);
 
+            // Заполняем глобальную память переводов из всех чанков
+            window.populateGlobalTranslationMemory();
+
             document.getElementById('restoreNotification').style.display = 'none';
           } catch (e) {
             alert('Ошибка при восстановлении сессии. Кэш поврежден.');
@@ -538,6 +541,137 @@
         chunks.push(currentChunk);
       }
       return { chunks: chunks, markers: markers };
+    };
+
+    // Функция для заполнения глобальной памяти переводов из всех чанков
+    window.populateGlobalTranslationMemory = function() {
+      // Инициализируем память если нужно
+      window.globalTranslationMemory = window.globalTranslationMemory || new Map();
+      
+      console.log('[populateGlobalTranslationMemory] Начинаем заполнение памяти...');
+      console.log('[populateGlobalTranslationMemory] Чанков RU:', window.fileChunksRU?.length, 'Чанков JP:', window.fileChunksJP?.length);
+      
+      // Хелпер для нормализации текста (такой же как в renderTextBlocks)
+      const getNorm = t => {
+        if (!t) return '';
+        return t.trim()
+          .replace(/(?<!\\[VC])(?<!∾∾[VC])\[\d+\]/g, '[#]');
+      };
+
+      // Проходим по всем чанкам
+      if (!window.fileChunksRU || !window.fileChunksJP) return;
+      
+      let globalLineOffset = 0;
+      
+      for (let chunkIdx = 0; chunkIdx < window.fileChunksRU.length; chunkIdx++) {
+        const ruLines = window.fileChunksRU[chunkIdx];
+        const jpLines = window.fileChunksJP[chunkIdx] || [];
+        
+        // Парсим японские блоки из этого чанка
+        const jpBlocks = [];
+        const textCmdRegex = /^\s*ShowText\(\["([\s\S]*?)"\]\)/;
+        const showChoicesRegex = /^\s*ShowChoices\(\[\[(.*)\],\s*(\d+)\]\)/;
+        const whenRegex = /^\s*When\(\[(\d+),\s*"(.*)"\]\)/;
+        const otherRegex = /^\s*(\w+)\(\[(.*)\]\)/;
+        
+        jpLines.forEach((line, idx) => {
+          let match;
+          if ((match = line.match(textCmdRegex))) {
+            jpBlocks.push({ text: match[1], type: 'ShowText', originalIdx: idx });
+          } else if ((match = line.match(showChoicesRegex))) {
+            const choices = match[1].split('", "').map(c => c.replace(/^"|"$/g, ''));
+            jpBlocks.push({ text: choices.join(' | '), type: 'ShowChoices', originalIdx: idx });
+          } else if ((match = line.match(whenRegex))) {
+            jpBlocks.push({ text: match[2], type: 'When', originalIdx: idx });
+          } else if ((match = line.match(otherRegex))) {
+            const cmdType = match[1];
+            const cmdText = match[2];
+            if (['Script', 'ScriptMore', 'Label', 'JumpToLabel', 'Name', 'ShowTextAttributes'].includes(cmdType)) {
+              jpBlocks.push({ text: cmdText, type: cmdType, originalIdx: idx });
+            }
+          }
+        });
+        
+        // Парсим русские блоки
+        const ruBlocks = [];
+        ruLines.forEach((line, idx) => {
+          let match;
+          if ((match = line.match(textCmdRegex))) {
+            const textContent = match[1];
+            const cleanText = textContent.replace(/^"(.*)"$/, '$1').replace(/\\n/g, '\n').replace(/\\/g, '∾');
+            ruBlocks.push({ text: cleanText, type: 'ShowText', originalIdx: idx });
+          } else if ((match = line.match(showChoicesRegex))) {
+            const choices = match[1].split(/\s*\|\s*/).map(c => c.replace(/^"|"$/g, ''));
+            const cleanText = choices.join(' | ').replace(/\\n/g, '\n').replace(/\\/g, '∾');
+            ruBlocks.push({ text: cleanText, type: 'ShowChoices', originalIdx: idx });
+          } else if ((match = line.match(whenRegex))) {
+            const cleanText = match[2].replace(/\\n/g, '\n').replace(/\\/g, '∾');
+            ruBlocks.push({ text: cleanText, type: 'When', originalIdx: idx });
+          } else if ((match = line.match(otherRegex))) {
+            const cmdType = match[1];
+            const cmdText = match[2];
+            if (['Script', 'ScriptMore', 'Label', 'JumpToLabel', 'Name', 'ShowTextAttributes'].includes(cmdType)) {
+              const cleanText = cmdText.replace(/^"(.*)"$/, '$1').replace(/\\n/g, '\n').replace(/\\/g, '∾');
+              ruBlocks.push({ text: cleanText, type: cmdType, originalIdx: idx });
+            }
+          }
+        });
+        
+        // Сопоставляем японские и русские блоки
+        let ruCursor = 0;
+        jpBlocks.forEach((jpBlock) => {
+          for (let i = ruCursor; i < ruBlocks.length; i++) {
+            const ruBlock = ruBlocks[i];
+            
+            let isMatch = false;
+            if (jpBlock.type === 'ShowText' && ruBlock.type === 'ShowText') {
+              isMatch = true;
+            } else if (jpBlock.type === ruBlock.type) {
+              isMatch = true;
+            }
+            
+            if (isMatch) {
+              const globalIdx = ruBlock.originalIdx + globalLineOffset;
+              const japNorm = getNorm(jpBlock.text);
+              
+              // Добавляем в память если текст не пустой и не "ТРЕБУЕТСЯ ПЕРЕВОД"
+              if (japNorm && ruBlock.text && !ruBlock.text.includes('ТРЕБУЕТСЯ ПЕРЕВОД')) {
+                const entries = window.globalTranslationMemory.get(japNorm) || [];
+                // Проверяем, нет ли уже записи с таким globalIdx
+                const exists = entries.some(e => e.globalIdx === globalIdx);
+                if (!exists) {
+                  entries.push({ 
+                    text: ruBlock.text, 
+                    chunk: chunkIdx, 
+                    idx: ruBlock.originalIdx, 
+                    globalIdx: globalIdx 
+                  });
+                  window.globalTranslationMemory.set(japNorm, entries);
+                  console.log(`[populateGlobalTranslationMemory] Добавлена запись: chunk=${chunkIdx}, idx=${ruBlock.originalIdx}, japNorm="${japNorm.substring(0, 50)}..."`);
+                }
+              } else if (japNorm && ruBlock.text) {
+                console.log(`[populateGlobalTranslationMemory] Пропущена запись (ТРЕБУЕТСЯ ПЕРЕВОД): chunk=${chunkIdx}, idx=${ruBlock.originalIdx}`);
+              }
+              
+              ruCursor = i + 1;
+              break;
+            }
+          }
+        });
+        
+        globalLineOffset += ruLines.length;
+      }
+      
+      console.log('[populateGlobalTranslationMemory] Память заполнена, записей:', window.globalTranslationMemory.size);
+      
+      // Выводим первые 5 записей для проверки
+      let count = 0;
+      for (const [key, entries] of window.globalTranslationMemory) {
+        if (count < 5) {
+          console.log(`[populateGlobalTranslationMemory] Ключ "${key.substring(0, 50)}..." => ${entries.length} переводов`);
+        }
+        count++;
+      }
     };
 
     // Функция загрузки конкретной части в редактор (добавлен параметр isNewFile)
@@ -1202,6 +1336,7 @@
         if (window.allErrorIndices) window.allErrorIndices.clear(); // Сбрасываем подсветку ошибок
         window.mapDisplayName = ""; // Сбрасываем старое имя карты
         window.hasUnsavedChanges = false; // Сбрасываем таймер автосохранения
+        window.globalTranslationMemory = new Map(); // Сбрасываем память переводов
 
         // === РАЗБИВАЕМ ФАЙЛ НА ЧАСТИ ===
         const splitResult = window.splitIntoChunks(lines);
@@ -1227,6 +1362,9 @@
 
             // Перезагружаем ТЕКУЩУЮ часть, чтобы японский язык подцепился к ней
             window.loadChunk(window.currentChunkIndex, true);
+
+            // Заполняем глобальную память переводов из всех чанков
+            window.populateGlobalTranslationMemory();
 
             // Визуальное уведомление
             const status = document.getElementById('jpAutoLoadStatus');
@@ -1921,7 +2059,6 @@
           finalTextBlocks.push(textBlocks[i]);
         }
       }
-
       window.textBlocks = textBlocks = finalTextBlocks;
       renderTextBlocks();
     }
@@ -1931,6 +2068,19 @@
       editor.innerHTML = '';
       document.getElementById('saveBtn').style.display = textBlocks.length > 0 ? '' : 'none';
       document.getElementById('copyBtn').style.display = textBlocks.length > 0 ? '' : 'none';
+
+      // Очищаем устаревшие записи текущего чанка из глобальной памяти переводов,
+      // чтобы избежать ложных дубликатов при сдвиге индексов после редактирования
+      if (window.globalTranslationMemory) {
+        for (const [key, entries] of window.globalTranslationMemory) {
+          const filtered = entries.filter(e => e.chunk !== window.currentChunkIndex);
+          if (filtered.length === 0) {
+            window.globalTranslationMemory.delete(key);
+          } else {
+            window.globalTranslationMemory.set(key, filtered);
+          }
+        }
+      }
 
       if (textBlocks.length === 0) {
         editor.innerHTML = '<p>Загрузите файл для перевода.</p>';
@@ -2125,34 +2275,68 @@
         if (block.type === 'ShowText') {
           try {
             // Хелпер для нормализации текста (игнорируем индексы в скобках)
-            const getNorm = t => t ? t.trim().replace(/\[\d+\]/g, '[#]') : '';
+            // Для шаблонов привязанности считаем \V[число] / ∾∾V[число] одинаковыми,
+            // а остальные теги \V/\C/∾∾V/∾∾C оставляем строгими, чтобы не ловить ложные дубликаты.
+            const getNorm = t => {
+              if (!t) return '';
+              return t.trim()
+                .replace(/((?:Привязанность|好感度|友好度)\s*[：:]\s*)(?:\\V|∾∾V)\[\d+\]/g, '$1V[#]')
+                .replace(/(?<!\\[VC])(?<!∾∾[VC])\[\d+\]/g, '[#]');
+            };
 
             let origIdx = -1;
             let globalSourceText = null;
+            let globalSourceEntry = null;
 
             if (block.japaneseLink && block.japaneseLink.text) {
               const currentJapNorm = getNorm(block.japaneseLink.text);
+              // Глобальный индекс строки (учитываем смещение чанка)
+              const globalIdx = block.idx !== undefined ? (block.idx + (window.globalLineOffset || 0)) : undefined;
 
               // 1. Сначала ищем дубликат в ТЕКУЩЕЙ части файла
-              origIdx = textBlocks.findIndex((b, idx2) =>
-                idx2 < i &&
-                b.japaneseLink &&
-                b.japaneseLink.text &&
-                getNorm(b.japaneseLink.text) === currentJapNorm
-              );
+              const localDuplicateIndices = textBlocks
+                .map((b, idx2) => ({ b, idx2 }))
+                .filter(({ b }) =>
+                  b.type === 'ShowText' &&
+                  b.japaneseLink &&
+                  b.japaneseLink.text &&
+                  getNorm(b.japaneseLink.text) === currentJapNorm
+                )
+                .map(({ idx2 }) => idx2);
+              const firstLocalDuplicateIdx = localDuplicateIndices.length > 0 ? localDuplicateIndices[0] : -1;
+              origIdx = firstLocalDuplicateIdx !== -1 && firstLocalDuplicateIdx < i ? firstLocalDuplicateIdx : -1;
 
               // 2. Если в текущей части не нашли, ищем в ГЛОБАЛЬНОЙ памяти
+              // (храним ВСЕ вхождения, чтобы кнопка появлялась только на более поздних строках)
+
               if (origIdx === -1 && window.globalTranslationMemory.has(currentJapNorm)) {
-                const entry = window.globalTranslationMemory.get(currentJapNorm);
-                // Показываем кнопку только если запись пришла из ДРУГОЙ части файла
-                if (entry.chunk !== window.currentChunkIndex) {
-                  globalSourceText = entry.text;
+                const entries = (window.globalTranslationMemory.get(currentJapNorm) || [])
+                  .filter(e => typeof e.globalIdx === 'number');
+
+                // Находим самое раннее вхождение (меньший globalIdx) из ЛЮБОЙ части файла
+                const earliest = entries.reduce((best, e) => (!best || e.globalIdx < best.globalIdx) ? e : best, null);
+
+                // Показываем кнопку только если текущая строка ПОЗЖЕ самого раннего вхождения
+                if (earliest && globalIdx !== undefined && globalIdx > earliest.globalIdx) {
+                  globalSourceEntry = earliest;
+                  globalSourceText = earliest.text;
                 }
               }
 
               // 3. Запоминаем текущую строку в память для будущих частей (если она уже переведена)
-              if (!block.text.includes('ТРЕБУЕТСЯ ПЕРЕВОД')) {
-                window.globalTranslationMemory.set(currentJapNorm, { text: block.text, chunk: window.currentChunkIndex });
+              if (!block.text.includes('ТРЕБУЕТСЯ ПЕРЕВОД') && typeof globalIdx === 'number') {
+
+                const getNorm = t => {
+                  if (!t) return '';
+                  return t.trim()
+                    .replace(/((?:Привязанность|好感度|友好度)\s*[：:]\s*)(?:\\V|∾∾V)\[\d+\]/g, '$1V[#]')
+                    .replace(/(?<!\\[VC])(?<!∾∾[VC])\[\d+\]/g, '[#]');
+                };
+                const entries = window.globalTranslationMemory.get(currentJapNorm) || [];
+                // Удаляем старую запись с тем же globalIdx (если перерисовываем)
+                const filtered = entries.filter(e => e.globalIdx !== globalIdx);
+                filtered.push({ text: block.text, chunk: window.currentChunkIndex, idx: block.idx, globalIdx: globalIdx });
+                window.globalTranslationMemory.set(currentJapNorm, filtered);
               }
 
             } else {
@@ -2168,16 +2352,16 @@
             }
 
             // Если оригинал найден локально ИЛИ глобально, показываем кнопку
-            if (origIdx !== -1 || globalSourceText !== null) {
+            if (origIdx !== -1 || globalSourceEntry !== null) {
               const rusInputEl = block.dom && block.dom.rusInput;
               if (rusInputEl) {
                 const dupBtn = document.createElement('button');
                 dupBtn.className = 'control-btn duplicate-fix-btn';
                 dupBtn.textContent = 'Дубликат';
                 // Подсказка покажет, откуда взят дубликат: из этой части или из памяти
-                dupBtn.title = origIdx !== -1 
-                  ? `Повтор строки ${textBlocks[origIdx].idx !== undefined ? textBlocks[origIdx].idx + 1 : '?'}` 
-                  : `Повтор из другой части файла (Память переводов)`;
+                dupBtn.title = origIdx !== -1
+                  ? `Повтор строки ${textBlocks[origIdx].idx !== undefined ? textBlocks[origIdx].idx + 1 + (window.globalLineOffset || 0) : '?'}`
+                  : (globalSourceEntry ? `Повтор строки ${globalSourceEntry.globalIdx + 1} (другая часть файла)` : `Повтор из другой части файла (Память переводов)`);
                 dupBtn.style.marginLeft = '8px';
                 div.appendChild(dupBtn);
 
@@ -2188,14 +2372,19 @@
                 };
 
                 const getSmartText = (source, targetBlock) => {
-                  let text = source;
+                  let text = source || '';
                   if (targetBlock.japaneseLink && targetBlock.japaneseLink.text) {
                     const jap = targetBlock.japaneseLink.text;
                     const japMatches = jap.match(/\[\d+\]/g);
-                    const sourceMatches = source.match(/\[\d+\]/g);
+                    const sourceMatches = text.match(/\[\d+\]/g);
                     if (japMatches && sourceMatches && japMatches.length === sourceMatches.length) {
                       let matchIdx = 0;
-                      text = source.replace(/\[\d+\]/g, () => japMatches[matchIdx++]);
+                      text = text.replace(/\[\d+\]/g, () => japMatches[matchIdx++]);
+                    }
+
+                    const targetAffinityVar = (jap.match(/(?:Привязанность|好感度|友好度)\s*[：:]\s*(?:\\V|∾∾V)\[(\d+)\]/) || [])[1];
+                    if (targetAffinityVar) {
+                      text = text.replace(/((?:Привязанность|好感度|友好度)\s*[：:]\s*(?:\\V|∾∾V))\[\d+\]/g, `$1[${targetAffinityVar}]`);
                     }
                   }
                   return text;
@@ -2255,9 +2444,24 @@
           textBlocks[i].text = textarea.value;
           // <<< ОБНОВЛЯЕМ ГЛОБАЛЬНУЮ ПАМЯТЬ ПРИ РУЧНОМ ВВОДЕ >>>
           if (block.japaneseLink && block.japaneseLink.text && !textarea.value.includes('ТРЕБУЕТСЯ ПЕРЕВОД')) {
-             const getNorm = t => t ? t.trim().replace(/\[\d+\]/g, '[#]') : '';
-             window.globalTranslationMemory.set(getNorm(block.japaneseLink.text), { text: textarea.value, chunk: window.currentChunkIndex });
+
+             const getNorm = t => {
+               if (!t) return '';
+               return t.trim()
+                 .replace(/((?:Привязанность|好感度|友好度)\s*[：:]\s*)(?:\\V|∾∾V)\[\d+\]/g, '$1V[#]')
+                 .replace(/(?<!\\[VC])(?<!∾∾[VC])\[\d+\]/g, '[#]');
+             };
+
+             const norm = getNorm(block.japaneseLink.text);
+             const globalIdx = block.idx !== undefined ? (block.idx + (window.globalLineOffset || 0)) : undefined;
+             if (typeof globalIdx === 'number') {
+               const entries = window.globalTranslationMemory.get(norm) || [];
+               const filtered = entries.filter(e => e.globalIdx !== globalIdx);
+               filtered.push({ text: textarea.value, chunk: window.currentChunkIndex, idx: block.idx, globalIdx: globalIdx });
+               window.globalTranslationMemory.set(norm, filtered);
+             }
           }
+
           updateAll(); // Эта функция обновляет фон самого поля ввода
 
           // --- НАЧАЛО ИСПРАВЛЕНИЯ ---
