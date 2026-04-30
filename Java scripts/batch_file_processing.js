@@ -892,13 +892,31 @@ async function batchCheckAllFiles() {
     }
     // =====================================================================
 
-    const lineLevelErrors = window.checkForLineLevelErrors(ruLines, jpLines);
+    let lineLevelErrors = window.checkForLineLevelErrors(ruLines, jpLines);
 
     // 2. Проверяем ошибки структуры, как и раньше
     const ruText = ruLines.join('\n');
     const structResult = window.checkMapStructureMatch(jpText, ruText);
 
     const structErrorCount = structResult.grouped ? structResult.grouped.reduce((acc, ev) => acc + ev.pages.reduce((a, p) => a + (p.errors ? p.errors.length : 0), 0), 0) : 0;
+
+    if (structErrorCount === 0 && window.textBlocks && window.textBlocks.length > 0 && window.japBlocks && window.japBlocks.length > 0) {
+      window.textBlocks.forEach(block => {
+        if (block.isDeleted) return;
+        if (block.type === 'ShowText' &&
+          !window.isNameBlock(block.text) &&
+          !block.japaneseLink &&
+          !block.generated &&
+          !block.manualPlus &&
+          !block.hasIgnoreMarker) {
+          lineLevelErrors.push({
+            label: block.idx !== undefined ? window.formatLineLabel(block.idx) : '[продолжение]',
+            type: 'Рекомендация',
+            reason: 'Это дополнительная строка диалога. Добавьте в конец `#+` с помощью кнопки "Запомнить Доп. Строки".'
+          });
+        }
+      });
+    }
 
     // Собираем типы ошибок для чекбоксов
     lineLevelErrors.forEach(err => {
@@ -937,13 +955,44 @@ async function batchCheckAllFiles() {
 
     // Отображаем структурные ошибки
     if (structResult.grouped) {
+      const escapeHtml = (text) => (text || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const createContextBlock = (lang, context, errorLine) => {
+        if (!context) return '';
+        let blockHtml = `<div style='font-size:13px; margin-top:4px; background:#f7f7f7; border-radius:4px; padding:4px 8px; border: 1px solid #ddd;'><span style='color:#444; font-weight:bold;'>${lang} Context:</span><pre style='margin:0; padding:0; display:block;'>`;
+        if (context.before) {
+          blockHtml += `<span style='opacity:0.6;'>${escapeHtml(context.before)}</span>\n`;
+        }
+        blockHtml += `<strong style='color:#b00; background-color: #ffe0e0;'>${escapeHtml(errorLine)}</strong>\n`;
+        if (context.after) {
+          blockHtml += `<span style='opacity:0.6;'>${escapeHtml(context.after)}</span>`;
+        }
+        blockHtml += `</pre></div>`;
+        return blockHtml;
+      };
+
       structResult.grouped.forEach(ev => {
         ev.pages.forEach(page => {
           if (!page.ok) {
             if (!showOnlyErrorLines || page.errors.length > 0) {
               statHtml += `<div style='color:#b00; font-weight:bold; margin:10px 0 2px 0;'>CommonEvent ${ev.eid} (${ev.name}), Page ${page.page}</div>`;
               page.errors.forEach(err => {
-                statHtml += `<div style='color:#b00; margin-left:12px; margin-bottom:8px;'><b>Строка ${err.line}:</b> ${err.msg}</div>`;
+                const branchEndInfo = err.branchEndNumber !== undefined ? `<div style='color:#666; font-size:12px; margin-bottom:2px;'>BranchEnd ${err.branchEndNumber}</div>` : '';
+                let linePointers = [];
+                if (err.jpLineNum !== undefined) { linePointers.push(`JP: ${err.jpLineNum + 1}`); }
+                if (err.ruLineNum !== undefined) { linePointers.push(`RU: ${err.ruLineNum + 1}`); }
+                const lineInfo = linePointers.length > 0 ? `<span style="color:#555; background:#eee; padding: 2px 5px; border-radius:3px; font-size:12px; margin-right:8px;">${linePointers.join(' | ')}</span>` : '';
+                const lineLabel = err.line !== undefined ? err.line : '—';
+
+                statHtml += `<div style='color:#b00; margin-left:12px; margin-bottom:8px;'>${branchEndInfo}${lineInfo}<b>Строка ${lineLabel}:</b> ${err.msg}<br>`;
+
+                if (err.jpContext || err.ruContext) {
+                  statHtml += createContextBlock('JP', err.jpContext, err.jp);
+                  statHtml += createContextBlock('RU', err.ruContext, err.ru);
+                } else if (err.jp || err.ru) {
+                  statHtml += `<div style='font-size:13px; margin-top:2px;'><span style='color:#444;'>JP:</span> <pre style='display:inline; background:#f7f7f7; border-radius:4px; padding:2px 6px;'>${escapeHtml(err.jp)}</pre><br><span style='color:#444;'>RU:</span> <pre style='display:inline; background:#f7f7f7; border-radius:4px; padding:2px 6px;'>${escapeHtml(err.ru)}</pre></div>`;
+                }
+
+                statHtml += `</div>`;
               });
             }
           }

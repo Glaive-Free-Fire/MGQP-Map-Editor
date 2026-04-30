@@ -514,6 +514,34 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines, globalOffse
 
     // --- Other checks (length, Japanese text, etc.) ---
     if (block.type === 'ShowText') {
+      if (window.isNameBlock(block.text)) {
+        let precedingStructuralBlock = null;
+        for (let j = i - 1; j >= 0; j--) {
+          const prev = textBlocks[j];
+          if (!prev) continue;
+
+          if (prev.type === 'ShowTextAttributes') {
+            precedingStructuralBlock = prev;
+            break;
+          }
+          if (prev.type === 'ShowText' && window.isNameBlock(prev.text)) {
+            precedingStructuralBlock = prev;
+            break;
+          }
+          if (prev.type !== 'ShowText' && prev.type !== undefined) {
+            precedingStructuralBlock = prev;
+            break;
+          }
+        }
+        if ((!precedingStructuralBlock || precedingStructuralBlock.type !== 'ShowTextAttributes') && !block.hasIgnoreMarker) {
+          errors.push({
+            label: getLineLabel(block.idx),
+            type: 'Потенциальная ошибка',
+            reason: 'Строка с именем персонажа без предшествующей команды ShowTextAttributes'
+          });
+        }
+      }
+
       const metrics = window.getVisibleTextMetrics(block.text);
       if (metrics.length > 50 && !block.hasIgnoreMarker) {
         errors.push({

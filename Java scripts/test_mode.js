@@ -1494,6 +1494,8 @@ setTimeout(function () {
   // Расширяем функцию проверки ошибок
   window.checkForLineLevelErrors = function (lines, optionalJpLines) {
     let errors = [];
+    const hasFixableIndentErrorOnLine = (lineIndex) =>
+      errors.some(e => e && e.isFixableIndent && e.line === lineIndex);
 
     // 1. Вызываем базовые проверки (Японский текст, длина строк и т.д.)
     // Включаем проверку двойных слэшей из main_script.js
@@ -1551,6 +1553,134 @@ setTimeout(function () {
           }
         }
       }
+    }
+
+    // 2.5 Проверка отступов обычных ShowTextAttributes (без #+)
+    // Проверяем только когда соседние диалоговые строки согласованы по отступу.
+    // Это защищает от ложных срабатываний, если одна из соседних строк сама с неверным отступом.
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmed = line.trim();
+
+      if (!/^ShowTextAttributes\(\[/.test(trimmed)) continue;
+      if (trimmed.endsWith('#+')) continue;
+      if (trimmed.endsWith('##')) continue;
+
+      let prevIndent = null;
+      let nextIndent = null;
+
+      // Ищем ближайшую предыдущую диалоговую строку
+      for (let j = i - 1; j >= 0; j--) {
+        const prev = lines[j];
+        if (!prev || prev.trim() === '') continue;
+        const prevTrimmed = prev.trim();
+
+        if (/^ShowText\(\[/.test(prevTrimmed) || /^ShowTextAttributes\(\[/.test(prevTrimmed)) {
+          prevIndent = (prev.match(/^\s*/) || [''])[0];
+        }
+        break;
+      }
+
+      // Ищем ближайшую следующую диалоговую строку
+      for (let j = i + 1; j < lines.length; j++) {
+        const next = lines[j];
+        if (!next || next.trim() === '') continue;
+        const nextTrimmed = next.trim();
+
+        if (/^ShowText\(\[/.test(nextTrimmed) || /^ShowTextAttributes\(\[/.test(nextTrimmed)) {
+          nextIndent = (next.match(/^\s*/) || [''])[0];
+        }
+        break;
+      }
+
+      // Срабатываем только при согласованном контексте (оба соседа есть и совпадают по отступу)
+      const expectedIndent = (prevIndent !== null && nextIndent !== null && prevIndent === nextIndent)
+        ? prevIndent
+        : null;
+
+      if (expectedIndent !== null) {
+        const currentIndent = (line.match(/^\s*/) || [''])[0];
+        if (currentIndent !== expectedIndent) {
+          errors.push({
+            label: `строка ${i + 1}`,
+            type: 'Ошибка отступа',
+            reason: `Неверный отступ для ShowTextAttributes (ожидалось: "${expectedIndent.length}", найдено: "${currentIndent.length}")`,
+            line: i,
+            msg: `Неверный отступ у ShowTextAttributes (ожидалось: "${expectedIndent.length}" пробелов, найдено: "${currentIndent.length}")`,
+            expectedIndent: expectedIndent,
+            isFixableIndent: true
+          });
+        }
+      }
+    }
+
+    // 2.6 Проверка выбивающихся отступов внутри непрерывного диалогового блока
+    // (ShowText/ShowTextAttributes). Это предотвращает каскад ложных срабатываний,
+    // когда одна неверная строка «ломает» ожидания для следующих.
+    for (let i = 0; i < lines.length;) {
+      const trimmed = lines[i] ? lines[i].trim() : '';
+      const isDialogueLine = /^ShowText\(\[/.test(trimmed) || /^ShowTextAttributes\(\[/.test(trimmed);
+
+      if (!isDialogueLine) {
+        i++;
+        continue;
+      }
+
+      let j = i;
+      const block = [];
+      while (j < lines.length) {
+        const t = lines[j] ? lines[j].trim() : '';
+        const isDialogue = /^ShowText\(\[/.test(t) || /^ShowTextAttributes\(\[/.test(t);
+        if (!isDialogue) break;
+
+        if (!t.endsWith('##')) {
+          block.push({
+            idx: j,
+            indent: (lines[j].match(/^\s*/) || [''])[0]
+          });
+        }
+        j++;
+      }
+
+      // Имеет смысл только для блоков из 3+ строк, иначе слишком шумно
+      if (block.length >= 3) {
+        const freq = new Map();
+        for (const item of block) {
+          freq.set(item.indent, (freq.get(item.indent) || 0) + 1);
+        }
+
+        let dominantIndent = null;
+        let dominantCount = 0;
+        let dominantTie = false;
+        for (const [indent, count] of freq.entries()) {
+          if (count > dominantCount) {
+            dominantIndent = indent;
+            dominantCount = count;
+            dominantTie = false;
+          } else if (count === dominantCount) {
+            dominantTie = true;
+          }
+        }
+
+        // При неоднозначном «большинстве» не добавляем ошибок, чтобы не создавать шум
+        if (!dominantTie && dominantIndent !== null) {
+          for (const item of block) {
+            if (item.indent !== dominantIndent && !hasFixableIndentErrorOnLine(item.idx)) {
+              errors.push({
+                label: `строка ${item.idx + 1}`,
+                type: 'Ошибка отступа',
+                reason: `Отступ выбивается из диалогового блока (ожидается: ${dominantIndent.length}, найдено: ${item.indent.length}).`,
+                line: item.idx,
+                msg: `Неверный отступ внутри блока ShowText/ShowTextAttributes (ожидается: ${dominantIndent.length}, найдено: ${item.indent.length}).`,
+                expectedIndent: dominantIndent,
+                isFixableIndent: true
+              });
+            }
+          }
+        }
+      }
+
+      i = j;
     }
 
     // 3. Добавляем проверку отступов для строк "Page X"
