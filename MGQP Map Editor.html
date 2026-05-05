@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8">
-  <title>MGQP Map Editor v1.5.27</title>
+  <title>MGQP Map Editor v1.5.28</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="Java scripts/main_script.js"></script>
   <script src="Java scripts/restore-mode.js"></script>
@@ -1016,6 +1016,27 @@
             window.allErrorIndices.add(i);
           }
           // <<< КОНЕЦ ИЗМЕНЕНИЯ >>>
+
+          // <<< ПРОВЕРКА ШАБЛОНОВ ПОДАРКОВ >>>
+          if (block.type === 'ShowText' && !block.hasIgnoreMarker) {
+            const rawText = block.text.replace(/^"(.*)"$/, '$1').trim();
+            const cleanedText = rawText.replace(/^\\n/, '').replace(/^[\\∾]+C\[\d+\].*?[\\∾]+C\[0\]>/, '').trim();
+            const giftTemplateMatch = cleanedText.match(/^Привязанность\s*\d+\s*:\s*(.+)$/i);
+            if (giftTemplateMatch) {
+              const payload = giftTemplateMatch[1].trim();
+              const hasItemCodeToken = /^[\\∾]{1,2}i[a-z]{0,2}\[\d+\](?:\s*[×xхХ*]\s*\d+)?$/i.test(payload);
+              if (!hasItemCodeToken) {
+                redLineErrors.push({
+                  label: block.idx !== undefined ? window.formatLineLabel(block.idx) : '[строка ?]',
+                  type: 'Ошибка шаблона',
+                  reason: 'В строке подарка после "Привязанность N:" должен быть код предмета (например, `\\ii[25]`, `\\ia[1189]` или `\\ii[17] × 3`), а не текстовое название.'
+                });
+                window.allErrorIndices.add(i);
+              }
+            }
+          }
+          // <<< КОНЕЦ ПРОВЕРКИ ПОДАРКОВ >>>
+
           if (window.isNameBlock(block.text)) {
             let precedingStructuralBlock = null;
             for (let j = i - 1; j >= 0; j--) {
