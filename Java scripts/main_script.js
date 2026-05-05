@@ -635,12 +635,34 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines, globalOffse
             });
           }
         }
-        
+
+        // Проверка 1.1: После "Привязанность N:" должен идти код предмета (например, \ii[25])
+        if (innerBlock.type === 'ShowText' && !innerBlock.hasIgnoreMarker) {
+          const rawText = innerBlock.text.replace(/^"(.*)"$/, '$1').trim();
+          const cleanedText = rawText.replace(/^\\n/, '').replace(/^[\\∾]+C\[\d+\].*?[\\∾]+C\[0\]>/, '').trim();
+          const giftTemplateMatch = cleanedText.match(/^Привязанность\s*\d+\s*:\s*(.+)$/i);
+
+          if (giftTemplateMatch) {
+            const payload = giftTemplateMatch[1].trim();
+            const hasItemCodeToken = /^[\\∾]{1,2}i[a-z]{0,2}\[\d+\](?:\s*[×xхХ*]\s*\d+)?$/i.test(payload);
+
+            if (!hasItemCodeToken) {
+              const lineIdx = innerBlock.originalIdx !== undefined ? innerBlock.originalIdx : innerBlock.line ? ruLines.indexOf(innerBlock.line) : undefined;
+              errors.push({
+                label: lineIdx !== undefined ? getLineLabel(lineIdx) : 'строка ?',
+                type: 'Ошибка шаблона',
+                reason: 'В строке подарка после "Привязанность N:" должен быть код предмета (например, `\\ii[25]`, `\\ia[1189]` или `\\ii[17] × 3`), а не текстовое название.'
+              });
+            }
+          }
+        }
+
         // Проверка 2: ShowTextAttributes должен быть только на позициях 1, 6, 11...
         if (innerBlock.type === 'ShowTextAttributes' && !innerBlock.hasIgnoreMarker) {
           if (positionInGift % 5 !== 1) {
+            const lineIdx = innerBlock.originalIdx !== undefined ? innerBlock.originalIdx : innerBlock.line ? ruLines.indexOf(innerBlock.line) : undefined;
             errors.push({
-              label: getLineLabel(innerBlock.originalIdx),
+              label: lineIdx !== undefined ? getLineLabel(lineIdx) : 'строка ?',
               type: 'Ошибка компоновки',
               reason: `ShowTextAttributes в разделе подарков должен быть на позиции 1, 6, 11..., а не на позиции ${positionInGift}.`
             });

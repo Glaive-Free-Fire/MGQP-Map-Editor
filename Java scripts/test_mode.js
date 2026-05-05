@@ -1962,6 +1962,103 @@ setTimeout(function () {
       }
     }
 
+    // --- НОВАЯ ПРОВЕРКА: Лишние пустые строки относительно JP ---
+    // Проверяем только если JP-контекст доступен.
+    // Логика: сначала синхронизируем RU и JP по каждой непустой строке,
+    // затем сравниваем число пустых строк перед найденным якорем.
+    if (validJpLines && validJpLines.length > 0) {
+      const getSigLocal = (line) => {
+        const t = (line || '').trim();
+        if (!t) return 'BLK';
+        if (/^CommonEvent\s+\d+/.test(t)) return 'CE';
+        if (/^Name\s*=/.test(t)) return 'NAME';
+        if (/^Page\s+\d+/.test(t)) return 'PG';
+        if (/^ShowTextAttributes\(\[/.test(t)) return 'ATTR';
+        if (/^ShowText\(\[/.test(t)) return 'TXT';
+        if (/^Empty\(\[\]\)/.test(t)) return 'EMPTY';
+        const m = t.match(/^([A-Za-z_]+)/);
+        return m ? m[1] : 'UNK';
+      };
+
+      const isAllowedSeparatorAfterEmpty = (ruLines, emptyRunStartIdx) => {
+        for (let p = emptyRunStartIdx - 1; p >= 0; p--) {
+          const prevTrim = (ruLines[p] || '').trim();
+          if (!prevTrim) continue;
+          return /^Empty\(\[\]\)/.test(prevTrim);
+        }
+        return false;
+      };
+
+      let jpIndex = 0;
+      let emptyCountRu = 0;
+      let emptyRunStartRu = -1;
+
+      for (let i = 0; i < lines.length; i++) {
+        const ruLine = lines[i];
+        const ruTrim = ruLine.trim();
+
+        if (ruTrim === '') {
+          if (emptyCountRu === 0) emptyRunStartRu = i;
+          emptyCountRu++;
+          continue;
+        }
+
+        let foundJpPos = -1;
+        let emptyCountJp = 0;
+        const ruSig = getSigLocal(ruTrim);
+
+        for (let j = jpIndex; j < Math.min(jpIndex + 30, validJpLines.length); j++) {
+          const jpTrim = (validJpLines[j] || '').trim();
+          if (jpTrim === '') {
+            emptyCountJp++;
+            continue;
+          }
+
+          // 1) Точное совпадение строки (лучший случай)
+          if (jpTrim === ruTrim) {
+            foundJpPos = j;
+            break;
+          }
+
+          // 2) Фолбэк по сигнатуре команды для нетекстовых команд
+          const jpSig = getSigLocal(jpTrim);
+          const canMatchBySig = ruSig !== 'TXT' && jpSig !== 'TXT';
+          if (canMatchBySig && jpSig === ruSig) {
+            foundJpPos = j;
+            break;
+          }
+
+          // 3) Если наткнулись на такой же "жесткий" структурный маркер,
+          // но не сматчились выше — дальше обычно искать бессмысленно.
+          if ((ruSig === 'CE' || ruSig === 'PG' || ruSig === 'NAME') && jpSig === ruSig) {
+            break;
+          }
+        }
+
+        if (foundJpPos !== -1) {
+          if (emptyCountRu > 0 && emptyCountRu > emptyCountJp && emptyRunStartRu !== -1) {
+            const extraCount = emptyCountRu - emptyCountJp;
+            const skipAsValidSeparator = isAllowedSeparatorAfterEmpty(lines, emptyRunStartRu);
+
+            if (!skipAsValidSeparator) {
+              errors.push({
+                label: `строка ${emptyRunStartRu + 1}`,
+                type: 'Структурная ошибка',
+                reason: `Лишняя пустая строка перед командой (в JP: ${emptyCountJp}, в RU: ${emptyCountRu}).`,
+                line: emptyRunStartRu,
+                msg: `Лишняя пустая строка перед командой (в JP: ${emptyCountJp}, в RU: ${emptyCountRu}; лишних: ${extraCount}).`
+              });
+            }
+          }
+
+          jpIndex = foundJpPos + 1;
+        }
+
+        emptyCountRu = 0;
+        emptyRunStartRu = -1;
+      }
+    }
+
     // --- ПРОВЕРКА: Лишние пробелы в конце строк ---
     for (let i = 0; i < lines.length; i++) {
       if (/[ \t]+$/.test(lines[i])) {
