@@ -2463,6 +2463,22 @@ setTimeout(function () {
         if (block.text.trim() === '') {
           const prevBlock = i > 0 ? window.textBlocks[i - 1] : null;
           if (prevBlock && prevBlock.text.trim() === '' && !prevBlock.isDeleted) {
+
+            // Пропускаем структурные пустые строки формата файла:
+            // - после заголовка CommonEvent XX (перед Name =)
+            // - после Name = ... (перед Page X)
+            // - перед заголовком CommonEvent XX (конец предыдущего события)
+            if (block.idx !== undefined) {
+              const prevFileLine = (lines[block.idx - 1] || '').trim();
+              const nextFileLine = (lines[block.idx + 1] || '').trim();
+              const isStructural =
+                /^CommonEvent\s+\d/.test(prevFileLine) ||
+                /^CommonEvent\s+\d/.test(nextFileLine) ||
+                /^Name\s*=/.test(prevFileLine) ||
+                /^Page\s+\d/.test(nextFileLine);
+              if (isStructural) return;
+            }
+
             const jpIsEmpty = block.japaneseLink && block.japaneseLink.text.trim() === '';
             if (!jpIsEmpty && block.idx !== undefined) {
               errors.push({
@@ -2482,8 +2498,13 @@ setTimeout(function () {
     if (window.textBlocks) {
       window.textBlocks.forEach((block, i) => {
         if (block.isDeleted || block.type !== 'ShowText' || block.hasIgnoreMarker) return;
-        const text = block.text || '';
-        const quoteCount = (text.match(/"/g) || []).length;
+        
+        let textToCheck = block.text || '';
+        if (block.idx !== undefined && lines[block.idx]) {
+          textToCheck = lines[block.idx]; // Берем живую строку из редактора
+        }
+        
+        const quoteCount = (textToCheck.match(/"/g) || []).length;
         if (quoteCount % 2 !== 0 && block.idx !== undefined) {
           errors.push({
             label: `строка ${block.idx + 1}`,
@@ -2495,6 +2516,129 @@ setTimeout(function () {
           });
         }
       });
+    }
+
+    // === ПРОВЕРКА: Дубликаты строк с пометкой #+ ===
+    if (window.textBlocks) {
+      let prevText = null;
+      
+      window.textBlocks.forEach((block, i) => {
+        if (block.isDeleted) return;
+        
+        if (block.type === 'ShowText') {
+          let currentText = block.text || '';
+          if (block.idx !== undefined && lines[block.idx]) {
+            // Извлекаем актуальный текст из живой строки
+            const match = lines[block.idx].match(/ShowText\(\["(.*)"\]\)/);
+            if (match) currentText = match[1];
+          }
+          
+          const isPlus = block.manualPlus || (block.idx !== undefined && lines[block.idx] && lines[block.idx].includes('#+'));
+          
+          if (!block.hasIgnoreMarker && isPlus && prevText === currentText && currentText.trim() !== '') {
+            errors.push({
+              label: `строка ${block.idx !== undefined ? block.idx + 1 : 'продолжение'}`,
+              line: block.idx !== undefined ? block.idx : -1,
+              type: 'Дубликат строки',
+              reason: 'Обнаружено дублирование текста в строке с пометкой #+.',
+              msg: 'Дубликат текста в строке (#+).',
+              isDuplicateLine: true
+            });
+          }
+          
+          prevText = currentText;
+        } else if (block.type !== 'ShowTextAttributes') {
+          // Сбрасываем текст, если встретили не ShowText и не ShowTextAttributes
+          prevText = null;
+        }
+      });
+    }
+
+    // === ПРОВЕРКА: Лишние скобки 【 】 в теге имени ===
+    if (window.textBlocks) {
+      window.textBlocks.forEach((block, i) => {
+        if (block.isDeleted || block.type !== 'ShowText' || block.hasIgnoreMarker) return;
+        
+        let textToCheck = block.text || '';
+        if (block.idx !== undefined && lines[block.idx]) {
+          textToCheck = lines[block.idx]; // Берем живую строку из редактора
+        }
+        
+        // Проверяем, есть ли тег имени и есть ли внутри него 【 или 】
+        const nameMatch = textToCheck.match(/<[\\∾]+[CcСс]\[6\](.*?)[\\∾]+[CcСс]\[0\]>/);
+        if (nameMatch) {
+          const nameContent = nameMatch[1];
+          if (nameContent.includes('【') || nameContent.includes('】')) {
+            errors.push({
+              label: `строка ${block.idx !== undefined ? block.idx + 1 : 'продолжение'}`,
+              line: block.idx !== undefined ? block.idx : -1,
+              type: 'Ошибка имени',
+              reason: 'В теге имени случайно остались японские скобки 【 или 】.',
+              msg: 'Лишние скобки 【 】 в имени.',
+              isNameBracketError: true
+            });
+          }
+        }
+      });
+    }
+
+    // === ПРОВЕРКА: Отвязка портрета от имени (ShowTextAttributes без имени) ===
+    if (window.textBlocks) {
+      for (let i = 0; i < window.textBlocks.length; i++) {
+        const block = window.textBlocks[i];
+        if (block.isDeleted || block.hasIgnoreMarker) continue;
+        
+        if (block.type === 'ShowTextAttributes') {
+          let staText = block.text || '';
+          if (block.idx !== undefined && lines[block.idx]) {
+            const match = lines[block.idx].match(/ShowTextAttributes\(\[(.*)\]\)/);
+            if (match) staText = match[1];
+          }
+          
+          // Проверяем, есть ли непустой портрет
+          const portraitMatch = staText.match(/^"([^"]+)"/);
+          if (portraitMatch && portraitMatch[1].trim() !== '') {
+            let nextBlock = null;
+            // Ищем следующий значимый блок
+            for (let j = i + 1; j < window.textBlocks.length; j++) {
+              const nb = window.textBlocks[j];
+              if (!nb.isDeleted) {
+                nextBlock = nb;
+                break;
+              }
+            }
+
+            if (nextBlock && nextBlock.type === 'ShowText') {
+              let nextText = nextBlock.text || '';
+              if (nextBlock.idx !== undefined && lines[nextBlock.idx]) {
+                nextText = lines[nextBlock.idx]; 
+              }
+              
+              // Проверяем наличие имени
+              const nameMatch = nextText.match(/<[\\∾]+[CcСс]\[6\](.*?)[\\∾]+[CcСс]\[0\]>/);
+              if (!nameMatch) {
+                errors.push({
+                  label: `строка ${block.idx !== undefined ? block.idx + 1 : '?'}`,
+                  line: block.idx, 
+                  type: 'Отвязка портрета',
+                  reason: 'Команда с портретом не сопровождается именем персонажа в следующей строке.',
+                  msg: 'Отвязка портрета от имени.',
+                  isPortraitDesyncError: true
+                });
+              }
+            } else if (nextBlock) {
+               errors.push({
+                  label: `строка ${block.idx !== undefined ? block.idx + 1 : '?'}`,
+                  line: block.idx,
+                  type: 'Отвязка портрета',
+                  reason: 'Команда с портретом должна сразу сопровождаться текстом (ShowText).',
+                  msg: 'Отвязка портрета от текста.',
+                  isPortraitDesyncError: true
+               });
+            }
+          }
+        }
+      }
     }
 
     // === ФИНАЛЬНАЯ ФИЛЬТРАЦИЯ: Удаляем все ошибки для строк с ## ===
@@ -2558,6 +2702,9 @@ setTimeout(function () {
       let structErrorsCount = 0;
       let gluedLinesCount = 0;
       let unclosedQuoteCount = 0;
+      let duplicateLineCount = 0;
+      let nameBracketErrorCount = 0;
+      let portraitDesyncErrorCount = 0;
 
       // Фильтруем ошибки, которые нам интересны
       allErrors.forEach(err => {
@@ -2627,12 +2774,30 @@ setTimeout(function () {
           if (blockIndex !== undefined) window.allErrorIndices.add(blockIndex);
           unclosedQuoteCount++;
         }
+
+        // Обработка дубликатов строк #+
+        if (err.type === 'Дубликат строки') {
+          if (blockIndex !== undefined) window.allErrorIndices.add(blockIndex);
+          duplicateLineCount++;
+        }
+
+        // Обработка японских скобок в имени
+        if (err.isNameBracketError) {
+          if (blockIndex !== undefined) window.allErrorIndices.add(blockIndex);
+          nameBracketErrorCount++;
+        }
+
+        // Обработка отвязки портрета от имени
+        if (err.isPortraitDesyncError) {
+          if (blockIndex !== undefined) window.allErrorIndices.add(blockIndex);
+          portraitDesyncErrorCount++;
+        }
       });
 
       // 5. Обновляем интерфейс (Лампочка, Кнопки, Список ошибок)
       const lamp = document.getElementById('matchLamp');
 
-      if (scriptErrorsCount > 0 || indentErrorsCount > 0 || itemMismatchCount > 0 || colorTagErrorsCount > 0 || trailingNewlineCount > 0 || templateErrorsCount > 0 || desyncErrorsCount > 0 || structErrorsCount > 0 || gluedLinesCount > 0 || unclosedQuoteCount > 0) {
+      if (scriptErrorsCount > 0 || indentErrorsCount > 0 || itemMismatchCount > 0 || colorTagErrorsCount > 0 || trailingNewlineCount > 0 || templateErrorsCount > 0 || desyncErrorsCount > 0 || structErrorsCount > 0 || gluedLinesCount > 0 || unclosedQuoteCount > 0 || duplicateLineCount > 0 || nameBracketErrorCount > 0 || portraitDesyncErrorCount > 0) {
         if (lamp) {
           lamp.style.background = '#f66';
           let titleMsg = '';
@@ -2646,8 +2811,11 @@ setTimeout(function () {
           if (structErrorsCount > 0) titleMsg += `\n + Структурных ошибок: ${structErrorsCount}`;
           if (gluedLinesCount > 0) titleMsg += `\n + Слипание строк: ${gluedLinesCount}`;
           if (unclosedQuoteCount > 0) titleMsg += `\n + Незакрытых кавычек: ${unclosedQuoteCount}`;
+          if (duplicateLineCount > 0) titleMsg += `\n + Дубликатов строк (#+): ${duplicateLineCount}`;
+          if (nameBracketErrorCount > 0) titleMsg += `\n + Скобки 【 】 в имени: ${nameBracketErrorCount}`;
+          if (portraitDesyncErrorCount > 0) titleMsg += `\n + Отвязок портрета: ${portraitDesyncErrorCount}`;
 
-          if (!lamp.title.includes('Ошибок скрипта') && !lamp.title.includes('Ошибок отступов') && !lamp.title.includes('Ошибок ID предметов') && !lamp.title.includes('Разорванных тегов') && !lamp.title.includes('Лишних переносов') && !lamp.title.includes('Ошибок шаблонов') && !lamp.title.includes('Ошибок рассинхрона имён') && !lamp.title.includes('Структурных ошибок') && !lamp.title.includes('Незакрытых кавычек') && !lamp.title.includes('Слипание строк')) {
+          if (!lamp.title.includes('Ошибок скрипта') && !lamp.title.includes('Ошибок отступов') && !lamp.title.includes('Ошибок ID предметов') && !lamp.title.includes('Разорванных тегов') && !lamp.title.includes('Лишних переносов') && !lamp.title.includes('Ошибок шаблонов') && !lamp.title.includes('Ошибок рассинхрона имён') && !lamp.title.includes('Структурных ошибок') && !lamp.title.includes('Незакрытых кавычек') && !lamp.title.includes('Слипание строк') && !lamp.title.includes('Дубликатов строк (#+)') && !lamp.title.includes('Скобки 【 】 в имени') && !lamp.title.includes('Отвязок портрета')) {
             lamp.title += titleMsg;
           }
         }
@@ -2665,7 +2833,7 @@ setTimeout(function () {
           let extraHtml = '<div class="auto-detect-errors" style="margin-top:10px; border-top:1px solid #ccc; padding-top:5px;">';
           extraHtml += '<b>Обнаруженные ошибки (Live):</b><ul style="color:#d00; margin-top:4px;">';
           allErrors.forEach(err => {
-            if (err.type === 'Ошибка скрипта' || err.isFixableIndent || err.isItemIdMismatchLine || err.type === 'Ошибка тега цвета' || err.type === 'Лишний перенос' || err.type === 'Ошибка шаблона' || err.type === 'Рассинхронизация' || err.type === 'Логическая ошибка' || err.type === 'Структурная ошибка' || err.type === 'Слипание строк' || err.type === 'Незакрытая кавычка') {
+            if (err.type === 'Ошибка скрипта' || err.isFixableIndent || err.isItemIdMismatchLine || err.type === 'Ошибка тега цвета' || err.type === 'Лишний перенос' || err.type === 'Ошибка шаблона' || err.type === 'Рассинхронизация' || err.type === 'Логическая ошибка' || err.type === 'Структурная ошибка' || err.type === 'Слипание строк' || err.type === 'Незакрытая кавычка' || err.type === 'Дубликат строки' || err.type === 'Ошибка имени' || err.type === 'Отвязка портрета') {
               // Если это ошибка скрипта, проверяем на пустой msg
               const displayMsg = err.msg || err.reason || 'Неизвестная ошибка';
               const offset = window.globalLineOffset || 0;
@@ -2674,7 +2842,7 @@ setTimeout(function () {
           });
           extraHtml += '</ul></div>';
 
-          if (indentErrorsCount > 0 || scriptErrorsCount > 0 || itemMismatchCount > 0 || colorTagErrorsCount > 0 || trailingNewlineCount > 0 || templateErrorsCount > 0 || desyncErrorsCount > 0 || structErrorsCount > 0 || gluedLinesCount > 0 || unclosedQuoteCount > 0) {
+          if (indentErrorsCount > 0 || scriptErrorsCount > 0 || itemMismatchCount > 0 || colorTagErrorsCount > 0 || trailingNewlineCount > 0 || templateErrorsCount > 0 || desyncErrorsCount > 0 || structErrorsCount > 0 || gluedLinesCount > 0 || unclosedQuoteCount > 0 || duplicateLineCount > 0 || nameBracketErrorCount > 0 || portraitDesyncErrorCount > 0) {
             diffsDiv.insertAdjacentHTML('beforeend', extraHtml);
           }
         }
@@ -2834,11 +3002,14 @@ setTimeout(function () {
   }
 })();
 
-// Заставляем кнопку исправления мгновенно реагировать на ручное редактирование текста
+// Заставляем кнопку исправления и лампочку мгновенно реагировать на ручное редактирование текста
 document.addEventListener('input', function(e) {
   if (e.target && e.target.tagName === 'TEXTAREA') {
     if (typeof window.updateFixButtonsVisibility === 'function') {
       setTimeout(window.updateFixButtonsVisibility, 50);
+    }
+    if (typeof window.updateMatchLamp === 'function') {
+      setTimeout(window.updateMatchLamp, 50);
     }
   }
 });
