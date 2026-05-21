@@ -3,6 +3,7 @@ let jpFiles = {};
 let batchResults = [];
 let batchErrorTypes = {}; // Хранит все типы ошибок и их количество
 let batchFixOptions = {}; // Хранит выбранные опции исправления // Сохраняем результаты проверки для последующего исправления
+let batchHiddenErrorTypes = new Set(); // Хранит типы ошибок, скрытых из отчёта
 
 // Функции для управления панелью отчёта
 function clearBatchReport() {
@@ -232,6 +233,116 @@ function createErrorTypeCheckboxes() {
   return checkboxPanel;
 }
 
+// Применяет видимость строк ошибок на основе batchHiddenErrorTypes
+function applyErrorTypeVisibility() {
+  document.querySelectorAll('[data-error-type]').forEach(el => {
+    const type = el.getAttribute('data-error-type');
+    el.style.display = batchHiddenErrorTypes.has(type) ? 'none' : '';
+  });
+
+  // Скрываем/показываем заголовок «Ошибки в строках:» в каждом блоке файла
+  document.querySelectorAll('[data-line-errors-header]').forEach(header => {
+    const fileDiv = header.closest('[data-file-block]');
+    if (!fileDiv) return;
+    const hasVisible = Array.from(fileDiv.querySelectorAll('[data-error-type]:not([data-error-type="Структурные ошибки"])'))
+      .some(el => el.style.display !== 'none');
+    header.style.display = hasVisible ? '' : 'none';
+  });
+}
+
+// Функция для создания UI с чекбоксами скрытия типов ошибок
+function createHideErrorTypeCheckboxes() {
+  const panel = document.createElement('div');
+  panel.id = 'batchHideErrorTypeCheckboxes';
+  panel.style.marginTop = '12px';
+  panel.style.padding = '12px';
+  panel.style.background = '#fff8f0';
+  panel.style.border = '1px solid #e0cfaa';
+  panel.style.borderRadius = '6px';
+
+  const title = document.createElement('div');
+  title.textContent = 'Скрыть категории ошибок из отчёта:';
+  title.style.fontWeight = 'bold';
+  title.style.marginBottom = '10px';
+  title.style.color = '#333';
+  panel.appendChild(title);
+
+  // Кнопки «Скрыть всё» / «Показать всё»
+  const btnRow = document.createElement('div');
+  btnRow.style.marginBottom = '10px';
+  btnRow.style.display = 'flex';
+  btnRow.style.gap = '8px';
+
+  const btnHideAll = document.createElement('button');
+  btnHideAll.textContent = 'Скрыть всё';
+  btnHideAll.className = 'control-btn';
+  btnHideAll.style.fontSize = '12px';
+  btnHideAll.style.padding = '2px 8px';
+  btnHideAll.onclick = () => {
+    panel.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+      cb.checked = true;
+      batchHiddenErrorTypes.add(cb.dataset.errorType);
+    });
+    applyErrorTypeVisibility();
+  };
+
+  const btnShowAll = document.createElement('button');
+  btnShowAll.textContent = 'Показать всё';
+  btnShowAll.className = 'control-btn';
+  btnShowAll.style.fontSize = '12px';
+  btnShowAll.style.padding = '2px 8px';
+  btnShowAll.onclick = () => {
+    panel.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+      cb.checked = false;
+      batchHiddenErrorTypes.delete(cb.dataset.errorType);
+    });
+    applyErrorTypeVisibility();
+  };
+
+  btnRow.appendChild(btnHideAll);
+  btnRow.appendChild(btnShowAll);
+  panel.appendChild(btnRow);
+
+  // Чекбокс для каждого типа ошибки
+  Object.keys(batchErrorTypes).forEach(errorType => {
+    const count = batchErrorTypes[errorType];
+
+    const checkboxDiv = document.createElement('div');
+    checkboxDiv.style.marginBottom = '6px';
+    checkboxDiv.style.display = 'flex';
+    checkboxDiv.style.alignItems = 'center';
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.id = `hide_err_${CSS.escape(errorType)}`;
+    checkbox.dataset.errorType = errorType;
+    checkbox.checked = batchHiddenErrorTypes.has(errorType);
+    checkbox.style.marginRight = '8px';
+    checkbox.style.accentColor = '#e07000';
+
+    checkbox.addEventListener('change', () => {
+      if (checkbox.checked) {
+        batchHiddenErrorTypes.add(errorType);
+      } else {
+        batchHiddenErrorTypes.delete(errorType);
+      }
+      applyErrorTypeVisibility();
+    });
+
+    const label = document.createElement('label');
+    label.htmlFor = `hide_err_${CSS.escape(errorType)}`;
+    label.textContent = `${errorType} (${count})`;
+    label.style.cursor = 'pointer';
+    label.style.userSelect = 'none';
+
+    checkboxDiv.appendChild(checkbox);
+    checkboxDiv.appendChild(label);
+    panel.appendChild(checkboxDiv);
+  });
+
+  return panel;
+}
+
 // Функция для создания элементов управления исправлением
 function createFixControls() {
   const batchContent = document.getElementById('tabContentBatch');
@@ -279,6 +390,17 @@ function createFixControls() {
   if (Object.keys(batchErrorTypes).length > 0) {
     const checkboxPanel = createErrorTypeCheckboxes();
     fixControls.appendChild(checkboxPanel);
+
+    // Разделитель
+    const separator = document.createElement('hr');
+    separator.style.margin = '14px 0 10px 0';
+    separator.style.border = 'none';
+    separator.style.borderTop = '1px solid #ccc';
+    fixControls.appendChild(separator);
+
+    // Новый раздел: скрытие категорий из отчёта
+    const hidePanel = createHideErrorTypeCheckboxes();
+    fixControls.appendChild(hidePanel);
   }
 
   // Создаем панель отчета внутри контейнера исправления
@@ -806,6 +928,7 @@ async function batchCheckAllFiles() {
   batchResults = [];
   batchErrorTypes = {}; // Очищаем типы ошибок
   batchFixOptions = {}; // Очищаем опции исправления
+  batchHiddenErrorTypes = new Set(); // Сбрасываем скрытые типы при новой проверке
 
   // Сохраняем результаты для фильтрации
   const results = [];
@@ -947,9 +1070,10 @@ async function batchCheckAllFiles() {
     let statHtml = '';
     // Отображаем ошибки на уровне строк
     if (lineLevelErrors.length > 0) {
-      statHtml += `<div style='color:#b00; font-weight:bold; margin:10px 0 2px 0;'>Ошибки в строках:</div>`;
+      statHtml += `<div data-line-errors-header style='color:#b00; font-weight:bold; margin:10px 0 2px 0;'>Ошибки в строках:</div>`;
       lineLevelErrors.forEach(err => {
-        statHtml += `<div style='color:#b00; margin-left:12px; margin-bottom:8px;'><b>${err.label}</b> (${err.type}): ${err.reason}</div>`;
+        const safeType = (err.type || '').replace(/"/g, '&quot;');
+        statHtml += `<div data-error-type="${safeType}" style='color:#b00; margin-left:12px; margin-bottom:8px;'><b>${err.label}</b> (${err.type}): ${err.reason}</div>`;
       });
     }
 
@@ -974,7 +1098,7 @@ async function batchCheckAllFiles() {
         ev.pages.forEach(page => {
           if (!page.ok) {
             if (!showOnlyErrorLines || page.errors.length > 0) {
-              statHtml += `<div style='color:#b00; font-weight:bold; margin:10px 0 2px 0;'>CommonEvent ${ev.eid} (${ev.name}), Page ${page.page}</div>`;
+              statHtml += `<div data-error-type="Структурные ошибки" style='color:#b00; font-weight:bold; margin:10px 0 2px 0;'>CommonEvent ${ev.eid} (${ev.name}), Page ${page.page}</div>`;
               page.errors.forEach(err => {
                 const branchEndInfo = err.branchEndNumber !== undefined ? `<div style='color:#666; font-size:12px; margin-bottom:2px;'>BranchEnd ${err.branchEndNumber}</div>` : '';
                 let linePointers = [];
@@ -983,7 +1107,7 @@ async function batchCheckAllFiles() {
                 const lineInfo = linePointers.length > 0 ? `<span style="color:#555; background:#eee; padding: 2px 5px; border-radius:3px; font-size:12px; margin-right:8px;">${linePointers.join(' | ')}</span>` : '';
                 const lineLabel = err.line !== undefined ? err.line : '—';
 
-                statHtml += `<div style='color:#b00; margin-left:12px; margin-bottom:8px;'>${branchEndInfo}${lineInfo}<b>Строка ${lineLabel}:</b> ${err.msg}<br>`;
+                statHtml += `<div data-error-type="Структурные ошибки" style='color:#b00; margin-left:12px; margin-bottom:8px;'>${branchEndInfo}${lineInfo}<b>Строка ${lineLabel}:</b> ${err.msg}<br>`;
 
                 if (err.jpContext || err.ruContext) {
                   statHtml += createContextBlock('JP', err.jpContext, err.jp);
@@ -1005,6 +1129,9 @@ async function batchCheckAllFiles() {
       statDiv.innerHTML = statHtml;
       fileDiv.appendChild(statDiv);
     }
+
+    // Помечаем блок файла для последующей фильтрации
+    fileDiv.setAttribute('data-file-block', fileName);
 
     isError = totalErrorCount > 0;
     isOkFile = totalErrorCount === 0;
@@ -1061,6 +1188,9 @@ async function batchCheckAllFiles() {
     • Файлов без ошибок: ${okCount}
   `;
   batchListDiv.appendChild(statsDiv);
+
+  // Применяем скрытие типов ошибок (если чекбоксы уже были установлены)
+  applyErrorTypeVisibility();
 
   // Показываем элементы управления исправлением только если есть ошибки
   if (hasErrors) {
