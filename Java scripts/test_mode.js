@@ -1459,6 +1459,17 @@ setTimeout(function () {
         if (count > 0) {
           console.log(`Global Fix Names: fixed ${count} blocks.`);
           window.addFixNameButtons(); // Перерисовать/скрыть
+          
+          // === КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Принудительно обновляем лампу ошибок ===
+          // Это устраняет фантомные ошибки "Отвязка портрета от имени" после массового исправления
+          setTimeout(() => {
+            if (typeof window.updateMatchLamp === 'function') {
+              window.updateMatchLamp();
+            }
+            if (typeof window.updateRedIndices === 'function') {
+              window.updateRedIndices();
+            }
+          }, 100);
         }
       };
     }
@@ -2499,10 +2510,9 @@ setTimeout(function () {
       window.textBlocks.forEach((block, i) => {
         if (block.isDeleted || block.type !== 'ShowText' || block.hasIgnoreMarker) return;
         
+        // Используем block.text напрямую, так как после re-parsing он содержит актуальный текст
+        // Не пытаемся извлекать из lines[block.idx], так как после split операция idx может быть не синхронизирован
         let textToCheck = block.text || '';
-        if (block.idx !== undefined && lines[block.idx]) {
-          textToCheck = lines[block.idx]; // Берем живую строку из редактора
-        }
         
         const quoteCount = (textToCheck.match(/"/g) || []).length;
         if (quoteCount % 2 !== 0 && block.idx !== undefined) {
@@ -2526,12 +2536,9 @@ setTimeout(function () {
         if (block.isDeleted) return;
         
         if (block.type === 'ShowText') {
+          // Используем block.text напрямую, так как после re-parsing он содержит актуальный текст
+          // Не пытаемся извлекать из lines[block.idx], так как после split операция idx может быть не синхронизирован
           let currentText = block.text || '';
-          if (block.idx !== undefined && lines[block.idx]) {
-            // Извлекаем актуальный текст из живой строки
-            const match = lines[block.idx].match(/ShowText\(\["(.*)"\]\)/);
-            if (match) currentText = match[1];
-          }
           
           const isPlus = block.manualPlus || (block.idx !== undefined && lines[block.idx] && lines[block.idx].includes('#+'));
           
@@ -2559,10 +2566,9 @@ setTimeout(function () {
       window.textBlocks.forEach((block, i) => {
         if (block.isDeleted || block.type !== 'ShowText' || block.hasIgnoreMarker) return;
         
+        // Используем block.text напрямую, так как после re-parsing он содержит актуальный текст
+        // Не пытаемся извлекать из lines[block.idx], так как после split операция idx может быть не синхронизирован
         let textToCheck = block.text || '';
-        if (block.idx !== undefined && lines[block.idx]) {
-          textToCheck = lines[block.idx]; // Берем живую строку из редактора
-        }
         
         // Проверяем, есть ли тег имени и есть ли внутри него 【 или 】
         const nameMatch = textToCheck.match(/<[\\∾]+[CcСс]\[6\](.*?)[\\∾]+[CcСс]\[0\]>/);
@@ -2589,11 +2595,9 @@ setTimeout(function () {
         if (block.isDeleted || block.hasIgnoreMarker) continue;
         
         if (block.type === 'ShowTextAttributes') {
+          // Используем block.text напрямую, так как lines[block.idx] может содержать устаревшие данные
+          // из window.originalLines, которые не обновляются при редактировании в редакторе
           let staText = block.text || '';
-          if (block.idx !== undefined && lines[block.idx]) {
-            const match = lines[block.idx].match(/ShowTextAttributes\(\[(.*)\]\)/);
-            if (match) staText = match[1];
-          }
           
           // Проверяем, есть ли непустой портрет
           const portraitMatch = staText.match(/^"([^"]+)"/);
@@ -2609,14 +2613,17 @@ setTimeout(function () {
             }
 
             if (nextBlock && nextBlock.type === 'ShowText') {
-              let nextText = nextBlock.text || '';
-              if (nextBlock.idx !== undefined && lines[nextBlock.idx]) {
-                nextText = lines[nextBlock.idx]; 
-              }
+              // Используем block.text — оно актуально в памяти (Fix All Names обновляет его сразу).
+              // НЕ читаем lines[nextBlock.idx], т.к. raw-строка обновляется только при сохранении файла,
+              // что и вызывало фантомные ошибки сразу после нажатия Fix All Names.
+              const nextText = nextBlock.text || '';
               
-              // Проверяем наличие имени
-              const nameMatch = nextText.match(/<[\\∾]+[CcСс]\[6\](.*?)[\\∾]+[CcСс]\[0\]>/);
-              if (!nameMatch) {
+              // Проверяем наличие имени (русский формат: <∾∾C[6]...) или японский формат 【Имя】
+              // Японский формат тоже допустим — кнопка Fix All Names его исправит.
+              const hasRussianNameTag = /<[∾\\]{1,2}C\[6\]/.test(nextText);
+              const hasJapaneseBrackets = /^【.+?】/.test(nextText);
+              
+              if (!hasRussianNameTag && !hasJapaneseBrackets) {
                 errors.push({
                   label: `строка ${block.idx !== undefined ? block.idx + 1 : '?'}`,
                   line: block.idx, 
