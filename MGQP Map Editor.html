@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8">
-  <title>MGQP Map Editor v1.5.31</title>
+  <title>MGQP Map Editor v1.5.32</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="Java scripts/main_script.js"></script>
   <script src="Java scripts/restore-mode.js"></script>
@@ -1555,7 +1555,7 @@
           const commandType = match[1];
           const commandText = match[2];
           const trailingContent = match[3] || '';
-          const translatableCommands = ['Script', 'ScriptMore', 'Label', 'JumpToLabel', 'Name', 'ShowTextAttributes'];
+          const translatableCommands = ['Script', 'ScriptMore', 'Label', 'JumpToLabel', 'Name', 'ShowTextAttributes', 'ChangeActorName'];
           const technicalCommands = ['ConditionalBranch', 'PlaySE', 'PlayBGM', 'PlayME', 'TransferPlayer', 'ChangeGold', 'ChangeItems', 'ChangeWeapons', 'ChangeArmors', 'ControlSwitches', 'ControlVariables', 'ControlSelfSwitch'];
           if (translatableCommands.includes(commandType)) {
             tempBlocks.push({ text: commandText, type: commandType, originalIdx: idx, line: line, commonEventId: currentEventId, trailingContent: trailingContent });
@@ -1692,7 +1692,7 @@
         } else if ((match = line.match(otherRegex))) {
           const commandType = match[1];
           const commandText = match[2];
-          const translatableCommands = ['Script', 'ScriptMore', 'Label', 'JumpToLabel', 'Name', 'ShowTextAttributes'];
+          const translatableCommands = ['Script', 'ScriptMore', 'Label', 'JumpToLabel', 'Name', 'ShowTextAttributes', 'ChangeActorName'];
           const technicalCommands = ['ConditionalBranch', 'PlaySE', 'PlayBGM', 'PlayME', 'TransferPlayer', 'ChangeGold', 'ChangeItems', 'ChangeWeapons', 'ChangeArmors', 'ControlSwitches', 'ControlVariables', 'ControlSelfSwitch'];
           if (translatableCommands.includes(commandType)) {
             if (commandType === 'Label' && !(/[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(commandText))) {
@@ -2150,7 +2150,7 @@
 
 
         // Показываем только текстовые типы данных
-        if (block.type !== 'ShowText' && block.type !== 'ShowChoices' && block.type !== 'When' && block.type !== 'JumpToLabel' && block.type !== 'ScriptMore' && block.type !== 'Label' && block.type !== 'Script') return;
+        if (block.type !== 'ShowText' && block.type !== 'ShowChoices' && block.type !== 'When' && block.type !== 'JumpToLabel' && block.type !== 'ScriptMore' && block.type !== 'Label' && block.type !== 'Script' && block.type !== 'ChangeActorName') return;
 
         // Фильтр скрытия меток
         const hideLabels = document.getElementById('hideLabelCheckbox').checked;
@@ -2922,6 +2922,7 @@
             case 'Label':
             case 'JumpToLabel':
             case 'Name':
+            case 'ChangeActorName':
               let generalText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
               const hasQuotes = /\["(.*)"\]/.test(originalLine);
               if (hasQuotes) { formattedLine = originalLine.replace(/\["(.*)"\]/, `["${generalText}"]`); }
@@ -3065,7 +3066,7 @@
         const block = textBlocks[i];
 
         // Показываем только текстовые типы данных (как в редакторе)
-        if (block.type !== 'ShowText' && block.type !== 'ShowChoices' && block.type !== 'When' && block.type !== 'JumpToLabel' && block.type !== 'ScriptMore' && block.type !== 'Label' && block.type !== 'Script' && block.type !== 'Name') {
+        if (block.type !== 'ShowText' && block.type !== 'ShowChoices' && block.type !== 'When' && block.type !== 'JumpToLabel' && block.type !== 'ScriptMore' && block.type !== 'Label' && block.type !== 'Script' && block.type !== 'Name' && block.type !== 'ChangeActorName') {
           continue;
         }
 
