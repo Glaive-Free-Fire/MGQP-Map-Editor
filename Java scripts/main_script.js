@@ -211,7 +211,7 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines, globalOffse
       const commandType = match[1];
       const commandText = match[2];
       const trailingContent = match[3] || '';
-      const translatableCommands = ['Script', 'ScriptMore', 'Label', 'JumpToLabel', 'Name', 'ShowTextAttributes', 'ConditionalBranch', 'Empty'];
+      const translatableCommands = ['Script', 'ScriptMore', 'Label', 'JumpToLabel', 'Name', 'ShowTextAttributes', 'ChangeActorName', 'ConditionalBranch', 'Empty'];
       const technicalCommands = ['PlaySE', 'PlayBGM', 'PlayME', 'TransferPlayer', 'ChangeGold', 'ChangeItems', 'ChangeWeapons', 'ChangeArmors', 'ControlSwitches', 'ControlVariables', 'ControlSelfSwitch'];
       if (translatableCommands.includes(commandType)) {
         tempBlocks.push({ text: commandText, type: commandType, originalIdx: idx, line: line, trailingContent: trailingContent });
@@ -550,29 +550,35 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines, globalOffse
           reason: `Превышен лимит символов: ${metrics.length} > 50`
         });
       }
-      const isJapanesePresent = /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.text);
-      if (!block.hasIgnoreMarker && isJapanesePresent) {
-        let isAnError = true;
-        if (block.type === 'Script' || block.type === 'ScriptMore') {
-          const isCodeLikeRegex = /[=\/~_()\[\]\.\+\-]|\b(if|else|for|while|return|function|var|let|const|script)\b|e\./i;
-          if (isCodeLikeRegex.test(block.text)) {
-            isAnError = false;
-          }
-        }
-        if (isAnError) {
-          errors.push({
-            label: getLineLabel(block.idx),
-            type: 'Ошибка строки',
-            reason: 'Обнаружен японский текст'
-          });
-        }
-      }
       const brokenCodeRegex = /∾∾[IC]\[\d+\].*?(?<!∾)∾C\[0\]/;
       if (brokenCodeRegex.test(block.text) && !block.hasIgnoreMarker) {
         errors.push({
           label: getLineLabel(block.idx),
           type: 'Ошибка кода',
           reason: 'Неправильно экранирован закрывающий тег. Вероятно, вместо `∾∾C[0]` используется `∾C[0]`.'
+        });
+      }
+    }
+
+    // --- Проверка на японский текст для всех типов блоков ---
+    const isJapanesePresent = /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.text);
+    if (!block.hasIgnoreMarker && isJapanesePresent) {
+      let isAnError = true;
+      const excludedTypes = ['Name', 'Comment', 'JumpToLabel', 'Label'];
+      if (excludedTypes.includes(block.type)) {
+        isAnError = false;
+      }
+      if (block.type === 'Script' || block.type === 'ScriptMore') {
+        const isCodeLikeRegex = /[=\/~_()\[\]\.\+\-]|\b(if|else|for|while|return|function|var|let|const|script)\b|e\./i;
+        if (isCodeLikeRegex.test(block.text)) {
+          isAnError = false;
+        }
+      }
+      if (isAnError) {
+        errors.push({
+          label: getLineLabel(block.idx),
+          type: 'Ошибка строки',
+          reason: 'Обнаружен японский текст'
         });
       }
     }

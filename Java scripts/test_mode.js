@@ -119,6 +119,7 @@ document.addEventListener('DOMContentLoaded', function () {
             }
             break;
           case 'Name':
+          case 'ChangeActorName':
             // Name имеет специальный формат: [имя_персонажа]
             // Сохраняем оригинальное форматирование с кавычками, заменяем только содержимое
             let nameText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
@@ -794,6 +795,7 @@ setTimeout(function () {
           case 'Label':
           case 'JumpToLabel':
           case 'Name':
+          case 'ChangeActorName':
             let generalText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
             const hasQuotes = /\["(.*)"\]/.test(currentLineContent);
             if (hasQuotes) { formattedLine = currentLineContent.replace(/\["(.*)"\]/, `["${generalText}"]`); }
