@@ -236,10 +236,6 @@
     const ruEvents = parseCommonEvents(ruLines);
     const jpEvents = parseCommonEvents(jpLines);
 
-    const ruEventsMap = new Map(ruEvents.map(e => [e.num, e]));
-    const jpEventsMap = new Map(jpEvents.map(e => [e.num, e]));
-    const allEventNums = Array.from(new Set([...ruEventsMap.keys(), ...jpEventsMap.keys()])).sort((a, b) => a - b);
-
     const newFileLines = [];
 
     // Добавляем всё, что было до первого события
@@ -248,12 +244,15 @@
       newFileLines.push(ruLines[i]);
     }
 
-    // Итерируем по всем событиям и решаем, какое из них использовать
-    for (const eventNum of allEventNums) {
-      const ruEvent = ruEventsMap.get(eventNum);
-      const jpEvent = jpEventsMap.get(eventNum);
+    const maxEvents = Math.max(ruEvents.length, jpEvents.length);
 
-      if (mismatchedEventIds.has(eventNum)) {
+    for (let i = 0; i < maxEvents; i++) {
+      const ruEvent = ruEvents[i];
+      const jpEvent = jpEvents[i];
+
+      const eventId = ruEvent ? ruEvent.num : (jpEvent ? jpEvent.num : null);
+
+      if (eventId !== null && mismatchedEventIds.has(eventId)) {
         if (jpEvent) {
           // --- НАЧАЛО ИЗМЕНЕНИЯ ---
           // Обрабатываем и сливаем строки с именами перед вставкой
@@ -264,6 +263,9 @@
       } else {
         if (ruEvent) {
           newFileLines.push(...ruEvent.header, ...ruEvent.lines, '');
+        } else if (jpEvent) {
+          const processedJpLines = processAndMergeJpLines(jpEvent.lines);
+          newFileLines.push(...jpEvent.header, ...processedJpLines, '');
         }
       }
     }
@@ -1917,5 +1919,254 @@
     }
     return changesMade;
   };
+
+  // === Точечное исправление по веткам ConditionalBranch ===
+
+  function parseConditionalBranches(lines) {
+    const branches = [];
+    const stack = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmed = line.trim();
+
+      const condMatch = trimmed.match(/^ConditionalBranch\((.*)\)/);
+      if (condMatch) {
+        const indent = line.match(/^(\s*)/)[0];
+        stack.push({
+          startIdx: i,
+          condArgs: condMatch[1],
+          indent: indent,
+          nestedLevel: stack.length
+        });
+      }
+
+      const endMatch = trimmed.match(/^BranchEnd\(/);
+      if (endMatch && stack.length > 0) {
+        const indent = line.match(/^(\s*)/)[0];
+        for (let j = stack.length - 1; j >= 0; j--) {
+          if (stack[j].indent === indent) {
+            const branchObj = stack.splice(j, 1)[0];
+            branchObj.endIdx = i;
+            branches.push(branchObj);
+            break;
+          }
+        }
+      }
+    }
+
+    branches.sort((a, b) => a.startIdx - b.startIdx);
+    return branches;
+  }
+
+  function findCorrespondingJpBranch(ruBranch, ruBranches, jpBranches) {
+    const idx = ruBranches.indexOf(ruBranch);
+    if (idx !== -1 && jpBranches[idx] && jpBranches[idx].condArgs === ruBranch.condArgs) {
+      return jpBranches[idx];
+    }
+    let occurrence = 0;
+    for (let i = 0; i < idx; i++) {
+      if (ruBranches[i].condArgs === ruBranch.condArgs) occurrence++;
+    }
+    let jpOccurrence = 0;
+    for (let i = 0; i < jpBranches.length; i++) {
+      if (jpBranches[i].condArgs === ruBranch.condArgs) {
+        if (jpOccurrence === occurrence) {
+          return jpBranches[i];
+        }
+        jpOccurrence++;
+      }
+    }
+    return null;
+  }
+
+  global.analyzeStructuralErrorsForBranches = function() {
+    if (!window.fullRusLines || !window.fullJapLines || window.fullRusLines.length === 0 || window.fullJapLines.length === 0) {
+      return [];
+    }
+
+    const ruEvents = parseCommonEvents(window.fullRusLines);
+    const ruEventsMap = new Map(ruEvents.map(e => [e.num, e]));
+
+    // Карта сбора ошибок по Event ID
+    // eventId -> Array of { lineNum: number, msg: string }
+    const eventErrors = new Map();
+
+    // 1. Собираем ошибки из checkForLineLevelErrors (логические ошибки, рассинхрон имен, теги)
+    if (typeof window.checkForLineLevelErrors === 'function') {
+      const lineErrors = window.checkForLineLevelErrors(window.fullRusLines, window.fullJapLines);
+      lineErrors.forEach(err => {
+        if (err.line !== undefined && err.line >= 0) {
+          // Ищем в каком CommonEvent находится строка ошибки
+          for (const ev of ruEvents) {
+            const eventEnd = ev.start + ev.header.length + ev.lines.length;
+            if (err.line >= ev.start && err.line < eventEnd) {
+              if (!eventErrors.has(ev.num)) eventErrors.set(ev.num, []);
+              eventErrors.get(ev.num).push({
+                lineNum: err.line,
+                msg: err.reason || err.msg || 'Ошибка строки'
+              });
+              break;
+            }
+          }
+        }
+      });
+    }
+
+    // 2. Собираем ошибки из checkMapStructureMatch (структурное несовпадение команд)
+    const jpContent = window.fullJapLines.join('\n');
+    const ruContent = window.fullRusLines.join('\n');
+    const matchResult = window.checkMapStructureMatch(jpContent, ruContent);
+
+    if (matchResult && matchResult.grouped) {
+      matchResult.grouped.forEach(ev => {
+        const eventId = parseInt(ev.eid, 10);
+        ev.pages.forEach(page => {
+          if (!page.ok && page.errors) {
+            page.errors.forEach(err => {
+              if (err.msg && err.msg.includes('кавычки в команде Script')) return;
+              
+              const ruLineNum = err.ruLineNum;
+              if (ruLineNum !== undefined && ruLineNum >= 0) {
+                if (!eventErrors.has(eventId)) eventErrors.set(eventId, []);
+                const exists = eventErrors.get(eventId).some(e => e.lineNum === ruLineNum);
+                if (!exists) {
+                  eventErrors.get(eventId).push({
+                    lineNum: ruLineNum,
+                    msg: err.msg || 'Нарушение структуры'
+                  });
+                }
+              }
+            });
+          }
+        });
+      });
+    }
+
+    // 3. Формируем анализ по событиям и веткам
+    const analysis = [];
+    const sortedEventIds = Array.from(eventErrors.keys()).sort((a, b) => a - b);
+
+    sortedEventIds.forEach(eventId => {
+      const ruEvent = ruEventsMap.get(eventId);
+      if (!ruEvent) return;
+
+      const errors = eventErrors.get(eventId);
+      if (errors.length === 0) return;
+
+      // Сортируем ошибки по номеру строки, чтобы взять первую
+      errors.sort((a, b) => a.lineNum - b.lineNum);
+      const firstError = errors[0];
+
+      // Парсим ветки
+      const ruBranches = parseConditionalBranches(ruEvent.lines);
+      const relIdx = firstError.lineNum - ruEvent.start - ruEvent.header.length;
+
+      // Ищем самую глубокую ветку, содержащую строку ошибки
+      let targetBranch = null;
+      for (const branch of ruBranches) {
+        if (relIdx >= branch.startIdx && relIdx <= branch.endIdx) {
+          if (!targetBranch || branch.nestedLevel > targetBranch.nestedLevel) {
+            targetBranch = branch;
+          }
+        }
+      }
+
+      analysis.push({
+        eventId: eventId,
+        eventName: ruEvent.header[1] ? ruEvent.header[1].replace('Name = ', '').replace(/^"|"$/g, '') : '',
+        errorLine: firstError.lineNum + 1, // для интерфейса (1-индексация)
+        errorMsg: firstError.msg,
+        branchArgs: targetBranch ? targetBranch.condArgs : null,
+        branchIndent: targetBranch ? targetBranch.indent : null
+      });
+    });
+
+    return analysis;
+  };
+
+  global.fixMismatchedEventsWithChoices = function (ruLines, jpLines, choices) {
+    const ruEvents = parseCommonEvents(ruLines);
+    const jpEvents = parseCommonEvents(jpLines);
+
+    const newFileLines = [];
+
+    // Добавляем всё, что было до первого события в русском файле
+    const firstEventStart = ruEvents.length > 0 ? ruEvents[0].start : ruLines.length;
+    for (let i = 0; i < firstEventStart; i++) {
+      newFileLines.push(ruLines[i]);
+    }
+
+    let fixedEventsCount = 0;
+    const maxEvents = Math.max(ruEvents.length, jpEvents.length);
+
+    for (let i = 0; i < maxEvents; i++) {
+      const ruEvent = ruEvents[i];
+      const jpEvent = jpEvents[i];
+
+      const eventId = ruEvent ? ruEvent.num : (jpEvent ? jpEvent.num : null);
+      const choice = eventId !== null ? choices[eventId] : null;
+
+      if (choice && choice.type !== 'none' && jpEvent && ruEvent) {
+        fixedEventsCount++;
+
+        if (choice.type === 'whole-event') {
+          // Восстанавливаем весь CommonEvent целиком (используем японский заголовок для актуальности ID)
+          const processedJpLines = processAndMergeJpLines(jpEvent.lines);
+          newFileLines.push(...jpEvent.header, ...processedJpLines, '');
+        } else {
+          // Точечное восстановление внутри события
+          const ruBranches = parseConditionalBranches(ruEvent.lines);
+          const jpBranches = parseConditionalBranches(jpEvent.lines);
+
+          const targetRuBranch = ruBranches.find(b => b.condArgs === choice.branchArgs);
+          const targetJpBranch = targetRuBranch ? findCorrespondingJpBranch(targetRuBranch, ruBranches, jpBranches) : null;
+
+          if (targetRuBranch && targetJpBranch) {
+            const modifiedLines = [...ruEvent.lines];
+
+            if (choice.type === 'branch-only') {
+              const processedJpBranchLines = processAndMergeJpLines(jpEvent.lines.slice(targetJpBranch.startIdx, targetJpBranch.endIdx + 1));
+              modifiedLines.splice(targetRuBranch.startIdx, targetRuBranch.endIdx - targetRuBranch.startIdx + 1, ...processedJpBranchLines);
+            } else if (choice.type === 'branch-subsequent') {
+              const processedJpRemainingLines = processAndMergeJpLines(jpEvent.lines.slice(targetJpBranch.startIdx));
+              modifiedLines.splice(targetRuBranch.startIdx, ruEvent.lines.length - targetRuBranch.startIdx, ...processedJpRemainingLines);
+            }
+
+            // Используем японский заголовок для актуальности ID, но измененные русские строки
+            newFileLines.push(...jpEvent.header, ...modifiedLines, '');
+          } else {
+            // Фолбэк на полное восстановление, если ветки не совпали
+            const processedJpLines = processAndMergeJpLines(jpEvent.lines);
+            newFileLines.push(...jpEvent.header, ...processedJpLines, '');
+          }
+        }
+      } else {
+        // Оставляем как есть
+        if (ruEvent && jpEvent) {
+          // Используем японский заголовок для актуальности ID, но русские строки
+          newFileLines.push(...jpEvent.header, ...ruEvent.lines, '');
+        } else if (ruEvent) {
+          newFileLines.push(...ruEvent.header, ...ruEvent.lines, '');
+        } else if (jpEvent) {
+          const processedJpLines = processAndMergeJpLines(jpEvent.lines);
+          newFileLines.push(...jpEvent.header, ...processedJpLines, '');
+        }
+      }
+    }
+
+    if (newFileLines[newFileLines.length - 1] === '') {
+      newFileLines.pop();
+    }
+
+    alert(`Исправление завершено!\nОбработано ${fixedEventsCount} блоков CommonEvent.\n\nВАЖНО: Вам нужно будет заново перевести текст внутри заменённых блоков/ветвей.`);
+
+    return newFileLines;
+  };
+
+  // Экспортируем вспомогательные функции
+  global.processAndMergeJpLines = processAndMergeJpLines;
+  global.escapeFirstThree = escapeFirstThree;
+  global.escapeSkillAttributes = escapeSkillAttributes;
 
 })(window);

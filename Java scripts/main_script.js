@@ -187,8 +187,8 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines, globalOffse
   // =================================================================
   const tempBlocks = [];
   const textCmdRegex = /^\s*ShowText\(\["([\s\S]*?)"\]\)(.*)/;
-  const showChoicesRegex = /^\s*ShowChoices\(\[\[(.*)\],\s*(\d+)\]\)/;
-  const whenRegex = /^\s*When\(\[(\d+),\s*"(.*)"\]\)/;
+  const showChoicesRegex = /^\s*ShowChoices\(\[\[(.*)\],\s*(\d+)\]\)(.*)/;
+  const whenRegex = /^\s*When\(\[(\d+),\s*"(.*)"\]\)(.*)/;
   const otherRegex = /^\s*(\w+)\(\[([\s\S]*?)\]\)(.*)/;
   const nameValueRegex = /^\s*(\w+)\s*=\s*"(.*)"$/;
 
@@ -203,10 +203,32 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines, globalOffse
       tempBlocks.push({ text: textContent, type: 'ShowText', originalIdx: idx, line: line, hasIgnoreMarker: hasIgnoreMarker, trailingContent: trailingContent });
     } else if ((match = line.match(showChoicesRegex))) {
       let choicesText = match[1];
-      const choices = choicesText.split(/\s*\|\s*/).map(c => c.replace(/^"|"$/g, ''));
-      tempBlocks.push({ text: choices.join(' | '), type: 'ShowChoices', originalIdx: idx, choices: choices, defaultChoice: parseInt(match[2]), line: line });
+      
+      // Проверка на двойные кавычки в ShowChoices
+      const validChoicesPattern = /^\s*"([^"\\]|\\.)*"\s*(,\s*"([^"\\]|\\.)*"\s*)*$/;
+      const scTrailing = match[3] || '';
+      const scHasIgnoreMarker = /##/.test(scTrailing);
+      if (choicesText.trim() !== '' && !validChoicesPattern.test(choicesText) && !scHasIgnoreMarker) {
+        errors.push({
+          label: getLineLabel(idx),
+          type: 'Ошибка в ShowChoices',
+          reason: 'Обнаружен неверный формат кавычек или запятых в ShowChoices.',
+          line: idx,
+          msg: 'Ошибка кавычек в ShowChoices.'
+        });
+      }
+
+      let choices;
+      if (!choicesText.includes(' | ') && choicesText.includes('"') && choicesText.includes(',')) {
+        choices = choicesText.split(/"\s*,\s*"/).map(s => s.replace(/^"+|"+$/g, '').trim()).filter(s => s.length > 0);
+      } else {
+        choices = choicesText.split(/\s*\|\s*/).map(c => c.replace(/^"|"$/g, ''));
+      }
+      tempBlocks.push({ text: choices.join(' | '), type: 'ShowChoices', originalIdx: idx, choices: choices, defaultChoice: parseInt(match[2]), line: line, trailingContent: scTrailing, hasIgnoreMarker: scHasIgnoreMarker });
     } else if ((match = line.match(whenRegex))) {
-      tempBlocks.push({ text: match[2], type: 'When', originalIdx: idx, choiceIndex: parseInt(match[1]), line: line });
+      const whenTrailing = match[3] || '';
+      const whenHasIgnoreMarker = /##/.test(whenTrailing);
+      tempBlocks.push({ text: match[2], type: 'When', originalIdx: idx, choiceIndex: parseInt(match[1]), line: line, trailingContent: whenTrailing, hasIgnoreMarker: whenHasIgnoreMarker });
     } else if ((match = line.match(otherRegex))) {
       const commandType = match[1];
       const commandText = match[2];

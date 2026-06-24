@@ -59,6 +59,9 @@ function handleFolderInput(event, type) {
     else if (type === 'jp') jpFiles[file.name] = file;
   }
   renderBatchFileList();
+  if (typeof window.updateQuickFileNavigation === 'function') {
+    window.updateQuickFileNavigation();
+  }
 }
 
 function renderBatchFileList() {
@@ -184,6 +187,7 @@ function createErrorTypeCheckboxes() {
     'Ошибка форматирования (лишние пробелы)': true,  // trimEnd
     'Ошибка шаблона': true,  // fixAffectionTemplates
     'Ошибка компоновки (ShowTextAttributes)': true,  // частично поддерживается
+    'Ошибка в ShowChoices': true,  // автоматически исправляется при генерации
     'Ошибка строки (длина > 50)': false,  // не поддерживается автоматически
     'Ошибка строки (японский текст)': false,  // не поддерживается автоматически
     'Ошибка кода (неправильные теги)': false,  // не поддерживается автоматически

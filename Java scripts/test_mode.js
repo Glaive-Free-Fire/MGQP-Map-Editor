@@ -132,13 +132,14 @@ document.addEventListener('DOMContentLoaded', function () {
             }
             break;
           case 'ShowChoices':
-            // ShowChoices имеет формат: [[текст1, текст2, ...], номер_выбора]
-            // Заменяем содержимое массива выборов, сохраняя структуру
             let choicesText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
-            // Разбиваем варианты выбора и добавляем кавычки к каждому
-            const choices = choicesText.split(/\s*\|\s*/);
-            const quotedChoices = choices.map(choice => `"${choice.trim()}"`).join(' | ');
-            // Заменяем содержимое массива выборов
+            let choices;
+            if (!choicesText.includes(' | ') && choicesText.includes('"') && choicesText.includes(',')) {
+              choices = choicesText.split(/"\s*,\s*"/).map(s => s.replace(/^"+|"+$/g, '').trim()).filter(s => s.length > 0);
+            } else {
+              choices = choicesText.split(/\s*\|\s*/);
+            }
+            const quotedChoices = choices.map(choice => `"${choice.trim().replace(/^"+|"+$/g, '')}"`).join(', ');
             formattedLine = originalLine.replace(/\[\[(.*?)\],\s*(\d+)\]/, `[[${quotedChoices}], $2]`);
             break;
           case 'When':
@@ -516,7 +517,15 @@ window.checkMapStructureMatch = function (jpContent, ruContent) {
           }
 
           // 4. Пропускаем строки с ## (игнор ошибок)
+          // Если строка с ## является структурной командой (ShowChoices, When, ShowTextAttributes и т.п.),
+          // то она присутствует и в японском файле — нужно пропустить обе, иначе i и j разойдутся.
           if (ruPage[j] && ruPage[j].raw.trim().endsWith('##')) {
+            const ruCmdIgnored = ruPage[j].command;
+            // Структурные команды существуют в обоих файлах — пропускаем и JP-аналог
+            const isStructural = ruCmdIgnored && !ignoredCommands.includes(ruCmdIgnored);
+            if (isStructural && jpPage[i] && jpPage[i].command === ruCmdIgnored) {
+              i++; // пропускаем соответствующую японскую строку
+            }
             j++;
             continue;
           }
@@ -803,8 +812,13 @@ setTimeout(function () {
             break;
           case 'ShowChoices':
             let choicesText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
-            const choices = choicesText.split(/\s*\|\s*/);
-            const quotedChoices = choices.map(choice => `"${choice.trim()}"`).join(', ');
+            let choices;
+            if (!choicesText.includes(' | ') && choicesText.includes('"') && choicesText.includes(',')) {
+              choices = choicesText.split(/"\s*,\s*"/).map(s => s.replace(/^"+|"+$/g, '').trim()).filter(s => s.length > 0);
+            } else {
+              choices = choicesText.split(/\s*\|\s*/);
+            }
+            const quotedChoices = choices.map(choice => `"${choice.trim().replace(/^"+|"+$/g, '')}"`).join(', ');
             formattedLine = currentLineContent.replace(/\[\[(.*?)\],\s*(\d+)\]/, `[[${quotedChoices}], $2]`);
             break;
           case 'When':
@@ -2714,6 +2728,7 @@ setTimeout(function () {
       let duplicateLineCount = 0;
       let nameBracketErrorCount = 0;
       let portraitDesyncErrorCount = 0;
+      let showChoicesErrorCount = 0;
 
       // Фильтруем ошибки, которые нам интересны
       allErrors.forEach(err => {
@@ -2801,12 +2816,18 @@ setTimeout(function () {
           if (blockIndex !== undefined) window.allErrorIndices.add(blockIndex);
           portraitDesyncErrorCount++;
         }
+
+        // Обработка ошибок ShowChoices
+        if (err.type === 'Ошибка в ShowChoices') {
+          if (blockIndex !== undefined) window.allErrorIndices.add(blockIndex);
+          showChoicesErrorCount++;
+        }
       });
 
       // 5. Обновляем интерфейс (Лампочка, Кнопки, Список ошибок)
       const lamp = document.getElementById('matchLamp');
 
-      if (scriptErrorsCount > 0 || indentErrorsCount > 0 || itemMismatchCount > 0 || colorTagErrorsCount > 0 || trailingNewlineCount > 0 || templateErrorsCount > 0 || desyncErrorsCount > 0 || structErrorsCount > 0 || gluedLinesCount > 0 || unclosedQuoteCount > 0 || duplicateLineCount > 0 || nameBracketErrorCount > 0 || portraitDesyncErrorCount > 0) {
+      if (scriptErrorsCount > 0 || indentErrorsCount > 0 || itemMismatchCount > 0 || colorTagErrorsCount > 0 || trailingNewlineCount > 0 || templateErrorsCount > 0 || desyncErrorsCount > 0 || structErrorsCount > 0 || gluedLinesCount > 0 || unclosedQuoteCount > 0 || duplicateLineCount > 0 || nameBracketErrorCount > 0 || portraitDesyncErrorCount > 0 || showChoicesErrorCount > 0) {
         if (lamp) {
           lamp.style.background = '#f66';
           let titleMsg = '';
@@ -2823,8 +2844,9 @@ setTimeout(function () {
           if (duplicateLineCount > 0) titleMsg += `\n + Дубликатов строк (#+): ${duplicateLineCount}`;
           if (nameBracketErrorCount > 0) titleMsg += `\n + Скобки 【 】 в имени: ${nameBracketErrorCount}`;
           if (portraitDesyncErrorCount > 0) titleMsg += `\n + Отвязок портрета: ${portraitDesyncErrorCount}`;
+          if (showChoicesErrorCount > 0) titleMsg += `\n + Ошибок в ShowChoices: ${showChoicesErrorCount}`;
 
-          if (!lamp.title.includes('Ошибок скрипта') && !lamp.title.includes('Ошибок отступов') && !lamp.title.includes('Ошибок ID предметов') && !lamp.title.includes('Разорванных тегов') && !lamp.title.includes('Лишних переносов') && !lamp.title.includes('Ошибок шаблонов') && !lamp.title.includes('Ошибок рассинхрона имён') && !lamp.title.includes('Структурных ошибок') && !lamp.title.includes('Незакрытых кавычек') && !lamp.title.includes('Слипание строк') && !lamp.title.includes('Дубликатов строк (#+)') && !lamp.title.includes('Скобки 【 】 в имени') && !lamp.title.includes('Отвязок портрета')) {
+          if (!lamp.title.includes('Ошибок скрипта') && !lamp.title.includes('Ошибок отступов') && !lamp.title.includes('Ошибок ID предметов') && !lamp.title.includes('Разорванных тегов') && !lamp.title.includes('Лишних переносов') && !lamp.title.includes('Ошибок шаблонов') && !lamp.title.includes('Ошибок рассинхрона имён') && !lamp.title.includes('Структурных ошибок') && !lamp.title.includes('Незакрытых кавычек') && !lamp.title.includes('Слипание строк') && !lamp.title.includes('Дубликатов строк (#+)') && !lamp.title.includes('Скобки 【 】 в имени') && !lamp.title.includes('Отвязок портрета') && !lamp.title.includes('Ошибок в ShowChoices')) {
             lamp.title += titleMsg;
           }
         }
@@ -2842,7 +2864,7 @@ setTimeout(function () {
           let extraHtml = '<div class="auto-detect-errors" style="margin-top:10px; border-top:1px solid #ccc; padding-top:5px;">';
           extraHtml += '<b>Обнаруженные ошибки (Live):</b><ul style="color:#d00; margin-top:4px;">';
           allErrors.forEach(err => {
-            if (err.type === 'Ошибка скрипта' || err.isFixableIndent || err.isItemIdMismatchLine || err.type === 'Ошибка тега цвета' || err.type === 'Лишний перенос' || err.type === 'Ошибка шаблона' || err.type === 'Рассинхронизация' || err.type === 'Логическая ошибка' || err.type === 'Структурная ошибка' || err.type === 'Слипание строк' || err.type === 'Незакрытая кавычка' || err.type === 'Дубликат строки' || err.type === 'Ошибка имени' || err.type === 'Отвязка портрета') {
+            if (err.type === 'Ошибка скрипта' || err.isFixableIndent || err.isItemIdMismatchLine || err.type === 'Ошибка тега цвета' || err.type === 'Лишний перенос' || err.type === 'Ошибка шаблона' || err.type === 'Рассинхронизация' || err.type === 'Логическая ошибка' || err.type === 'Структурная ошибка' || err.type === 'Слипание строк' || err.type === 'Незакрытая кавычка' || err.type === 'Дубликат строки' || err.type === 'Ошибка имени' || err.type === 'Отвязка портрета' || err.type === 'Ошибка в ShowChoices') {
               // Если это ошибка скрипта, проверяем на пустой msg
               const displayMsg = err.msg || err.reason || 'Неизвестная ошибка';
               const offset = window.globalLineOffset || 0;
@@ -2851,7 +2873,7 @@ setTimeout(function () {
           });
           extraHtml += '</ul></div>';
 
-          if (indentErrorsCount > 0 || scriptErrorsCount > 0 || itemMismatchCount > 0 || colorTagErrorsCount > 0 || trailingNewlineCount > 0 || templateErrorsCount > 0 || desyncErrorsCount > 0 || structErrorsCount > 0 || gluedLinesCount > 0 || unclosedQuoteCount > 0 || duplicateLineCount > 0 || nameBracketErrorCount > 0 || portraitDesyncErrorCount > 0) {
+          if (indentErrorsCount > 0 || scriptErrorsCount > 0 || itemMismatchCount > 0 || colorTagErrorsCount > 0 || trailingNewlineCount > 0 || templateErrorsCount > 0 || desyncErrorsCount > 0 || structErrorsCount > 0 || gluedLinesCount > 0 || unclosedQuoteCount > 0 || duplicateLineCount > 0 || nameBracketErrorCount > 0 || portraitDesyncErrorCount > 0 || showChoicesErrorCount > 0) {
             diffsDiv.insertAdjacentHTML('beforeend', extraHtml);
           }
         }
