@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8">
-  <title>MGQP Map Editor v1.5.32</title>
+  <title>MGQP Map Editor v1.5.33</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="Java scripts/main_script.js"></script>
   <script src="Java scripts/restore-mode.js"></script>
@@ -168,10 +168,15 @@
       background: white;
       padding: 25px;
       border-radius: 12px;
-      width: 450px;
+      width: 550px;
+      max-width: 95%;
+      max-height: 90vh;
+      display: flex;
+      flex-direction: column;
       box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
       font-weight: normal;
       color: #333;
+      overflow-y: auto;
     }
 
     .modal-header {
@@ -252,11 +257,20 @@
   <div id="restoreDialogOverlay">
     <div id="restoreDialog">
       <div class="modal-header">Восстановление структуры</div>
-      <div class="modal-row">
+      <div class="modal-row" id="restoreSliderRow">
         <label class="modal-label" id="restoreDialogDesc">Найдена первая проблема в CommonEvent 1.</label>
         <label class="modal-label">Выберите количество событий для восстановления (включая это и далее):</label>
         <input type="range" id="restoreSlider" min="1" max="1" value="1">
         <div id="restoreSummaryText">Восстановить: CE 1-1 (1 блок)</div>
+      </div>
+      <div id="restoreEventsListContainer" style="display: none; margin-bottom: 20px;">
+        <label class="modal-label" id="restoreDialogDescNew" style="margin-bottom: 10px; display: block;">Выберите точечные или полные исправления для каждого события:</label>
+        <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+          <button id="restoreSelectAllWholeBtn" class="control-btn" style="font-size: 11px; padding: 4px 8px; margin: 0; background: #e8e8e8; border: 1px solid #ccc; border-radius: 4px; cursor: pointer;">Все целиком</button>
+          <button id="restoreSelectAllBranchBtn" class="control-btn" style="font-size: 11px; padding: 4px 8px; margin: 0; background: #cdf; border: 1px solid #abf; border-radius: 4px; cursor: pointer;">Только ветки</button>
+          <button id="restoreResetAllBtn" class="control-btn" style="font-size: 11px; padding: 4px 8px; margin: 0; background: #fbebeb; border: 1px solid #fcc; border-radius: 4px; cursor: pointer;">Сбросить всё</button>
+        </div>
+        <div id="restoreEventsList" style="max-height: 300px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; border-radius: 6px; display: flex; flex-direction: column; gap: 10px; background: #fdfdfd;"></div>
       </div>
       <div class="modal-buttons">
         <button id="cancelRestoreBtn" class="modal-btn btn-cancel">Отмена</button>
@@ -357,6 +371,16 @@
     <button id="tabEditor" class="control-btn" style="font-weight:bold;">Редактор</button>
     <button id="tabPreview" class="control-btn">Предпросмотр файла</button>
     <button id="tabBatch" class="control-btn">Пакетная обработка</button>
+    
+    <!-- Новая панель быстрой навигации -->
+    <div id="quickNavRow" style="display: none; align-items: center; justify-content: space-between; gap: 6px; margin-top: 5px; border-top: 1px solid #eee; padding-top: 8px;">
+      <button id="quickPrevBtn" class="control-btn" style="padding: 4px 10px; min-width: auto !important; font-size: 14px; margin: 0; background: #fdfdfd; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; transition: all 0.2s;" title="Предыдущая карта (↩)">↩</button>
+      <div id="quickFileIndicator" style="font-size: 11px; text-align: center; white-space: nowrap; max-width: 110px; overflow: hidden; text-overflow: ellipsis; font-weight: bold; color: #444; display: flex; flex-direction: column; gap: 2px;" title="Нет загруженных файлов">
+        <span id="quickFileName" style="overflow: hidden; text-overflow: ellipsis; display: block;">Нет файлов</span>
+        <span id="quickFileCounter" style="font-weight: normal; color: #777; font-size: 10px;">0/0</span>
+      </div>
+      <button id="quickNextBtn" class="control-btn" style="padding: 4px 10px; min-width: auto !important; font-size: 14px; margin: 0; background: #fdfdfd; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; transition: all 0.2s;" title="Следующая карта (↪)">↪</button>
+    </div>
   </div>
   <div id="tabContentEditor"></div>
   <div id="tabContentPreview" style="display:none;">
@@ -579,7 +603,7 @@
           if ((match = line.match(textCmdRegex))) {
             jpBlocks.push({ text: match[1], type: 'ShowText', originalIdx: idx });
           } else if ((match = line.match(showChoicesRegex))) {
-            const choices = match[1].split('", "').map(c => c.replace(/^"|"$/g, ''));
+            const choices = match[1].split('", "').map(c => c.replace(/^"+|"+$/g, ''));
             jpBlocks.push({ text: choices.join(' | '), type: 'ShowChoices', originalIdx: idx });
           } else if ((match = line.match(whenRegex))) {
             jpBlocks.push({ text: match[2], type: 'When', originalIdx: idx });
@@ -601,7 +625,13 @@
             const cleanText = textContent.replace(/^"(.*)"$/, '$1').replace(/\\n/g, '\n').replace(/\\/g, '∾');
             ruBlocks.push({ text: cleanText, type: 'ShowText', originalIdx: idx });
           } else if ((match = line.match(showChoicesRegex))) {
-            const choices = match[1].split(/\s*\|\s*/).map(c => c.replace(/^"|"$/g, ''));
+            const choicesText = match[1];
+            let choices;
+            if (!choicesText.includes(' | ') && choicesText.includes('"') && choicesText.includes(',')) {
+              choices = choicesText.split(/"\s*,\s*"/).map(s => s.replace(/^"+|"+$/g, '').trim()).filter(s => s.length > 0);
+            } else {
+              choices = choicesText.split(/\s*\|\s*/).map(c => c.replace(/^"+|"+$/g, ''));
+            }
             const cleanText = choices.join(' | ').replace(/\\n/g, '\n').replace(/\\/g, '∾');
             ruBlocks.push({ text: cleanText, type: 'ShowChoices', originalIdx: idx });
           } else if ((match = line.match(whenRegex))) {
@@ -1342,12 +1372,22 @@
         status.textContent = `Закешировано файлов: ${count}`;
         status.style.color = '#008800';
       }
+      if (typeof window.updateQuickFileNavigation === 'function') {
+        window.updateQuickFileNavigation();
+      }
     });
 
-    document.getElementById('fileInput').addEventListener('change', function (e) {
-      const file = e.target.files[0];
+    // Reusable function to load a Russian file
+    window.loadRussianFile = function(file) {
       if (!file) return;
       window.loadedFileName = file.name;
+      
+      // Clear fileInput value if it doesn't match the file being loaded
+      const fileInput = document.getElementById('fileInput');
+      if (fileInput && (!fileInput.files[0] || fileInput.files[0].name !== file.name)) {
+        fileInput.value = "";
+      }
+
       const reader = new FileReader();
       reader.onload = function (evt) {
         const lines = evt.target.result.split('\n');
@@ -1370,8 +1410,14 @@
         window.loadChunk(0, true);
 
         // --- АВТОЗАГРУЗКА ЯПОНСКОГО ФАЙЛА ---
-        if (window.japaneseFilesCache && window.japaneseFilesCache[loadedFileName]) {
-          const japFile = window.japaneseFilesCache[loadedFileName];
+        let japFile = null;
+        if (window.japaneseFilesCache && window.japaneseFilesCache[window.loadedFileName]) {
+          japFile = window.japaneseFilesCache[window.loadedFileName];
+        } else if (typeof jpFiles !== 'undefined' && jpFiles[window.loadedFileName]) {
+          japFile = jpFiles[window.loadedFileName];
+        }
+
+        if (japFile) {
           console.log(`Автоматически найден японский файл: ${japFile.name}`);
 
           const japReader = new FileReader();
@@ -1394,21 +1440,98 @@
               status.style.display = 'block';
               setTimeout(() => { status.style.display = 'none'; }, 5000);
             }
+            
+            if (typeof window.updateQuickFileNavigation === 'function') {
+              window.updateQuickFileNavigation();
+            }
           };
           japReader.readAsText(japFile, 'utf-8');
         } else {
           console.log("Японский файл не найден в кэше.");
-          // Если нет автофайла, просто обновляем лампу (вдруг японский был загружен вручную ранее? 
-          // Хотя логично, что новый файл сбрасывает контекст. Но старая логика не сбрасывала fullJapLines.
-          // Оставим как есть: updateMatchLamp() вызовется и покажет, что японский не подходит по структуре, если он старый
           updateMatchLamp();
           updateRedIndices();
           if (typeof window.updateFixButtonsVisibility === 'function') {
             window.updateFixButtonsVisibility();
           }
+          if (typeof window.updateQuickFileNavigation === 'function') {
+            window.updateQuickFileNavigation();
+          }
         }
       };
       reader.readAsText(file, 'utf-8');
+    };
+
+    window.updateQuickFileNavigation = function () {
+      const navRow = document.getElementById('quickNavRow');
+      const prevBtn = document.getElementById('quickPrevBtn');
+      const nextBtn = document.getElementById('quickNextBtn');
+      const nameSpan = document.getElementById('quickFileName');
+      const counterSpan = document.getElementById('quickFileCounter');
+      if (!navRow || !prevBtn || !nextBtn || !nameSpan || !counterSpan) return;
+
+      const ruFilesList = typeof ruFiles !== 'undefined' ? ruFiles : {};
+      const jpFilesList = window.japaneseFilesCache || {};
+
+      // Собрать уникальные имена файлов из двух папок
+      const allFileNamesSet = new Set([
+        ...Object.keys(ruFilesList),
+        ...Object.keys(jpFilesList)
+      ]);
+      const fileNames = Array.from(allFileNamesSet).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+
+      const currentName = window.loadedFileName || '';
+      const currentIndex = fileNames.indexOf(currentName);
+
+      // Показываем панель только если папка(и) загружены и текущий файл есть в этом списке
+      if (fileNames.length > 0 && currentName && currentIndex !== -1) {
+        navRow.style.display = 'flex';
+      } else {
+        navRow.style.display = 'none';
+        return;
+      }
+
+      nameSpan.textContent = currentName.replace(/\.txt$/i, '');
+      nameSpan.title = currentName;
+      counterSpan.textContent = `${currentIndex + 1}/${fileNames.length}`;
+
+      // Предыдущий файл
+      if (currentIndex > 0) {
+        prevBtn.disabled = false;
+        prevBtn.style.opacity = 1;
+        prevBtn.style.cursor = 'pointer';
+        prevBtn.onclick = function () {
+          const fileToLoad = ruFilesList[fileNames[currentIndex - 1]] || jpFilesList[fileNames[currentIndex - 1]];
+          window.loadRussianFile(fileToLoad);
+        };
+      } else {
+        prevBtn.disabled = true;
+        prevBtn.style.opacity = 0.5;
+        prevBtn.style.cursor = 'default';
+        prevBtn.onclick = null;
+      }
+
+      // Следующий файл
+      if (currentIndex < fileNames.length - 1) {
+        nextBtn.disabled = false;
+        nextBtn.style.opacity = 1;
+        nextBtn.style.cursor = 'pointer';
+        nextBtn.onclick = function () {
+          const fileToLoad = ruFilesList[fileNames[currentIndex + 1]] || jpFilesList[fileNames[currentIndex + 1]];
+          window.loadRussianFile(fileToLoad);
+        };
+      } else {
+        nextBtn.disabled = true;
+        nextBtn.style.opacity = 0.5;
+        nextBtn.style.cursor = 'default';
+        nextBtn.onclick = null;
+      }
+    };
+
+    document.getElementById('fileInput').addEventListener('change', function (e) {
+      const file = e.target.files[0];
+      if (file) {
+        window.loadRussianFile(file);
+      }
     });
 
 
@@ -1521,8 +1644,8 @@
       const tempBlocks = [];
       let currentEventId = null;
       const textCmdRegex = /^\s*ShowText\(\["([\s\S]*?)"\]\)(.*)/;
-      const showChoicesRegex = /^\s*ShowChoices\(\[\[(.*)\],\s*(\d+)\]\)/;
-      const whenRegex = /^\s*When\(\[(\d+),\s*"(.*)"\]\)/;
+      const showChoicesRegex = /^\s*ShowChoices\(\[\[(.*)\],\s*(\d+)\]\)(.*)/;
+      const whenRegex = /^\s*When\(\[(\d+),\s*"(.*)"\]\)(.*)/;
       const scriptRegex = /^\s*(Script|ScriptMore)\(\[\s*"((?:[^"\\]|\\.)*)"\s*\]\)(.*)/;
       const otherRegex = /^\s*(\w+)\(\[([\s\S]*?)\]\)(.*)/;
       const nameValueRegex = /^\s*(\w+)\s*=\s*"(.*)"$/;
@@ -1542,10 +1665,19 @@
           tempBlocks.push({ text: textContent, type: 'ShowText', originalIdx: idx, line: line, commonEventId: currentEventId, hasIgnoreMarker: hasIgnoreMarker, trailingContent: trailingContent });
         } else if ((match = line.match(showChoicesRegex))) {
           let choicesText = match[1];
-          const choices = choicesText.split(/\s*\|\s*/).map(c => c.replace(/^"|"$/g, ''));
-          tempBlocks.push({ text: choices.join(' | '), type: 'ShowChoices', originalIdx: idx, choices: choices, defaultChoice: parseInt(match[2]), line: line, commonEventId: currentEventId });
+          let choices;
+          if (!choicesText.includes(' | ') && choicesText.includes('"') && choicesText.includes(',')) {
+            choices = choicesText.split(/"\s*,\s*"/).map(s => s.replace(/^"+|"+$/g, '').trim()).filter(s => s.length > 0);
+          } else {
+            choices = choicesText.split(/\s*\|\s*/).map(c => c.replace(/^"+|"+$/g, ''));
+          }
+          const scTrailing = match[3] || '';
+          const scHasIgnoreMarker = /##/.test(scTrailing);
+          tempBlocks.push({ text: choices.join(' | '), type: 'ShowChoices', originalIdx: idx, choices: choices, defaultChoice: parseInt(match[2]), line: line, commonEventId: currentEventId, trailingContent: scTrailing, hasIgnoreMarker: scHasIgnoreMarker });
         } else if ((match = line.match(whenRegex))) {
-          tempBlocks.push({ text: match[2], type: 'When', originalIdx: idx, choiceIndex: parseInt(match[1]), line: line, commonEventId: currentEventId });
+          const whenTrailing = match[3] || '';
+          const whenHasIgnoreMarker = /##/.test(whenTrailing);
+          tempBlocks.push({ text: match[2], type: 'When', originalIdx: idx, choiceIndex: parseInt(match[1]), line: line, commonEventId: currentEventId, trailingContent: whenTrailing, hasIgnoreMarker: whenHasIgnoreMarker });
         } else if ((match = line.match(scriptRegex))) {
           const commandType = match[1];
           const commandText = match[2];
@@ -1680,7 +1812,7 @@
         } else if ((match = line.match(displayNameRegex))) {
           window.japDisplayName = match[1];
         } else if ((match = line.match(showChoicesRegex))) {
-          const choices = match[1].split('", "').map(c => c.replace(/^"|"$/, ''));
+          const choices = match[1].split('", "').map(c => c.replace(/^"+|"+$/, ''));
           tempBlocks.push({ text: choices.join(' | '), type: 'ShowChoices', originalIdx: idx, choices: choices, commonEventId: currentEventId });
         } else if ((match = line.match(whenRegex))) {
           tempBlocks.push({ text: match[2], type: 'When', originalIdx: idx, choiceIndex: parseInt(match[1]), commonEventId: currentEventId });
@@ -1828,7 +1960,7 @@
           window.japDisplayName = match[1];
         } else if ((match = line.match(showChoicesRegex))) {
           const choicesText = match[1];
-          const choices = choicesText.split('", "').map(c => c.replace(/^"/, '').replace(/"$/, '')
+          const choices = choicesText.split('", "').map(c => c.replace(/^"+/, '').replace(/"+$/, '')
           );
           tempBlocks.push({ text: choices.join(' | '), type: 'ShowChoices', originalIdx: idx, choices: choices, commonEventId: currentEventId });
         } else if ((match = line.match(whenRegex))) {
@@ -2462,7 +2594,22 @@
           // --- Сохраняем старое значение до обновления ---
           const oldText = textBlocks[i].text;
           // ---
-          textBlocks[i].text = textarea.value;
+          // --- НОРМАЛИЗАЦИЯ ShowChoices: убираем лишние кавычки при вводе ---
+          if (block.type === 'ShowChoices') {
+            // При вводе: только убираем кавычки по краям каждого pipe-варианта
+            const raw = textarea.value;
+            const normalized = raw.split(/\s*\|\s*/).map(s => s.trim().replace(/^"+|"+$/g, '')).join(' | ');
+            if (normalized !== raw && !raw.endsWith('"')) {
+              // Не трогаем пока пользователь ещё не закончил набирать
+              // (проверяем, что строка не заканчивается на кавычку — значит ввод завершён)
+              const pos = textarea.selectionStart;
+              textarea.value = normalized;
+              textarea.selectionStart = textarea.selectionEnd = Math.min(pos, normalized.length);
+            }
+            textBlocks[i].text = textarea.value;
+          } else {
+            textBlocks[i].text = textarea.value;
+          }
           // <<< ОБНОВЛЯЕМ ГЛОБАЛЬНУЮ ПАМЯТЬ ПРИ РУЧНОМ ВВОДЕ >>>
           if (block.japaneseLink && block.japaneseLink.text && !textarea.value.includes('ТРЕБУЕТСЯ ПЕРЕВОД')) {
 
@@ -2691,12 +2838,11 @@
             // Поддержка разных разделителей
             if (currentVal.includes(' | ')) {
               choices = currentVal.split(/\s*\|\s*/);
-            } else if (currentVal.includes('", "')) {
-              choices = currentVal.split(/",\s*"/).map(s => s.replace(/^"|"$/g, ''));
-            } else if (currentVal.includes('","')) {
-              choices = currentVal.split(/","/).map(s => s.replace(/^"|"$/g, ''));
+            } else if (currentVal.includes('"') && currentVal.includes(',')) {
+              // Сплит ТОЛЬКО по ", " (кавычка+запятая+кавычка) — не трогает запятые внутри текста
+              choices = currentVal.split(/"\s*,\s*"/).map(s => s.replace(/^"+|"+$/g, '').trim()).filter(s => s.length > 0);
             } else {
-              choices = currentVal.split(',').map(s => s.trim().replace(/^"|"$/g, ''));
+              choices = [currentVal.trim()];
             }
 
             let whenIdx = 0;
@@ -2721,6 +2867,31 @@
             }
           }
         });
+
+        // --- НОРМАЛИЗАЦИЯ ShowChoices при потере фокуса ---
+        if (block.type === 'ShowChoices') {
+          textarea.addEventListener('blur', function () {
+            const raw = textarea.value;
+            let normalized;
+            if (raw.includes(' | ')) {
+              // Pipe-формат: убираем лишние кавычки у каждого варианта
+              normalized = raw.split(/\s*\|\s*/).map(s => s.trim().replace(/^"+|"+$/g, '')).join(' | ');
+            } else if (raw.includes('"') && raw.includes(',')) {
+              // Формат: "Выбор1", "Выбор2" — сплит ТОЛЬКО по ", " (кавычка+запятая+кавычка)
+              normalized = raw.split(/"\s*,\s*"/).map(s => s.replace(/^"+|"+$/g, '').trim()).filter(s => s.length > 0).join(' | ');
+            } else {
+              // Один вариант или иной формат — просто убираем кавычки
+              normalized = raw.replace(/^"+|"+$/g, '').trim();
+            }
+            if (normalized !== raw) {
+              textarea.value = normalized;
+              textBlocks[i].text = normalized;
+              if (typeof window.updateMatchLamp === 'function') window.updateMatchLamp();
+              if (typeof updateRedIndices === 'function') updateRedIndices();
+            }
+          });
+        }
+
         textarea.addEventListener('select', updateAll);
 
         plusBtn.textContent = '+';
@@ -2930,8 +3101,15 @@
               break;
             case 'ShowChoices':
               let choicesText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
-              const choices = choicesText.split(/\s*\|\s*/);
-              const quotedChoices = choices.map(choice => `"${choice.trim()}"`).join(', ');
+              let choices;
+              // Поддержка форматов: "Выбор1", "Выбор2" и Выбор1 | Выбор2
+              if (!choicesText.includes(' | ') && choicesText.includes('"') && choicesText.includes(',')) {
+                // Формат: "Выбор1", "Выбор2" — сплит ТОЛЬКО по ", " (кавычка+запятая+кавычка)
+                choices = choicesText.split(/"\s*,\s*"/).map(s => s.replace(/^"+|"+$/g, '').trim()).filter(s => s.length > 0);
+              } else {
+                choices = choicesText.split(/\s*\|\s*/);
+              }
+              const quotedChoices = choices.map(choice => `"${choice.trim().replace(/^"+|"+$/g, '')}"`).join(', ');
               formattedLine = originalLine.replace(/\[\[(.*?)\],\s*(\d+)\]/, `[[${quotedChoices}], $2]`);
               break;
             case 'When':
@@ -3523,74 +3701,162 @@
         return;
       }
 
-      // 1. Собираем информацию о всех CommonEvent
-      const allEvIds = Array.from(new Set(
-        window.textBlocks
-          .map(b => b.commonEventId)
-          .filter(id => id !== undefined && id !== -1)
-      )).sort((a, b) => a - b);
-
-      if (allEvIds.length === 0) {
-        alert('В файле не обнаружены CommonEvent.');
+      // Анализируем структурные ошибки по событиям и веткам
+      const errorAnalysis = window.analyzeStructuralErrorsForBranches();
+      if (errorAnalysis.length === 0) {
+        alert('Структурных ошибок не обнаружено.');
         return;
       }
 
-      // 2. Ищем первый проблемный CommonEvent
-      let firstProblemId = allEvIds[0];
-      if (window.allErrorIndices && window.allErrorIndices.size > 0) {
-        let minId = Infinity;
-        window.allErrorIndices.forEach(idx => {
-          const block = window.textBlocks[idx];
-          if (block && block.commonEventId !== undefined && block.commonEventId !== -1) {
-            if (block.commonEventId < minId) minId = block.commonEventId;
-          }
-        });
-        if (minId !== Infinity) firstProblemId = minId;
-      }
-
-      // 3. Настраиваем UI модального окна
       const overlay = document.getElementById('restoreDialogOverlay');
-      const slider = document.getElementById('restoreSlider');
-      const desc = document.getElementById('restoreDialogDesc');
-      const summary = document.getElementById('restoreSummaryText');
-      const cancelBtn = document.getElementById('cancelRestoreBtn');
-      const confirmBtn = document.getElementById('confirmRestoreBtn');
+      const sliderRow = document.getElementById('restoreSliderRow');
+      const listContainer = document.getElementById('restoreEventsListContainer');
+      const listDiv = document.getElementById('restoreEventsList');
 
-      const startIndex = allEvIds.indexOf(firstProblemId);
-      const remainingCount = allEvIds.length - startIndex;
+      // Показываем детальный список, скрываем слайдер
+      sliderRow.style.display = 'none';
+      listContainer.style.display = 'block';
+      listDiv.innerHTML = '';
 
-      desc.textContent = `Первая проблема обнаружена в CommonEvent ${firstProblemId}.`;
-      slider.min = 1;
-      slider.max = remainingCount;
-      slider.value = Math.min(1, remainingCount);
+      errorAnalysis.forEach(item => {
+        const itemDiv = document.createElement('div');
+        itemDiv.style.cssText = 'padding: 10px; border: 1px solid #ddd; border-radius: 6px; background: white; text-align: left;';
 
-      const updateSummary = () => {
-        const count = parseInt(slider.value, 10);
-        const endId = allEvIds[startIndex + count - 1];
-        summary.textContent = `Будет исправлено: CE ${firstProblemId} - ${endId} (Кол-во: ${count})`;
+        const header = document.createElement('div');
+        header.style.cssText = 'font-weight: bold; margin-bottom: 5px; font-size: 13px; color: #333;';
+        header.textContent = `CommonEvent ${item.eventId} (${item.eventName})`;
+
+        const desc = document.createElement('div');
+        desc.style.cssText = 'font-size: 11px; color: #d32f2f; margin-bottom: 8px; line-height: 1.4;';
+        desc.innerHTML = `Строка ${item.errorLine}: ${item.errorMsg}`;
+
+        const selectLabel = document.createElement('label');
+        selectLabel.style.cssText = 'font-size: 11px; display: block; margin-bottom: 4px; font-weight: normal; color: #666;';
+        selectLabel.textContent = 'Действие по исправлению:';
+
+        const select = document.createElement('select');
+        select.className = 'event-fix-choice';
+        select.dataset.eventId = item.eventId;
+        select.dataset.branchArgs = item.branchArgs || '';
+        select.style.cssText = 'width: 100%; padding: 4px; border-radius: 4px; border: 1px solid #ccc; background: white; font-size: 12px; font-family: sans-serif; box-sizing: border-box;';
+
+        // Вариант 1: Оставить как есть
+        const optNone = document.createElement('option');
+        optNone.value = 'none';
+        optNone.textContent = 'Не исправлять (оставить как есть)';
+        select.appendChild(optNone);
+
+        if (item.branchArgs) {
+          // Вариант 2: Исправить только ветку
+          const optBranch = document.createElement('option');
+          optBranch.value = 'branch-only';
+          optBranch.textContent = `Исправить только ветку ConditionalBranch(${item.branchArgs})`;
+          optBranch.selected = true; // по умолчанию выбираем точечное исправление ветки
+          select.appendChild(optBranch);
+
+          // Вариант 3: Исправить ветку и все последующие
+          const optBranchSub = document.createElement('option');
+          optBranchSub.value = 'branch-subsequent';
+          optBranchSub.textContent = `Исправить ветку и все последующие блоки в этом CE`;
+          select.appendChild(optBranchSub);
+        }
+
+        // Вариант 4: Исправить весь CommonEvent
+        const optWhole = document.createElement('option');
+        optWhole.value = 'whole-event';
+        optWhole.textContent = 'Исправить весь CommonEvent целиком';
+        if (!item.branchArgs) {
+          optWhole.selected = true;
+        }
+        select.appendChild(optWhole);
+
+        itemDiv.appendChild(header);
+        itemDiv.appendChild(desc);
+        itemDiv.appendChild(selectLabel);
+        itemDiv.appendChild(select);
+        listDiv.appendChild(itemDiv);
+      });
+
+      // Назначаем обработчики кнопок быстрого выбора
+      document.getElementById('restoreSelectAllWholeBtn').onclick = (e) => {
+        e.preventDefault();
+        listDiv.querySelectorAll('.event-fix-choice').forEach(sel => {
+          sel.value = 'whole-event';
+        });
       };
 
-      slider.oninput = updateSummary;
-      updateSummary();
+      document.getElementById('restoreSelectAllBranchBtn').onclick = (e) => {
+        e.preventDefault();
+        listDiv.querySelectorAll('.event-fix-choice').forEach(sel => {
+          const hasBranch = sel.dataset.branchArgs !== '';
+          if (hasBranch) {
+            sel.value = 'branch-only';
+          } else {
+            sel.value = 'whole-event';
+          }
+        });
+      };
+
+      document.getElementById('restoreResetAllBtn').onclick = (e) => {
+        e.preventDefault();
+        listDiv.querySelectorAll('.event-fix-choice').forEach(sel => {
+          sel.value = 'none';
+        });
+      };
 
       overlay.style.display = 'flex';
+
+      const cancelBtn = document.getElementById('cancelRestoreBtn');
+      const confirmBtn = document.getElementById('confirmRestoreBtn');
 
       cancelBtn.onclick = () => { overlay.style.display = 'none'; };
       confirmBtn.onclick = () => {
         overlay.style.display = 'none';
-        const count = parseInt(slider.value, 10);
-        const manualIds = allEvIds.slice(startIndex, startIndex + count);
 
-        if (typeof window.fixOnlyMismatchedEvents === 'function') {
-          const fixedLines = window.fixOnlyMismatchedEvents(window.fullRusLines, window.fullJapLines, manualIds);
+        // Собираем выбранные действия
+        const choices = {};
+        listDiv.querySelectorAll('.event-fix-choice').forEach(sel => {
+          const evId = parseInt(sel.dataset.eventId, 10);
+          choices[evId] = {
+            type: sel.value,
+            branchArgs: sel.dataset.branchArgs || null
+          };
+        });
+
+        if (typeof window.fixMismatchedEventsWithChoices === 'function') {
+          const fixedLines = window.fixMismatchedEventsWithChoices(window.fullRusLines, window.fullJapLines, choices);
           if (fixedLines) {
             window.fullRusLines = fixedLines;
             window.restoreModeEnabled = true;
+
             const syncBtn = document.getElementById('syncEditorBtn');
-            if (syncBtn) syncBtn.style.display = '';
+            if (syncBtn) {
+              syncBtn.style.display = '';
+              syncBtn.title = 'Заменить содержимое редактора на восстановленные строки';
+            }
+
             if (typeof window.updatePreviewArea === 'function') {
               window.updatePreviewArea();
             }
+
+            setTimeout(() => {
+              if (typeof window.updateRedIndices === 'function') {
+                window.updateRedIndices();
+              }
+              const saveBtn = document.getElementById('saveBtn');
+              if (saveBtn && window.restoreModeEnabled) {
+                saveBtn.disabled = false;
+                saveBtn.style.background = '#cdf';
+                saveBtn.style.color = '#333';
+                saveBtn.title = 'Структура восстановлена. Можно сохранить файл.';
+              }
+              if (typeof window.updateMatchLamp === 'function') {
+                window.updateMatchLamp();
+              }
+              if (typeof window.updateFixButtonsVisibility === 'function') {
+                window.updateFixButtonsVisibility();
+              }
+            }, 100);
           }
         }
       };
