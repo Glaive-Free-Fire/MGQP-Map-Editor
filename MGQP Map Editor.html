@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8">
-  <title>MGQP Map Editor v1.5.33</title>
+  <title>MGQP Map Editor v1.5.34</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="Java scripts/main_script.js"></script>
   <script src="Java scripts/restore-mode.js"></script>
@@ -1730,9 +1730,11 @@
           const specialTemplateRegex = /(^\\n|^∾∾\\n)<[\\∾]{2}C\[\d+\].*[\\∾]{2}C\[0\]>\((Уровень симпатии:|Найдено мастеров:|Привязанность:).*?\)$/;
 
           let linesToSkip = [];
+          let combinedHasIgnoreMarker = currentBlock.hasIgnoreMarker; // Наследуем ## от первого блока
           if (specialTemplateRegex.test(rawText) && i + 1 < tempBlocks.length && tempBlocks[i + 1].type === 'ShowText') {
             linesToSkip.push(tempBlocks[i + 1].originalIdx);
             combinedText += '\n' + tempBlocks[i + 1].text;
+            if (tempBlocks[i + 1].hasIgnoreMarker) combinedHasIgnoreMarker = true; // Наследуем ## от продолжения
             i++;
           }
           else if (i + 1 < tempBlocks.length && tempBlocks[i + 1].type === 'ShowText') {
@@ -1744,11 +1746,13 @@
               // Это дубликат. Пропускаем следующую строку.
               console.log("Auto-skipped duplicate line at original index:", nextBlock.originalIdx);
               linesToSkip.push(nextBlock.originalIdx);
+              if (nextBlock.hasIgnoreMarker) combinedHasIgnoreMarker = true; // Наследуем ## от дубликата
               i++;
             } else if (!window.isNameBlock(nextRaw) && !nextRaw.includes('<\\C[6]')) {
               // Это продолжение диалога (не имя). Объединяем.
               linesToSkip.push(nextBlock.originalIdx);
               combinedText += '\n' + nextBlock.text;
+              if (nextBlock.hasIgnoreMarker) combinedHasIgnoreMarker = true; // Наследуем ## от продолжения
               i++;
             }
           }
@@ -1764,7 +1768,7 @@
             generated: hasPlus,
             manualPlus: hasPlus && currentBlock.originalIdx !== undefined,
             commonEventId: currentBlock.commonEventId,
-            hasIgnoreMarker: currentBlock.hasIgnoreMarker,
+            hasIgnoreMarker: combinedHasIgnoreMarker,
             linesToSkip: linesToSkip
           });
         } else {
