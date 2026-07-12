@@ -192,7 +192,8 @@ function createErrorTypeCheckboxes() {
     'Ошибка строки (японский текст)': false,  // не поддерживается автоматически
     'Ошибка кода (неправильные теги)': false,  // не поддерживается автоматически
     'Ошибка компоновки (огрызки в подарках)': false,  // не поддерживается автоматически
-    'Ошибка компоновки (позиция ShowTextAttributes)': false  // не поддерживается автоматически
+    'Ошибка компоновки (позиция ShowTextAttributes)': false,  // не поддерживается автоматически
+    'Ошибка шаблона (подарок)': false  // отсутствует блок ControlVariables+STA+ShowText перед ShowChoices; не поддерживается автоматически
   };
   
   // Создаём чекбоксы для каждого типа ошибки
@@ -999,6 +1000,7 @@ async function batchCheckAllFiles() {
     }
 
     // === НОВОЕ: Создаем контекст блоков для проверки логических ошибок ===
+    window.loadedFileName = fileName;
     window.originalLines = ruLines.slice();
     window.fullRusLines = ruLines.slice();
     window.fullJapLines = jpLines.slice();

@@ -704,6 +704,121 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines, globalOffse
   // =================================================================
 
   // =================================================================
+  // ПРОВЕРКА: Отсутствие блока "В наличии" перед ShowChoices в шаблоне подарка
+  // =================================================================
+  // Правильная структура внутри ветки ConditionalBranch([8, ID]) перед ShowChoices:
+  //   ...диалог персонажа...
+  //   ControlVariables([24, 24, 0, 3, 0, ID, 0])   ← обязательно (перед пустым STA)
+  //   ShowTextAttributes(["", 0, 0, 2])              ← обязательно (ключевой признак блока)
+  //   ShowText([...])                                ← обязательно (один или несколько)
+  //   ShowChoices([...])
+  //
+  // Примечание: ShowText запроса может быть разбит на несколько строк (#+),
+  // поэтому проверяем не фиксированные позиции, а наличие элементов в ветке.
+  //
+  // Выполняем проверку только для файлов CommonEvent (и никогда для Map)
+  const fileNameLower = (window.loadedFileName || "").toLowerCase();
+  const isMapFile = fileNameLower.includes('map');
+  const isCommonEventFile = !isMapFile && (fileNameLower.includes('commonevent') || ruLines.some(l => /^[\s\uFEFF]*CommonEvent \d+/.test(l)));
+
+  if (isCommonEventFile) {
+    for (let i = 0; i < ruLines.length; i++) {
+      const line = ruLines[i];
+
+      // Ищем маркер шаблона подарка: ConditionalBranch([8, <ID>])
+      const cbMatch = line.match(/^(\s*)ConditionalBranch\(\[8,\s*(\d+)\]\)/);
+      if (!cbMatch) continue;
+
+      const cbIndent = cbMatch[1];
+      const itemId = cbMatch[2];
+
+      // Собираем все непустые строки прямых потомков ветки до ShowChoices
+      // (строки с отступом > cbIndent, не углубляясь в When/вложенные ветки)
+      const branchLines = []; // { idx, content }
+      let showChoicesLineIdx = -1;
+
+      for (let j = i + 1; j < ruLines.length; j++) {
+        const innerLine = ruLines[j];
+        if (innerLine.trim() === '') continue;
+
+        const lineIndentMatch = innerLine.match(/^(\s*)\S/);
+        if (!lineIndentMatch) continue;
+        const lineIndent = lineIndentMatch[1];
+
+        // Вышли за пределы ветки
+        if (lineIndent.length <= cbIndent.length) break;
+
+        // Учитываем только прямых потомков ConditionalBranch([8, ID]),
+        // т.е. строки ровно на один уровень глубже (When-блоки глубже — пропускаем)
+        if (branchLines.length === 0 && showChoicesLineIdx === -1) {
+          // Первая строка внутри ветки задаёт эталонный отступ прямых потомков
+          branchLines._directIndentLen = lineIndent.length;
+        }
+
+        // Если отступ совпадает с эталонным — это прямой потомок
+        if (lineIndent.length === (branchLines._directIndentLen || 0)) {
+          if (/ShowChoices\(\[/.test(innerLine)) {
+            showChoicesLineIdx = j;
+            break;
+          }
+          branchLines.push({ idx: j, content: innerLine });
+        }
+        // Строки с большим отступом (внутри When и т.п.) — пропускаем
+      }
+
+      if (showChoicesLineIdx === -1) continue;
+
+      // Если в строке ShowChoices или в самой ветке ConditionalBranch есть заглушка ##, игнорируем ошибку
+      if (/##/.test(ruLines[showChoicesLineIdx]) || /##/.test(line)) {
+        continue;
+      }
+
+      // Ищем пустой ShowTextAttributes(["", 0, 0, 2]) — ключевой признак блока.
+      // Ищем с конца (ближе к ShowChoices), так как в начале ветки могут быть другие пустые STA (для повествовательного текста).
+      const staBlankPattern = /ShowTextAttributes\(\["",\s*0,\s*0,\s*2\]\)/;
+      const cvPattern = new RegExp(`ControlVariables\\(\\[24,\\s*24,\\s*0,\\s*3,\\s*0,\\s*${itemId},\\s*0\\]\\)`);
+
+      let staBlankIdx = -1;
+      for (let k = branchLines.length - 1; k >= 0; k--) {
+        if (staBlankPattern.test(branchLines[k].content)) {
+          staBlankIdx = k;
+          break;
+        }
+      }
+      const hasBlankSTA = staBlankIdx !== -1;
+
+      // ControlVariables([24, 24, 0, 3, 0, ID, 0]) должен стоять перед пустым STA
+      const hasControlVariables = hasBlankSTA
+        ? branchLines.slice(0, staBlankIdx).some(b => cvPattern.test(b.content))
+        : branchLines.some(b => cvPattern.test(b.content)); // fallback: ищем вообще
+
+      // ShowText([...]) должен стоять после пустого STA (и до ShowChoices)
+      const hasShowTextAfterSTA = hasBlankSTA
+        ? branchLines.slice(staBlankIdx + 1).some(b => /ShowText\(\[/.test(b.content))
+        : false;
+
+      // Блок присутствует, если все три элемента найдены в правильном порядке
+      const blockIsPresent = hasBlankSTA && hasControlVariables && hasShowTextAfterSTA;
+
+      if (!blockIsPresent) {
+        const missing = [];
+        if (!hasControlVariables) missing.push(`ControlVariables([24, 24, 0, 3, 0, ${itemId}, 0])`);
+        if (!hasBlankSTA) missing.push(`ShowTextAttributes(["", 0, 0, 2])`);
+        if (!hasShowTextAfterSTA) missing.push(`ShowText([...]) после ShowTextAttributes`);
+
+        errors.push({
+          label: getLineLabel(showChoicesLineIdx),
+          type: 'Ошибка шаблона (подарок)',
+          reason: `Перед ShowChoices в ветке ConditionalBranch([8, ${itemId}]) отсутствует обязательный блок. Не найдено: ${missing.join(', ')}.`
+        });
+      }
+    }
+  }
+  // =================================================================
+  // END: Gift give template check
+  // =================================================================
+
+  // =================================================================
   // START: Проверка технических команд с японским файлом
   // =================================================================
   console.log('[DEBUG TECHNICAL] Начало проверки технических команд');
