@@ -9,15 +9,15 @@ window.getGameTextInfo = function (txt) {
   };
 
   // Проверка на поврежденный тег
-  const hasTagHint = /<∾∾C/.test(txt);
-  const validNameTagRegex = /<∾∾C\[\d+\](?:.*?)∾∾C\[0\]>/;
+  const hasTagHint = /<∾+C/.test(txt);
+  const validNameTagRegex = /<∾+C\[\d+\](?:.*?)∾+C\[0\]>/;
   if (hasTagHint && !validNameTagRegex.test(txt)) {
     result.isCorrupted = true;
     return result;
   }
 
   // Новое, улучшенное регулярное выражение
-  const fullMatch = txt.match(/^(∾\n)?(<∾∾C\[\d+\].*?∾∾C\[0\]>)?(.*)$/s);
+  const fullMatch = txt.match(/^(∾+\n)?(<∾+C\[\d+\].*?∾+C\[0\]>)?(.*)$/s);
 
   if (fullMatch) {
     const newlinePrefix = fullMatch[1] || '';
@@ -39,14 +39,14 @@ window.getGameTextInfo = function (txt) {
 // --- НОВАЯ ЦЕНТРАЛИЗОВАННАЯ ФУНКЦИЯ ПОДСЧЁТА СИМВОЛОВ ---
 window.getVisibleTextMetrics = function (text) {
   const info = window.getGameTextInfo(text);
-  let cleanText = info.rawGameText.replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[0\]>/g, '');
+  let cleanText = info.rawGameText.replace(/<[\\∾]{2}C\[\d+\](?:.*?)<[\\∾]{2}C\[0\]>/g, '').replace(/<[\\∾]{2}C\[\d+\].*?[\\∾]{2}C\[0\]>/g, '');
   while (true) {
-    const newer = cleanText.replace(/∾∾[A-Z](\[.*?\])?/g, '');
+    const newer = cleanText.replace(/[\\∾]{1,2}[A-Za-z]+(\[[^\[\]]*\])?/g, '');
     if (newer === cleanText) break;
     cleanText = newer;
   }
   const visibleText = cleanText
-    .replace(/∾/g, '')
+    .replace(/[\\∾]/g, '')
     .replace(/∿/g, '')
     .trim();
   return { text: visibleText, length: visibleText.length };
@@ -70,26 +70,26 @@ window.updateAllForBlock = function (block, textarea, plusBtn, minusBtn, counter
     let selGame = 0;
     if (sel > 0 && selStart >= nameLen && selEnd >= nameLen) {
       const selected = info.rawGameText.substring(selStart - nameLen, selEnd - nameLen);
-      let cleanSel = selected.replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[0\]>/g, '');
+      let cleanSel = selected.replace(/<[\\∾]{2}C\[\d+\](?:.*?)<[\\∾]{2}C\[0\]>/g, '').replace(/<[\\∾]{2}C\[\d+\].*?[\\∾]{2}C\[0\]>/g, '');
       while (true) {
-        const newer = cleanSel.replace(/∾∾[A-Z](\[.*?\])?/g, '');
+        const newer = cleanSel.replace(/[\\∾]{1,2}[A-Za-z]+(\[[^\[\]]*\])?/g, '');
         if (newer === cleanSel) break;
         cleanSel = newer;
       }
       selGame = cleanSel
-        .replace(/∾/g, '')
+        .replace(/[\\∾]/g, '')
         .replace(/∿/g, '')
         .length;
     } else if (sel > 0 && selEnd > nameLen && selStart < nameLen) {
       const selected = info.rawGameText.substring(0, selEnd - nameLen);
-      let cleanSel = selected.replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[0\]>/g, '');
+      let cleanSel = selected.replace(/<[\\∾]{2}C\[\d+\](?:.*?)<[\\∾]{2}C\[0\]>/g, '').replace(/<[\\∾]{2}C\[\d+\].*?[\\∾]{2}C\[0\]>/g, '');
       while (true) {
-        const newer = cleanSel.replace(/∾∾[A-Z](\[.*?\])?/g, '');
+        const newer = cleanSel.replace(/[\\∾]{1,2}[A-Za-z]+(\[[^\[\]]*\])?/g, '');
         if (newer === cleanSel) break;
         cleanSel = newer;
       }
       selGame = cleanSel
-        .replace(/∾/g, '')
+        .replace(/[\\∾]/g, '')
         .replace(/∿/g, '')
         .length;
       if (selGame < 0) selGame = 0;
@@ -572,12 +572,22 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines, globalOffse
           reason: `Превышен лимит символов: ${metrics.length} > 50`
         });
       }
-      const brokenCodeRegex = /∾∾[IC]\[\d+\].*?(?<!∾)∾C\[0\]/;
+      // Ловим: (1) одиночный ∾C[0] и (2) тройной+ ∾∾∾C[0] — оба являются ошибками
+      const brokenCodeRegex = /∾∾[IC]\[\d+\].*?(?:(?<!∾)∾C\[0\]|∾{3,}C\[0\])/;
       if (brokenCodeRegex.test(block.text) && !block.hasIgnoreMarker) {
         errors.push({
           label: getLineLabel(block.idx),
           type: 'Ошибка кода',
           reason: 'Неправильно экранирован закрывающий тег. Вероятно, вместо `∾∾C[0]` используется `∾C[0]`.'
+        });
+      }
+      // Проверка на переизбыток ∾ (3+ подряд — аномалия, которая ломает парсинг)
+      const excessTildeRegex = /∾{3,}/;
+      if (excessTildeRegex.test(block.text) && !block.hasIgnoreMarker) {
+        errors.push({
+          label: getLineLabel(block.idx),
+          type: 'Ошибка кода',
+          reason: 'Обнаружен переизбыток символов `∾` (3+ подряд). Вероятно, префикс был добавлен повторно.'
         });
       }
     }
@@ -1033,7 +1043,9 @@ window.fixLongDialogues = function(silent = false) {
       if (!isNarration && lastKnownNameTag) {
         const nextBlock = textBlocks[insertionPoint];
         if (nextBlock && nextBlock.type === 'ShowText' && !window.isNameBlock(nextBlock.text)) {
-          nextBlock.text = `∾\n${lastKnownNameTag}${nextBlock.text}`;
+          // Убираем любой существующий префикс ∾+\n и/или тег имени перед добавлением нового
+          const cleanedText = nextBlock.text.replace(/^∾+\n/, '').replace(/^<∾+C\[\d+\].*?∾+C\[0\]>/, '');
+          nextBlock.text = `∾\n${lastKnownNameTag}${cleanedText}`;
         }
       }
 

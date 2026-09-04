@@ -1410,21 +1410,42 @@
 
           // Правило 2 (Ошибка 3): STA #+ в середине предложения #+
           if (prevBlock.manualPlus && nextRelevantBlock && nextRelevantBlock.manualPlus) {
-            // <<< ИСПРАВЛЕНИЕ: Игнорируем, если STA был сгенерирован (generated: true) >>>
+            // <<< ИСПРАВЛЕНИЕ: Игнорируем, если STA был сгенерирован (generated: true) или если это вынужденный разрыв (4+ строк) >>>
             if (!block.generated) {
-              blocksToPreClean.push(block);
-              continue;
+              let showTextCount = 0;
+              for (let j = i - 1; j >= 0; j--) {
+                const pb = window.textBlocks[j];
+                if (pb.isDeleted) continue;
+                if (pb.type === 'ShowTextAttributes') break;
+                if (pb.type === 'ShowText') showTextCount++;
+                if (pb.type !== 'ShowText' && pb.type !== 'ShowTextAttributes') break;
+              }
+              if (showTextCount < 4) {
+                blocksToPreClean.push(block);
+                continue;
+              }
             }
           }
 
           // === НОВОЕ ПРАВИЛО: STA #+ разрывает незаконченное предложение ===
-          // Если предыдущий ShowText не заканчивается на знак препинания - это мусорный STA
+          // Если предыдущий ShowText не заканчивается на знак препинания, НО только если строк меньше 4!
           if (prevBlock.type === 'ShowText') {
             const text = prevBlock.text || '';
             const hasTerminalPunctuation = /[.!?…"»][\s]*$/.test(text);
             if (!hasTerminalPunctuation) {
-              blocksToPreClean.push(block);
-              continue;
+              let showTextCount = 0;
+              for (let j = i - 1; j >= 0; j--) {
+                const pb = window.textBlocks[j];
+                if (pb.isDeleted) continue;
+                if (pb.type === 'ShowTextAttributes') break;
+                if (pb.type === 'ShowText') showTextCount++;
+                if (pb.type !== 'ShowText' && pb.type !== 'ShowTextAttributes') break;
+              }
+              // Если строк меньше 4 - это преждевременный/мусорный разрыв. Если 4+ строк - разрыв вынужденный!
+              if (showTextCount < 4) {
+                blocksToPreClean.push(block);
+                continue;
+              }
             }
           }
         }
@@ -1582,7 +1603,9 @@
     // --- В КОНЦЕ Исправляем Ошибку 2 (Добавляем полный тег имени) ---
     blocksToFix_MissingTag.forEach(item => {
       if (item.nameTag) {
-        item.block.text = `∾\n${item.nameTag}${item.block.text}`;
+        // Очищаем возможный мусорный префикс перед добавлением нового
+        const cleanedText = item.block.text.replace(/^∾+\n/, '').replace(/^<∾+C\[\d+\].*?∾+C\[0\]>/, '');
+        item.block.text = `∾\n${item.nameTag}${cleanedText}`;
         fixedCount++;
       } else {
         failedCount++;

@@ -278,6 +278,33 @@
       </div>
     </div>
   </div>
+  <div id="linkNamesDialogOverlay"
+    style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); z-index: 2000; display: none; align-items: center; justify-content: center;">
+    <div id="linkNamesDialog"
+      style="background: white; padding: 25px; border-radius: 12px; width: 480px; max-width: 95%; max-height: 90vh; display: flex; flex-direction: column; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4); font-family: sans-serif; color: #333;">
+      <div class="modal-header" style="font-size: 18px; font-weight: bold; margin-bottom: 15px; color: #333;">Связывание имён персонажей</div>
+      <div class="modal-row" style="margin-bottom: 15px;">
+        <label class="modal-label" style="font-size: 14px; color: #666; margin-bottom: 6px; display: block;">Текущее имя:</label>
+        <div id="linkNamesCurrentName" style="font-size: 16px; font-weight: bold; color: #0055cc; background: #f0f7ff; padding: 8px 12px; border-radius: 6px; border: 1px solid #cce3ff; font-family: 'MS Gothic', 'Osaka-mono', monospace;">【...】</div>
+      </div>
+      <div class="modal-row" style="margin-bottom: 15px;">
+        <label class="modal-label" style="font-size: 14px; color: #666; margin-bottom: 6px; display: block;">Связанные имена (дубликаты распознаются между ними):</label>
+        <div id="linkNamesExistingList" style="min-height: 42px; max-height: 120px; overflow-y: auto; border: 1px solid #ddd; padding: 8px; border-radius: 6px; background: #fafafa; display: flex; flex-wrap: wrap; gap: 6px; align-items: center;">
+          <span style="color: #999; font-size: 13px; font-style: italic;">Нет связанных имён</span>
+        </div>
+      </div>
+      <div class="modal-row" style="margin-bottom: 20px;">
+        <label class="modal-label" style="font-size: 14px; color: #666; margin-bottom: 6px; display: block;">Добавить имя для связывания (например, 【たまも】 или просто имя):</label>
+        <div style="display: flex; gap: 8px;">
+          <input type="text" id="linkNamesNewInput" placeholder="【Имя】" style="flex: 1; padding: 8px 10px; font-size: 15px; border: 1px solid #ccc; border-radius: 4px; font-family: 'MS Gothic', 'Osaka-mono', monospace;">
+          <button id="addLinkNameBtn" class="modal-btn btn-ok" style="white-space: nowrap; padding: 8px 16px;">+ Связать</button>
+        </div>
+      </div>
+      <div class="modal-buttons" style="display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid #eee; padding-top: 15px;">
+        <button id="closeLinkNamesBtn" class="modal-btn btn-cancel">Закрыть</button>
+      </div>
+    </div>
+  </div>
   <div class="control-panel">
     <button id="splitAllBtn" class="control-btn">Разделить Строки</button>
 
@@ -300,6 +327,11 @@
       <label id="hideLabelLabel" style="font-size:13px; cursor:pointer; margin-bottom: 2px;"
         title="Скрывает блоки Label и JumpToLabel для экономии места.">
         <input type="checkbox" id="hideLabelCheckbox" checked> Скрыть Label
+      </label>
+
+      <label id="showAllScriptsLabel" style="font-size:13px; cursor:pointer; margin-bottom: 2px;"
+        title="По умолчанию показаны Script с японскими символами. Включение выводит ВСЕ остальные скрытые команды Script и ScriptMore.">
+        <input type="checkbox" id="showAllScriptsCheckbox"> Показать все Script
       </label>
 
       <label id="hideStaLabel" style="font-size:13px; cursor:pointer; margin-bottom: 2px;"
@@ -409,6 +441,10 @@
         <input type="checkbox" id="batchHideUnmatchedFiles" checked
           style="vertical-align:middle; margin-right:6px;">Скрывать файлы без сопоставления
       </label>
+      <label id="batchShowUnmatchedFirstContainer" style="font-size:15px; font-weight:normal; cursor:pointer; display:none;">
+        <input type="checkbox" id="batchShowUnmatchedFirst"
+          style="vertical-align:middle; margin-right:6px;">Выводить строки без сопоставления в начале списка
+      </label>
     </div>
     <div id="batchFileList" style="margin-top:16px;"></div>
   </div>
@@ -435,6 +471,275 @@
       const globalLine = localLine + (window.globalLineOffset || 0);
       return globalLine > localLine ? `строка ${localLine}[${globalLine}]` : `строка ${localLine}`;
     };
+
+    // =========================================================================
+    // === МОДУЛЬ СВЯЗЫВАНИЯ ИМЁН ПЕРСОНАЖЕЙ (LINKED CHARACTER NAMES) ===
+    // =========================================================================
+    window.linkedNameGroups = []; // [ ["玉藻", "たまも"], ... ]
+
+    window.loadLinkedNameGroups = function () {
+      try {
+        const saved = localStorage.getItem('mgqp_linked_names');
+        if (saved) {
+          window.linkedNameGroups = JSON.parse(saved);
+        } else {
+          window.linkedNameGroups = [];
+        }
+      } catch (e) {
+        console.warn('Не удалось загрузить mgqp_linked_names:', e);
+        window.linkedNameGroups = [];
+      }
+    };
+
+    window.saveLinkedNameGroups = function () {
+      try {
+        localStorage.setItem('mgqp_linked_names', JSON.stringify(window.linkedNameGroups));
+      } catch (e) {
+        console.warn('Не удалось сохранить mgqp_linked_names:', e);
+      }
+    };
+
+    window.cleanCharacterName = function (name) {
+      if (!name) return '';
+      return name.trim().replace(/^[【\[\(（]+|[】\]\)）]+$/g, '').trim();
+    };
+
+    window.getCanonicalName = function (name) {
+      const clean = window.cleanCharacterName(name);
+      if (!clean) return clean;
+      for (let i = 0; i < window.linkedNameGroups.length; i++) {
+        const group = window.linkedNameGroups[i];
+        if (group.includes(clean)) {
+          return group[0];
+        }
+      }
+      return clean;
+    };
+
+    window.getLinkedAliases = function (name) {
+      const clean = window.cleanCharacterName(name);
+      if (!clean) return [];
+      for (let i = 0; i < window.linkedNameGroups.length; i++) {
+        const group = window.linkedNameGroups[i];
+        if (group.includes(clean)) {
+          return group.slice();
+        }
+      }
+      return [clean];
+    };
+
+    window.linkCharacterNames = function (name1, name2) {
+      const clean1 = window.cleanCharacterName(name1);
+      const clean2 = window.cleanCharacterName(name2);
+      if (!clean1 || !clean2 || clean1 === clean2) return false;
+
+      let group1Idx = -1;
+      let group2Idx = -1;
+
+      for (let i = 0; i < window.linkedNameGroups.length; i++) {
+        if (window.linkedNameGroups[i].includes(clean1)) group1Idx = i;
+        if (window.linkedNameGroups[i].includes(clean2)) group2Idx = i;
+      }
+
+      if (group1Idx !== -1 && group2Idx !== -1) {
+        if (group1Idx !== group2Idx) {
+          const combined = [...new Set([...window.linkedNameGroups[group1Idx], ...window.linkedNameGroups[group2Idx]])];
+          window.linkedNameGroups[group1Idx] = combined;
+          window.linkedNameGroups.splice(group2Idx, 1);
+        }
+      } else if (group1Idx !== -1) {
+        window.linkedNameGroups[group1Idx].push(clean2);
+      } else if (group2Idx !== -1) {
+        window.linkedNameGroups[group2Idx].push(clean1);
+      } else {
+        window.linkedNameGroups.push([clean1, clean2]);
+      }
+
+      window.saveLinkedNameGroups();
+      return true;
+    };
+
+    window.unlinkCharacterName = function (name) {
+      const clean = window.cleanCharacterName(name);
+      if (!clean) return false;
+
+      for (let i = 0; i < window.linkedNameGroups.length; i++) {
+        const group = window.linkedNameGroups[i];
+        const idx = group.indexOf(clean);
+        if (idx !== -1) {
+          group.splice(idx, 1);
+          if (group.length <= 1) {
+            window.linkedNameGroups.splice(i, 1);
+          }
+          window.saveLinkedNameGroups();
+          return true;
+        }
+      }
+      return false;
+    };
+
+    // Централизованная функция нормализации японского текста
+    window.getNormalizedJapText = function (t) {
+      if (!t) return '';
+      let norm = t.trim();
+
+      // 1. Нормализация имени персонажа в начале строки 【Имя】 -> 【Каноническое_Имя】
+      norm = norm.replace(/^【(.*?)】/, (match, rawName) => {
+        const canonical = window.getCanonicalName ? window.getCanonicalName(rawName) : rawName;
+        return `【${canonical}】`;
+      });
+
+      // 2. Для шаблонов привязанности \V[число] / ∾∾V[число] считаем одинаковыми V[#]
+      norm = norm.replace(/((?:Привязанность|好感度|友好度)\s*[：:]\s*)(?:\\V|∾∾V)\[\d+\]/g, '$1V[#]');
+
+      // 3. Заменяем общие индексы [123] на [#] (не трогая \V, \C, ∾∾V, ∾∾C)
+      norm = norm.replace(/(?<!\\[VC])(?<!∾∾[VC])\[\d+\]/g, '[#]');
+
+      return norm;
+    };
+
+    window.loadLinkedNameGroups();
+
+    // Открытие модального окна связывания имён
+    window.currentLinkModalCallback = null;
+    window.currentLinkModalName = '';
+
+    window.openLinkNamesModal = function (japName, onUpdateCallback) {
+      const cleanName = window.cleanCharacterName(japName);
+      if (!cleanName) return;
+
+      window.currentLinkModalName = cleanName;
+      window.currentLinkModalCallback = onUpdateCallback;
+
+      const overlay = document.getElementById('linkNamesDialogOverlay');
+      const titleNameEl = document.getElementById('linkNamesCurrentName');
+      const inputEl = document.getElementById('linkNamesNewInput');
+
+      if (titleNameEl) titleNameEl.textContent = `【${cleanName}】`;
+      if (inputEl) {
+        inputEl.value = '';
+      }
+
+      window.refreshLinkNamesModalBadges();
+
+      if (overlay) {
+        overlay.style.display = 'flex';
+      }
+      setTimeout(() => {
+        if (inputEl) inputEl.focus();
+      }, 50);
+    };
+
+    window.refreshLinkNamesModalBadges = function () {
+      const listEl = document.getElementById('linkNamesExistingList');
+      if (!listEl) return;
+
+      listEl.innerHTML = '';
+      const aliases = window.getLinkedAliases(window.currentLinkModalName);
+      const otherAliases = aliases.filter(a => a !== window.currentLinkModalName);
+
+      if (otherAliases.length === 0) {
+        listEl.innerHTML = '<span style="color: #999; font-size: 13px; font-style: italic;">Нет связанных имён</span>';
+        return;
+      }
+
+      otherAliases.forEach(alias => {
+        const badge = document.createElement('span');
+        badge.style.display = 'inline-flex';
+        badge.style.alignItems = 'center';
+        badge.style.background = '#e3f2fd';
+        badge.style.border = '1px solid #90caf9';
+        badge.style.borderRadius = '15px';
+        badge.style.padding = '3px 10px';
+        badge.style.fontSize = '13px';
+        badge.style.color = '#1565c0';
+        badge.style.fontFamily = "'MS Gothic', 'Osaka-mono', monospace";
+
+        const textSpan = document.createElement('span');
+        textSpan.textContent = `【${alias}】`;
+        badge.appendChild(textSpan);
+
+        const removeBtn = document.createElement('span');
+        removeBtn.textContent = '✕';
+        removeBtn.title = `Отвязать 【${alias}】`;
+        removeBtn.style.cursor = 'pointer';
+        removeBtn.style.marginLeft = '6px';
+        removeBtn.style.color = '#e74c3c';
+        removeBtn.style.fontWeight = 'bold';
+        removeBtn.style.fontSize = '13px';
+        removeBtn.addEventListener('click', () => {
+          window.unlinkCharacterName(alias);
+          window.refreshLinkNamesModalBadges();
+          if (typeof window.currentLinkModalCallback === 'function') {
+            window.currentLinkModalCallback();
+          }
+        });
+
+        badge.appendChild(removeBtn);
+        listEl.appendChild(badge);
+      });
+    };
+
+    // Привязка обработчиков диалога связывания имён
+    document.addEventListener('DOMContentLoaded', function () {
+      const overlay = document.getElementById('linkNamesDialogOverlay');
+      const closeBtn = document.getElementById('closeLinkNamesBtn');
+      const addBtn = document.getElementById('addLinkNameBtn');
+      const inputEl = document.getElementById('linkNamesNewInput');
+
+      function closeModal() {
+        if (overlay) overlay.style.display = 'none';
+        window.currentLinkModalCallback = null;
+        window.currentLinkModalName = '';
+      }
+
+      if (closeBtn) closeBtn.onclick = closeModal;
+
+      if (overlay) {
+        overlay.onclick = function (e) {
+          if (e.target === overlay) closeModal();
+        };
+      }
+
+      function doAdd() {
+        if (!inputEl) return;
+        const val = inputEl.value.trim();
+        const cleanVal = window.cleanCharacterName(val);
+        if (!cleanVal) {
+          alert('Введите имя персонажа для связывания.');
+          return;
+        }
+        if (cleanVal === window.currentLinkModalName) {
+          alert('Это же самое имя.');
+          return;
+        }
+        const existingAliases = window.getLinkedAliases(window.currentLinkModalName);
+        if (existingAliases.includes(cleanVal)) {
+          alert(`Имя 【${cleanVal}】 уже связано с 【${window.currentLinkModalName}】.`);
+          inputEl.value = '';
+          return;
+        }
+
+        window.linkCharacterNames(window.currentLinkModalName, cleanVal);
+        inputEl.value = '';
+        window.refreshLinkNamesModalBadges();
+        if (typeof window.currentLinkModalCallback === 'function') {
+          window.currentLinkModalCallback();
+        }
+      }
+
+      if (addBtn) addBtn.onclick = doAdd;
+      if (inputEl) {
+        inputEl.onkeydown = function (e) {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            doAdd();
+          } else if (e.key === 'Escape') {
+            closeModal();
+          }
+        };
+      }
+    });
 
     // === АВТОСОХРАНЕНИЕ СЕССИИ (КЭШ) ===
     window.hasUnsavedChanges = false;
@@ -478,12 +783,23 @@
 
     // Проверяем наличие кэша при запуске страницы
     document.addEventListener('DOMContentLoaded', function () {
-      // Отслеживаем ввод текста в редакторе (чтобы запускать таймер)
-      document.getElementById('editor').addEventListener('input', function (e) {
-        if (e.target.tagName === 'TEXTAREA') {
-          window.markAsChanged();
+      // Отслеживаем ввод текста в редакторе (автозамена '\' -> '∾' и запуск автосохранения)
+      document.addEventListener('input', function (e) {
+        const target = e.target;
+        if (target && (target.tagName === 'TEXTAREA' || (target.tagName === 'INPUT' && (target.type === 'text' || !target.type)))) {
+          if (target.value && target.value.includes('\\')) {
+            const start = target.selectionStart;
+            const end = target.selectionEnd;
+            target.value = target.value.replace(/\\/g, '∾');
+            if (start !== null && end !== null) {
+              target.setSelectionRange(start, end);
+            }
+          }
+          if (target.tagName === 'TEXTAREA' || (target.closest && target.closest('#editor'))) {
+            window.markAsChanged();
+          }
         }
-      });
+      }, true);
 
       const savedSession = localStorage.getItem('mgqp_editor_session');
       if (savedSession) {
@@ -525,46 +841,141 @@
 
     // Функция разбивки на части
     window.chunkEventMarkers = []; // Глобально храним метки разрывов для синхронизации
-    window.splitIntoChunks = function (lines, referenceMarkers = null) {
-      const chunks = [];
-      let currentChunk = [];
-      const markers = []; // Собираем метки разрывов (CommonEvent IDs)
-      let markerSet = null;
-      if (referenceMarkers && referenceMarkers.length > 0) {
-        markerSet = new Set(referenceMarkers);
+    window.maxChunkLines = 4000; // По умолчанию 4000 строк для слабого ПК
+
+    window.getEventHeaderLine = function (line) {
+      if (!line) return null;
+      const m = line.match(/^[\s\uFEFF]*(CommonEvent|Event)\s+(\d+)/i);
+      return m ? (m[1].toUpperCase() + '_' + m[2]) : null;
+    };
+
+    window.isTranslatableTextBlockLine = function (line) {
+      if (!line) return false;
+      return /^\s*(ShowText|ShowChoices|When|Script|ScriptMore|Label|JumpToLabel|Name|ShowTextAttributes|ChangeActorName)\b/.test(line);
+    };
+
+    // Умная синхронизированная разборка файлов RU и JP с учетом количества РЕАЛЬНЫХ текстовых блоков в редакторе!
+    window.splitSynchronizedChunks = function (ruLines, jpLines, lineLimit = 4000, maxTextBlocks = 250, maxRawLimit = 15000) {
+      const ruChunks = [];
+      const jpChunks = [];
+      const markers = [];
+
+      if (!jpLines || jpLines.length === 0) {
+        let currentRu = [];
+        let textBlockCount = 0;
+        for (let i = 0; i < ruLines.length; i++) {
+          const line = ruLines[i];
+          if (window.isTranslatableTextBlockLine(line)) textBlockCount++;
+          const header = window.getEventHeaderLine(line);
+          if (header && (textBlockCount >= maxTextBlocks || currentRu.length >= maxRawLimit)) {
+            ruChunks.push(currentRu);
+            currentRu = [];
+            textBlockCount = 0;
+            markers.push(header);
+          }
+          currentRu.push(line);
+        }
+        if (currentRu.length > 0) ruChunks.push(currentRu);
+        return { ruChunks, jpChunks: [], markers };
       }
 
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        const match = line.match(/^[\s\uFEFF]*CommonEvent (\d+)/);
+      let ruIdx = 0;
+      let jpIdx = 0;
 
-        if (match) {
-          const eventId = match[1];
-          if (markerSet) {
-            // Разрываем только на известных метках
-            if (markerSet.has(eventId)) {
-              if (currentChunk.length > 0) {
-                chunks.push(currentChunk);
-                currentChunk = [];
+      while (ruIdx < ruLines.length) {
+        let remainingTextBlocks = 0;
+        for (let k = ruIdx; k < ruLines.length; k++) {
+          if (window.isTranslatableTextBlockLine(ruLines[k])) remainingTextBlocks++;
+        }
+
+        // Если оставшихся сырых строк <= lineLimit ИЛИ оставшихся реальных блоков <= maxTextBlocks -> не делим!
+        if (ruLines.length - ruIdx <= lineLimit || remainingTextBlocks <= maxTextBlocks) {
+          ruChunks.push(ruLines.slice(ruIdx));
+          jpChunks.push(jpLines.slice(jpIdx));
+          break;
+        }
+
+        let targetRuSplit = ruIdx + lineLimit;
+        let currentBlocks = 0;
+        for (let k = ruIdx; k < targetRuSplit && k < ruLines.length; k++) {
+          if (window.isTranslatableTextBlockLine(ruLines[k])) currentBlocks++;
+        }
+
+        // Если загруженных текстовых блоков слишком мало (< maxTextBlocks), расширяем границу поиска до maxRawLimit!
+        if (currentBlocks < maxTextBlocks) {
+          let ext = targetRuSplit;
+          while (ext < ruLines.length && ext - ruIdx < maxRawLimit && currentBlocks < maxTextBlocks) {
+            if (window.isTranslatableTextBlockLine(ruLines[ext])) currentBlocks++;
+            ext++;
+          }
+          targetRuSplit = ext;
+        }
+
+        let foundSplit = false;
+
+        // Ищем назад от targetRuSplit событие из RU, которое ТАКЖЕ присутствует в JP после jpIdx!
+        for (let searchRu = Math.min(targetRuSplit, ruLines.length - 1); searchRu > ruIdx + 200; searchRu--) {
+          const header = window.getEventHeaderLine(ruLines[searchRu]);
+          if (header) {
+            let searchJp = -1;
+            for (let j = jpIdx; j < jpLines.length; j++) {
+              if (window.getEventHeaderLine(jpLines[j]) === header) {
+                searchJp = j;
+                break;
               }
-              // Чтобы не разбивать на дубликатах
-              markerSet.delete(eventId);
             }
-          } else {
-            // Логика по умолчанию (для главного файла)
-            if (currentChunk.length >= 4000) {
-              chunks.push(currentChunk);
-              currentChunk = [];
-              markers.push(eventId);
+
+            if (searchJp !== -1) {
+              ruChunks.push(ruLines.slice(ruIdx, searchRu));
+              jpChunks.push(jpLines.slice(jpIdx, searchJp));
+              markers.push(header);
+              ruIdx = searchRu;
+              jpIdx = searchJp;
+              foundSplit = true;
+              break;
             }
           }
         }
-        currentChunk.push(line);
+
+        // Если назад не нашлось, ищем вперед до следующего события (чтобы никогда не рвать CommonEvent/Event пополам!)
+        if (!foundSplit) {
+          for (let searchRu = targetRuSplit + 1; searchRu < ruLines.length; searchRu++) {
+            const header = window.getEventHeaderLine(ruLines[searchRu]);
+            if (header) {
+              let searchJp = -1;
+              for (let j = jpIdx; j < jpLines.length; j++) {
+                if (window.getEventHeaderLine(jpLines[j]) === header) {
+                  searchJp = j;
+                  break;
+                }
+              }
+              if (searchJp !== -1) {
+                ruChunks.push(ruLines.slice(ruIdx, searchRu));
+                jpChunks.push(jpLines.slice(jpIdx, searchJp));
+                markers.push(header);
+                ruIdx = searchRu;
+                jpIdx = searchJp;
+                foundSplit = true;
+                break;
+              }
+            }
+          }
+        }
+
+        // Если других событий больше нет - это последний чанк
+        if (!foundSplit) {
+          ruChunks.push(ruLines.slice(ruIdx));
+          jpChunks.push(jpLines.slice(jpIdx));
+          break;
+        }
       }
-      if (currentChunk.length > 0) {
-        chunks.push(currentChunk);
-      }
-      return { chunks: chunks, markers: markers };
+
+      return { ruChunks, jpChunks, markers };
+    };
+
+    window.splitIntoChunks = function (lines, referenceMarkers = null) {
+      const res = window.splitSynchronizedChunks(lines, window.fullJapLinesAll || null, window.maxChunkLines || 4000);
+      return { chunks: res.ruChunks, markers: res.markers };
     };
 
     // Функция для заполнения глобальной памяти переводов из всех чанков
@@ -576,11 +987,7 @@
       console.log('[populateGlobalTranslationMemory] Чанков RU:', window.fileChunksRU?.length, 'Чанков JP:', window.fileChunksJP?.length);
       
       // Хелпер для нормализации текста (такой же как в renderTextBlocks)
-      const getNorm = t => {
-        if (!t) return '';
-        return t.trim()
-          .replace(/(?<!\\[VC])(?<!∾∾[VC])\[\d+\]/g, '[#]');
-      };
+      const getNorm = t => window.getNormalizedJapText(t);
 
       // Проходим по всем чанкам
       if (!window.fileChunksRU || !window.fileChunksJP) return;
@@ -589,7 +996,7 @@
       
       for (let chunkIdx = 0; chunkIdx < window.fileChunksRU.length; chunkIdx++) {
         const ruLines = window.fileChunksRU[chunkIdx];
-        const jpLines = window.fileChunksJP[chunkIdx] || [];
+        const jpLines = window.fileChunksJP[0] || window.fileChunksJP[chunkIdx] || [];
         
         // Парсим японские блоки из этого чанка
         const jpBlocks = [];
@@ -727,9 +1134,12 @@
       window.originalLines = window.fullRusLines.slice();
       originalLines = window.fullRusLines.slice(); // для совместимости
 
-      // 4. Загружаем нужную часть японского файла (если есть)
+      // 4. Загружаем нужную часть японского файла (синхронизированную с этой же частью русского файла)
       if (window.fileChunksJP && window.fileChunksJP.length > index) {
         window.fullJapLines = window.fileChunksJP[index].slice();
+        window.japaneseLines = window.fullJapLines;
+      } else if (window.fileChunksJP && window.fileChunksJP.length > 0) {
+        window.fullJapLines = window.fileChunksJP[window.fileChunksJP.length - 1].slice();
         window.japaneseLines = window.fullJapLines;
       } else {
         window.fullJapLines = [];
@@ -994,7 +1404,8 @@
             }
           }
           // <<< НАЧАЛО ИЗМЕНЕНИЯ: Проверка на сломанные коды форматирования >>>
-          const brokenCodeRegex = /∾∾[IC]\[\d+\].*?(?<!∾)∾C\[0\]/;
+          // Ловим: (1) одиночный ∾C[0] и (2) тройной+ ∾∾∾C[0] — оба являются ошибками
+          const brokenCodeRegex = /∾∾[IC]\[\d+\].*?(?:(?<!∾)∾C\[0\]|∾{3,}C\[0\])/;
           if (!block.hasIgnoreMarker && block.type === 'ShowText' && brokenCodeRegex.test(block.text)) {
             redLineErrors.push({
               label: block.idx !== undefined ? window.formatLineLabel(block.idx) : '[продолжение]',
@@ -1004,6 +1415,16 @@
             window.allErrorIndices.add(i);
           }
           // <<< КОНЕЦ ИЗМЕНЕНИЯ >>>
+          // <<< ПРОВЕРКА НА ПЕРЕИЗБЫТОК ∾ >>>
+          const excessTildeRegex = /∾{3,}/;
+          if (!block.hasIgnoreMarker && block.type === 'ShowText' && excessTildeRegex.test(block.text)) {
+            redLineErrors.push({
+              label: block.idx !== undefined ? window.formatLineLabel(block.idx) : '[продолжение]',
+              type: 'Ошибка кода',
+              reason: 'Обнаружен переизбыток символов `∾` (3+ подряд). Вероятно, префикс был добавлен повторно.'
+            });
+            window.allErrorIndices.add(i);
+          }
           // <<< НАЧАЛО ИЗМЕНЕНИЯ: Отладка фантомных ошибок и шаблонов >>>
           const isAffectionFixVisible = (document.getElementById('fixAffectionBtn') && document.getElementById('fixAffectionBtn').style.display !== 'none');
 
@@ -1400,8 +1821,9 @@
         window.globalTranslationMemory = new Map(); // Сбрасываем память переводов
 
         // === РАЗБИВАЕМ ФАЙЛ НА ЧАСТИ ===
-        const splitResult = window.splitIntoChunks(lines);
-        window.fileChunksRU = splitResult.chunks;
+        window.fullJapLinesAll = null;
+        const splitResult = window.splitSynchronizedChunks(lines, null, 4000);
+        window.fileChunksRU = splitResult.ruChunks;
         window.chunkEventMarkers = splitResult.markers; // Запоминаем точки разрыва
         window.fileChunksJP = []; // Сбрасываем старый японский
         window.currentChunkIndex = 0;
@@ -1424,8 +1846,13 @@
           japReader.onload = function (jEvt) {
             const jLines = jEvt.target.result.split('\n');
 
-            // === РАЗБИВАЕМ ЯПОНСКИЙ ФАЙЛ по тем же меткам ===
-            window.fileChunksJP = window.splitIntoChunks(jLines, window.chunkEventMarkers).chunks;
+            // === СИНХРОНИЗИРОВАННАЯ РАЗБИВКА ОБОИХ ФАЙЛОВ ПО СОВПАДАЮЩИМ ЭВЕНТАМ ===
+            window.fullJapLinesAll = jLines;
+            const fullRU = [].concat(...(window.fileChunksRU || []));
+            const syncRes = window.splitSynchronizedChunks(fullRU, jLines, 4000);
+            window.fileChunksRU = syncRes.ruChunks;
+            window.fileChunksJP = syncRes.jpChunks;
+            window.chunkEventMarkers = syncRes.markers;
 
             // Перезагружаем ТЕКУЩУЮ часть, чтобы японский язык подцепился к ней
             window.loadChunk(window.currentChunkIndex, true);
@@ -1662,7 +2089,8 @@
           const textContent = match[1];
           const trailingContent = match[2] || '';
           const hasIgnoreMarker = /##/.test(trailingContent);
-          tempBlocks.push({ text: textContent, type: 'ShowText', originalIdx: idx, line: line, commonEventId: currentEventId, hasIgnoreMarker: hasIgnoreMarker, trailingContent: trailingContent });
+          const hasLockMarker = /#lock/i.test(trailingContent);
+          tempBlocks.push({ text: textContent, type: 'ShowText', originalIdx: idx, line: line, commonEventId: currentEventId, hasIgnoreMarker: hasIgnoreMarker, hasLockMarker: hasLockMarker, trailingContent: trailingContent });
         } else if ((match = line.match(showChoicesRegex))) {
           let choicesText = match[1];
           let choices;
@@ -1673,27 +2101,31 @@
           }
           const scTrailing = match[3] || '';
           const scHasIgnoreMarker = /##/.test(scTrailing);
-          tempBlocks.push({ text: choices.join(' | '), type: 'ShowChoices', originalIdx: idx, choices: choices, defaultChoice: parseInt(match[2]), line: line, commonEventId: currentEventId, trailingContent: scTrailing, hasIgnoreMarker: scHasIgnoreMarker });
+          const scHasLockMarker = /#lock/i.test(scTrailing);
+          tempBlocks.push({ text: choices.join(' | '), type: 'ShowChoices', originalIdx: idx, choices: choices, defaultChoice: parseInt(match[2]), line: line, commonEventId: currentEventId, trailingContent: scTrailing, hasIgnoreMarker: scHasIgnoreMarker, hasLockMarker: scHasLockMarker });
         } else if ((match = line.match(whenRegex))) {
           const whenTrailing = match[3] || '';
           const whenHasIgnoreMarker = /##/.test(whenTrailing);
-          tempBlocks.push({ text: match[2], type: 'When', originalIdx: idx, choiceIndex: parseInt(match[1]), line: line, commonEventId: currentEventId, trailingContent: whenTrailing, hasIgnoreMarker: whenHasIgnoreMarker });
+          const whenHasLockMarker = /#lock/i.test(whenTrailing);
+          tempBlocks.push({ text: match[2], type: 'When', originalIdx: idx, choiceIndex: parseInt(match[1]), line: line, commonEventId: currentEventId, trailingContent: whenTrailing, hasIgnoreMarker: whenHasIgnoreMarker, hasLockMarker: whenHasLockMarker });
         } else if ((match = line.match(scriptRegex))) {
           const commandType = match[1];
           const commandText = match[2];
           const trailingContent = match[3] || '';
-          tempBlocks.push({ text: commandText, type: commandType, originalIdx: idx, line: line, commonEventId: currentEventId, trailingContent: trailingContent });
+          const scriptHasLockMarker = /#lock/i.test(trailingContent);
+          tempBlocks.push({ text: commandText, type: commandType, originalIdx: idx, line: line, commonEventId: currentEventId, trailingContent: trailingContent, hasLockMarker: scriptHasLockMarker });
         } else if ((match = line.match(otherRegex))) {
           const commandType = match[1];
           const commandText = match[2];
           const trailingContent = match[3] || '';
+          const otherHasLockMarker = /#lock/i.test(trailingContent);
           const translatableCommands = ['Script', 'ScriptMore', 'Label', 'JumpToLabel', 'Name', 'ShowTextAttributes', 'ChangeActorName'];
           const technicalCommands = ['ConditionalBranch', 'PlaySE', 'PlayBGM', 'PlayME', 'TransferPlayer', 'ChangeGold', 'ChangeItems', 'ChangeWeapons', 'ChangeArmors', 'ControlSwitches', 'ControlVariables', 'ControlSelfSwitch'];
           if (translatableCommands.includes(commandType)) {
-            tempBlocks.push({ text: commandText, type: commandType, originalIdx: idx, line: line, commonEventId: currentEventId, trailingContent: trailingContent });
+            tempBlocks.push({ text: commandText, type: commandType, originalIdx: idx, line: line, commonEventId: currentEventId, trailingContent: trailingContent, hasLockMarker: otherHasLockMarker });
           } else if (technicalCommands.includes(commandType)) {
             // Извлекаем технические команды целиком (с именем команды) для последующего сопоставления
-            tempBlocks.push({ text: commandText, type: commandType, originalIdx: idx, line: line, commonEventId: currentEventId, trailingContent: trailingContent, isTechnical: true });
+            tempBlocks.push({ text: commandText, type: commandType, originalIdx: idx, line: line, commonEventId: currentEventId, trailingContent: trailingContent, isTechnical: true, hasLockMarker: otherHasLockMarker });
           }
         } else if ((match = line.match(nameValueRegex))) {
           const commandType = match[1];
@@ -1711,10 +2143,11 @@
         const currentBlock = tempBlocks[i];
         const rawText = currentBlock.text.replace(/^"(.*)"$/, '$1');
         const hasPlus = /#\+/.test(currentBlock.trailingContent || '');
+        const hasLock = /#lock/i.test(currentBlock.trailingContent || '');
         const isName = window.isNameBlock(rawText) || rawText.includes('<\\C[6]') || rawText.includes('<∾∾C[6]');
 
         if (currentBlock.type === 'ShowTextAttributes') {
-          textBlocks.push({ text: currentBlock.text, type: 'ShowTextAttributes', originalIdx: currentBlock.originalIdx, idx: currentBlock.originalIdx, line: currentBlock.line, generated: hasPlus, manualPlus: hasPlus && currentBlock.originalIdx !== undefined, commonEventId: currentBlock.commonEventId });
+          textBlocks.push({ text: currentBlock.text, type: 'ShowTextAttributes', originalIdx: currentBlock.originalIdx, idx: currentBlock.originalIdx, line: currentBlock.line, generated: hasPlus, manualPlus: hasPlus && currentBlock.originalIdx !== undefined, isLocked: hasLock, commonEventId: currentBlock.commonEventId });
           continue;
         }
 
@@ -1724,17 +2157,19 @@
           const affinityType = affinityMatch[2];
           const variable = affinityMatch[3].replace(/\\/g, '∾');
           const newText = `∾\n<∾∾C[6]${name}∾∾C[0]>(${affinityType === '好感度' ? 'Уровень симпатии' : 'Привязанность'}: ${variable})`;
-          textBlocks.push({ idx: currentBlock.originalIdx, text: newText, type: 'ShowText', generated: hasPlus, manualPlus: hasPlus && currentBlock.originalIdx !== undefined, commonEventId: currentBlock.commonEventId, hasIgnoreMarker: currentBlock.hasIgnoreMarker });
+          textBlocks.push({ idx: currentBlock.originalIdx, text: newText, type: 'ShowText', generated: hasPlus, manualPlus: hasPlus && currentBlock.originalIdx !== undefined, isLocked: hasLock, commonEventId: currentBlock.commonEventId, hasIgnoreMarker: currentBlock.hasIgnoreMarker });
         } else if (currentBlock.type === 'ShowText' && isName) {
           let combinedText = currentBlock.text;
           const specialTemplateRegex = /(^\\n|^∾∾\\n)<[\\∾]{2}C\[\d+\].*[\\∾]{2}C\[0\]>\((Уровень симпатии:|Найдено мастеров:|Привязанность:).*?\)$/;
 
           let linesToSkip = [];
           let combinedHasIgnoreMarker = currentBlock.hasIgnoreMarker; // Наследуем ## от первого блока
+          let combinedIsLocked = hasLock;
           if (specialTemplateRegex.test(rawText) && i + 1 < tempBlocks.length && tempBlocks[i + 1].type === 'ShowText') {
             linesToSkip.push(tempBlocks[i + 1].originalIdx);
             combinedText += '\n' + tempBlocks[i + 1].text;
             if (tempBlocks[i + 1].hasIgnoreMarker) combinedHasIgnoreMarker = true; // Наследуем ## от продолжения
+            if (tempBlocks[i + 1].hasLockMarker) combinedIsLocked = true;
             i++;
           }
           else if (i + 1 < tempBlocks.length && tempBlocks[i + 1].type === 'ShowText') {
@@ -1747,12 +2182,14 @@
               console.log("Auto-skipped duplicate line at original index:", nextBlock.originalIdx);
               linesToSkip.push(nextBlock.originalIdx);
               if (nextBlock.hasIgnoreMarker) combinedHasIgnoreMarker = true; // Наследуем ## от дубликата
+              if (nextBlock.hasLockMarker) combinedIsLocked = true;
               i++;
             } else if (!window.isNameBlock(nextRaw) && !nextRaw.includes('<\\C[6]')) {
               // Это продолжение диалога (не имя). Объединяем.
               linesToSkip.push(nextBlock.originalIdx);
               combinedText += '\n' + nextBlock.text;
               if (nextBlock.hasIgnoreMarker) combinedHasIgnoreMarker = true; // Наследуем ## от продолжения
+              if (nextBlock.hasLockMarker) combinedIsLocked = true;
               i++;
             }
           }
@@ -1767,13 +2204,14 @@
             type: 'ShowText',
             generated: hasPlus,
             manualPlus: hasPlus && currentBlock.originalIdx !== undefined,
+            isLocked: combinedIsLocked,
             commonEventId: currentBlock.commonEventId,
             hasIgnoreMarker: combinedHasIgnoreMarker,
             linesToSkip: linesToSkip
           });
         } else {
           const text = currentBlock.text.replace(/^"(.*)"$/, '$1').replace(/\\n/g, '\n').replace(/\\/g, '∾');
-          const newBlock = { idx: currentBlock.originalIdx, text: (currentBlock.type === 'ShowChoices') ? currentBlock.text : text, type: currentBlock.type, generated: hasPlus, manualPlus: hasPlus && currentBlock.originalIdx !== undefined, choices: currentBlock.choices, defaultChoice: currentBlock.defaultChoice, choiceIndex: currentBlock.choiceIndex, commonEventId: currentBlock.commonEventId, hasIgnoreMarker: currentBlock.hasIgnoreMarker };
+          const newBlock = { idx: currentBlock.originalIdx, text: (currentBlock.type === 'ShowChoices') ? currentBlock.text : text, type: currentBlock.type, generated: hasPlus, manualPlus: hasPlus && currentBlock.originalIdx !== undefined, isLocked: hasLock, choices: currentBlock.choices, defaultChoice: currentBlock.defaultChoice, choiceIndex: currentBlock.choiceIndex, commonEventId: currentBlock.commonEventId, hasIgnoreMarker: currentBlock.hasIgnoreMarker };
 
           if (newBlock.generated && textBlocks.length > 0) {
             for (let j = textBlocks.length - 1; j >= 0; j--) {
@@ -1949,8 +2387,8 @@
       const displayNameRegex = /^[\s\uFEFF]*Display Name\s*=\s*"(.*)"/;
       const showChoicesRegex = /^\s*ShowChoices\(\[\[(.*)\],\s*(\d+)\]\)/;
       const whenRegex = /^\s*When\(\[(\d+),\s*"(.*)"\]\)/;
-      const scriptJpRegex = /^\s*Script\(\[\s*"((?:[^"\\]|\\.)*)"\s*\]\)/;
-      const scriptMoreJpRegex = /^\s*ScriptMore\(\[\s*"((?:[^"\\]|\\.)*)"\s*\]\)/;
+      const scriptJpRegex = /^\s*Script\(\[\s*"((?:[^"\\]|\\.)*)"\s*\]\)(.*)/;
+      const scriptMoreJpRegex = /^\s*ScriptMore\(\[\s*"((?:[^"\\]|\\.)*)"\s*\]\)(.*)/;
       const showTextAttrRegex = /^\s*ShowTextAttributes\(\[(.*)\]\)/;
       // Добавляем поддержку строк в формате "Name = "значение""
       const nameValueRegex = /^\s*(\w+)\s*=\s*"(.*)"$/;
@@ -2289,24 +2727,20 @@
         if (block.type !== 'ShowText' && block.type !== 'ShowChoices' && block.type !== 'When' && block.type !== 'JumpToLabel' && block.type !== 'ScriptMore' && block.type !== 'Label' && block.type !== 'Script' && block.type !== 'ChangeActorName') return;
 
         // Фильтр скрытия меток
-        const hideLabels = document.getElementById('hideLabelCheckbox').checked;
+        const hideLabels = document.getElementById('hideLabelCheckbox')?.checked;
         if (hideLabels && (block.type === 'Label' || block.type === 'JumpToLabel')) return;
 
-        // Для Script: показываем, если либо в тексте блока, либо в его japaneseLink.text есть японские символы
-        if (block.type === 'Script') {
-          const hasJapanese = /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.text);
-          const hasJapaneseInOriginal = block.japaneseLink && /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.japaneseLink.text || '');
-          const hasRussian = /[А-Яа-яЁё]/.test(block.text);
-          if (hasRussian) {
-            // Если есть русские буквы — всегда показываем
-          } else if (!hasJapanese && !hasJapaneseInOriginal) return;
-        }
-        // Для ScriptMore: показываем, если есть русские или японские символы либо в тексте, либо в оригинале
-        if (block.type === 'ScriptMore') {
-          const hasJapanese = /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.text);
-          const hasJapaneseInOriginal = block.japaneseLink && /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.japaneseLink.text || '');
-          const hasRussian = /[А-Яа-яЁё]/.test(block.text);
-          if (!hasRussian && !hasJapanese && !hasJapaneseInOriginal) return;
+        // Фильтр отображения скриптов:
+        // По умолчанию (чекбокс выключен) показываем только Script/ScriptMore с японским или русским текстом.
+        // Если чекбокс "Показать все Script" включен — показываем абсолютно все Script и ScriptMore.
+        if (block.type === 'Script' || block.type === 'ScriptMore') {
+          const showAllScripts = document.getElementById('showAllScriptsCheckbox')?.checked;
+          if (!showAllScripts) {
+            const hasJapanese = /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.text);
+            const hasJapaneseInOriginal = block.japaneseLink && /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.japaneseLink.text || '');
+            const hasRussian = /[А-Яа-яЁё]/.test(block.text);
+            if (!hasJapanese && !hasJapaneseInOriginal && !hasRussian) return;
+          }
         }
 
         // Не отображаем ShowTextAttributes в редакторе
@@ -2431,15 +2865,8 @@
         // --- Расширенная обработка дубликатов японского текста ---
         if (block.type === 'ShowText') {
           try {
-            // Хелпер для нормализации текста (игнорируем индексы в скобках)
-            // Для шаблонов привязанности считаем \V[число] / ∾∾V[число] одинаковыми,
-            // а остальные теги \V/\C/∾∾V/∾∾C оставляем строгими, чтобы не ловить ложные дубликаты.
-            const getNorm = t => {
-              if (!t) return '';
-              return t.trim()
-                .replace(/((?:Привязанность|好感度|友好度)\s*[：:]\s*)(?:\\V|∾∾V)\[\d+\]/g, '$1V[#]')
-                .replace(/(?<!\\[VC])(?<!∾∾[VC])\[\d+\]/g, '[#]');
-            };
+            // Хелпер для нормализации текста
+            const getNorm = t => window.getNormalizedJapText(t);
 
             let origIdx = -1;
             let globalSourceText = null;
@@ -2482,13 +2909,6 @@
 
               // 3. Запоминаем текущую строку в память для будущих частей (если она уже переведена)
               if (!block.text.includes('ТРЕБУЕТСЯ ПЕРЕВОД') && typeof globalIdx === 'number') {
-
-                const getNorm = t => {
-                  if (!t) return '';
-                  return t.trim()
-                    .replace(/((?:Привязанность|好感度|友好度)\s*[：:]\s*)(?:\\V|∾∾V)\[\d+\]/g, '$1V[#]')
-                    .replace(/(?<!\\[VC])(?<!∾∾[VC])\[\d+\]/g, '[#]');
-                };
                 const entries = window.globalTranslationMemory.get(currentJapNorm) || [];
                 // Удаляем старую запись с тем же globalIdx (если перерисовываем)
                 const filtered = entries.filter(e => e.globalIdx !== globalIdx);
@@ -2547,7 +2967,11 @@
                   return text;
                 };
 
-                const updateDupStyle = () => {
+                function updateDupStyle() {
+                  if (block.isLocked) {
+                    dupBtn.style.backgroundColor = '#8f8';
+                    return;
+                  }
                   const sourceText = collectText(origIdx);
                   const currText = collectText(i); // В нашей логике i - это текущий блок
                   const expectedText = getSmartText(sourceText, block);
@@ -2557,7 +2981,88 @@
                   } else {
                     dupBtn.style.backgroundColor = '#f88';
                   }
-                };
+                }
+
+                function updateLockState() {
+                  const isLocked = !!block.isLocked;
+                  dupBtn.dataset.locked = isLocked ? 'true' : 'false';
+                  lockBtn.dataset.isLocked = isLocked ? 'true' : 'false';
+                  lockBtn.textContent = isLocked ? '🔒' : '🔓';
+                  lockBtn.style.backgroundColor = isLocked ? '#8f8' : '#f0f0f0';
+                  lockBtn.title = isLocked
+                    ? 'Массовая замена дубликатов заблокирована (нажмите, чтобы разблокировать)'
+                    : 'Заблокировать массовую замену дубликатов для этой строки';
+                  updateDupStyle();
+                }
+
+                // --- Кнопка-замок справа от "Дубликат" ---
+                const lockBtn = document.createElement('button');
+                lockBtn.className = 'control-btn duplicate-lock-btn';
+                lockBtn.style.marginLeft = '4px';
+                lockBtn.style.padding = '2px 6px';
+
+                lockBtn.addEventListener('click', () => {
+                  block.isLocked = !block.isLocked;
+                  if (block.idx !== undefined && window.originalLines && window.originalLines[block.idx]) {
+                    if (block.isLocked) {
+                      if (!/#lock/i.test(window.originalLines[block.idx])) {
+                        window.originalLines[block.idx] = window.originalLines[block.idx].trimEnd() + ' #lock';
+                      }
+                    } else {
+                      window.originalLines[block.idx] = window.originalLines[block.idx].replace(/\s*#lock/gi, '');
+                    }
+                    if (window.fullRusLines) window.fullRusLines[block.idx] = window.originalLines[block.idx];
+                    if (window.fileChunksRU && window.fileChunksRU[window.currentChunkIndex] && window.fileChunksRU[window.currentChunkIndex][block.idx]) {
+                      window.fileChunksRU[window.currentChunkIndex][block.idx] = window.originalLines[block.idx];
+                    }
+                  }
+                  updateLockState();
+                  if (typeof window.markAsChanged === 'function') {
+                    window.markAsChanged();
+                  }
+                });
+
+                updateLockState();
+                div.appendChild(lockBtn);
+
+                // --- Кнопка "Связать имена" рядом с кнопкой "Дубликат" ---
+                let detectedJapName = '';
+                if (block.japaneseLink && block.japaneseLink.text) {
+                  const nm = block.japaneseLink.text.match(/^【(.*?)】/);
+                  if (nm) detectedJapName = nm[1];
+                }
+                if (!detectedJapName && origIdx !== -1 && textBlocks[origIdx] && textBlocks[origIdx].japaneseLink) {
+                  const nm = textBlocks[origIdx].japaneseLink.text.match(/^【(.*?)】/);
+                  if (nm) detectedJapName = nm[1];
+                }
+
+                if (detectedJapName) {
+                  const linkNamesBtn = document.createElement('button');
+                  linkNamesBtn.className = 'control-btn link-names-btn';
+                  linkNamesBtn.textContent = 'Связать имена';
+                  linkNamesBtn.title = `Связать японское имя 【${detectedJapName}】 с другими именами`;
+                  linkNamesBtn.style.marginLeft = '4px';
+                  linkNamesBtn.style.padding = '2px 8px';
+                  linkNamesBtn.style.background = '#eef6ff';
+                  linkNamesBtn.style.border = '1px solid #99c2ff';
+                  linkNamesBtn.style.borderRadius = '4px';
+
+                  linkNamesBtn.addEventListener('click', (ev) => {
+                    ev.stopPropagation();
+                    if (typeof window.openLinkNamesModal === 'function') {
+                      window.openLinkNamesModal(detectedJapName, () => {
+                        if (typeof window.populateGlobalTranslationMemory === 'function') {
+                          window.populateGlobalTranslationMemory();
+                        }
+                        renderTextBlocks();
+                        if (typeof window.updateMatchLamp === 'function') window.updateMatchLamp();
+                        if (typeof updateRedIndices === 'function') updateRedIndices();
+                      });
+                    }
+                  });
+
+                  div.appendChild(linkNamesBtn);
+                }
 
                 dupBtn.addEventListener('click', () => {
                   const sourceText = collectText(origIdx);
@@ -2617,14 +3122,7 @@
           // <<< ОБНОВЛЯЕМ ГЛОБАЛЬНУЮ ПАМЯТЬ ПРИ РУЧНОМ ВВОДЕ >>>
           if (block.japaneseLink && block.japaneseLink.text && !textarea.value.includes('ТРЕБУЕТСЯ ПЕРЕВОД')) {
 
-             const getNorm = t => {
-               if (!t) return '';
-               return t.trim()
-                 .replace(/((?:Привязанность|好感度|友好度)\s*[：:]\s*)(?:\\V|∾∾V)\[\d+\]/g, '$1V[#]')
-                 .replace(/(?<!\\[VC])(?<!∾∾[VC])\[\d+\]/g, '[#]');
-             };
-
-             const norm = getNorm(block.japaneseLink.text);
+             const norm = window.getNormalizedJapText(block.japaneseLink.text);
              const globalIdx = block.idx !== undefined ? (block.idx + (window.globalLineOffset || 0)) : undefined;
              if (typeof globalIdx === 'number') {
                const entries = window.globalTranslationMemory.get(norm) || [];
@@ -2903,11 +3401,24 @@
         plusBtn.onclick = function () {
           saveEditorBlockPosition();
           if (splitDialogueBlock(i, textBlocks)) {
-            // СНАЧАЛА полностью пересчитываем все ошибки
+            // Пересобираем файл и обновляем структуру точно так же, как в глобальной кнопке
+            const currentFileLines = window.generateFinalFileLines();
+            window.fullRusLines = currentFileLines;
+            window.originalLines = currentFileLines;
+
+            window.extractTexts();
+            if (window.fullJapLines && window.fullJapLines.length > 0) {
+              extractJapaneseTexts(window.fullJapLines);
+            }
+            if (typeof window.fixLongDialogues === 'function') {
+              window.fixLongDialogues(true);
+            }
+            if (typeof window.autoFixNameTagErrors === 'function') {
+              window.autoFixNameTagErrors(true);
+            }
             if (typeof window.updateMatchLamp === 'function') {
               window.updateMatchLamp();
             }
-            // И ТОЛЬКО ПОТОМ перерисовываем редактор
             renderTextBlocks();
             restoreEditorBlockPosition();
           }
@@ -2928,12 +3439,24 @@
             block.isDeleted = true;
           }
 
-          // Сначала полностью пересчитываем все ошибки
+          const currentFileLines = window.generateFinalFileLines();
+          window.fullRusLines = currentFileLines;
+          window.originalLines = currentFileLines;
+
+          window.extractTexts();
+          if (window.fullJapLines && window.fullJapLines.length > 0) {
+            extractJapaneseTexts(window.fullJapLines);
+          }
+          if (typeof window.fixLongDialogues === 'function') {
+            window.fixLongDialogues(true);
+          }
+          if (typeof window.autoFixNameTagErrors === 'function') {
+            window.autoFixNameTagErrors(true);
+          }
           if (typeof window.updateMatchLamp === 'function') {
             window.updateMatchLamp();
           }
 
-          // И только потом перерисовываем редактор
           renderTextBlocks();
           restoreEditorBlockPosition();
         };
@@ -2990,22 +3513,6 @@
       if (!linesToUse || !blocksToUse) {
         return [];
       }
-
-      // --- СИНХРОНИЗАЦИЯ СКРЫТЫХ SCRIPT БЛОКОВ ---
-      // Если блок Script или ScriptMore не содержит ни японских, ни русских символов, 
-      // это означает, что он был скрыт в редакторе (фильтр в renderTextBlocks).
-      // Чтобы избежать ошибок с двойными слэшами в таких блоках, мы принудительно 
-      // синхронизируем их текст с японским файлом перед сохранением.
-      blocksToUse.forEach(block => {
-        if ((block.type === 'Script' || block.type === 'ScriptMore') && !block.isDeleted) {
-          const hasJapanese = /[\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF]/.test(block.text);
-          const hasRussian = /[А-Яа-яЁё]/.test(block.text);
-
-          if (!hasJapanese && !hasRussian && block.japaneseLink && block.japaneseLink.text) {
-            block.text = block.japaneseLink.text;
-          }
-        }
-      });
 
       let exportLines = [];
       let newLines = [...linesToUse];
@@ -3074,6 +3581,10 @@
           if (block.isDeleted) {
             continue;
           }
+          // Автоудаление пустых строк ShowText (если внутри нет невидимых символов вроде пробела или табуляции)
+          if (block.type === 'ShowText' && (block.text === '' || block.text === undefined || block.text === null)) {
+            continue;
+          }
           const indentMatch = originalLine.match(/^\s*/);
           const indent = indentMatch ? indentMatch[0] : '';
           let formattedLine = originalLine;
@@ -3126,6 +3637,15 @@
               formattedLine = originalLine;
               break;
           }
+          if (block.isLocked) {
+            if (!/#lock/i.test(formattedLine)) {
+              formattedLine = formattedLine.trimEnd() + ' #lock';
+            }
+          } else {
+            if (/#lock/i.test(formattedLine)) {
+              formattedLine = formattedLine.replace(/\s*#lock/gi, '');
+            }
+          }
           exportLines.push(indent + formattedLine.trimStart().trimEnd());
           originalIdxToPosMap.set(block.idx, exportLines.length - 1);
         } else {
@@ -3138,6 +3658,8 @@
       blocksToUse.forEach(block => {
         if (block.idx === undefined && !block.isDeleted) {
           if (block.text.includes('ТРЕБУЕТСЯ ПЕРЕВОД')) return;
+          // Автоудаление пустых строк ShowText (если внутри нет невидимых символов вроде пробела или табуляции)
+          if (block.type === 'ShowText' && (block.text === '' || block.text === undefined || block.text === null)) return;
           let anchorIdx = -1;
           for (let j = blocksToUse.indexOf(block) - 1; j >= 0; j--) {
             if (blocksToUse[j].idx !== undefined) {
@@ -3166,7 +3688,9 @@
                 parentIndent = indentMatch ? indentMatch[0] : '    ';
               }
             }
-            const marker = block.manualPlus ? ' #+' : ''; // <<< ИСПРАВЛЕНО
+            const markerPlus = block.manualPlus ? ' #+' : '';
+            const markerLock = block.isLocked ? ' #lock' : '';
+            const marker = markerPlus + markerLock;
             if (block.type === 'ShowTextAttributes') {
               return `${parentIndent}ShowTextAttributes([${block.text}])${marker}`;
             } else {
@@ -3926,6 +4450,20 @@
       const fixBtn = document.getElementById('fixLongDialoguesBtn');
       if (fixBtn) {
         fixBtn.onclick = () => fixLongDialogues(false);
+      }
+
+      // === ПРИВЯЗКА ОБРАБОТЧИКОВ ФИЛЬТРОВ ИНТЕРФЕЙСА ===
+      const hideLabelCb = document.getElementById('hideLabelCheckbox');
+      if (hideLabelCb) {
+        hideLabelCb.addEventListener('change', function () { renderTextBlocks(); });
+      }
+      const showAllScriptsCb = document.getElementById('showAllScriptsCheckbox');
+      if (showAllScriptsCb) {
+        showAllScriptsCb.addEventListener('change', function () { renderTextBlocks(); });
+      }
+      const hideStaCb = document.getElementById('hideStaCheckbox');
+      if (hideStaCb) {
+        hideStaCb.addEventListener('change', function () { renderTextBlocks(); });
       }
     });
 

@@ -51,6 +51,11 @@
 - **Automatic Fix Tools:** New "Fix ShowTextAttributes" button for automatic correction of long dialogue blocks. "Fix Name Tags" button automatically corrects missing name tags after `ShowTextAttributes #+` separators.
 - **Comprehensive Logging:** Detailed diagnostic logging for troubleshooting complex file structure issues.
 - **Type-Aware Block Matching:** Advanced matching algorithm that considers block types for more accurate Russian-Japanese correspondence.
+- **Linked Character Names:** Connect multiple alias representations of the same character (e.g., `【玉藻】` and `【たまも】`) via a dedicated modal dialog. Duplicate propagation and matching automatically treat linked aliases as matching names, with persistent storage in `localStorage`.
+- **Quick Map Navigation:** Convenient floating toolbar allowing one-click navigation (`↩` / `↪`) between loaded map files with real-time index counter (`X/Y`), eliminating repetitive manual file opening.
+- **Show All Scripts Mode:** Optional checkbox toggle (`showAllScriptsCheckbox`) to unhide technical `Script` and `ScriptMore` lines without Japanese content for full control over scripting events.
+- **Enhanced Batch Processing:** Option to display unmatched files at the top of the batch list, natural alphanumeric file sorting, and live original Japanese code snippets directly inside structural error reports.
+- **Engine Hardening:** Protection against runaway tildes (`∾{3,}`), malformed closing tags (`∾C[0]` / `∾∾∾C[0]`), automatic cleanup of empty `ShowText` blocks, and safe handling of dialogue continuation breaks.
 - **CommonEvent Boundary Respect:** Strict adherence to CommonEvent boundaries prevents cross-contamination of blocks between different events.
 - **Japanese Text Ignore Marker:** New `##` marker support allows ignoring Japanese text in specific lines from error detection. Now works correctly even on generated `#+` lines (e.g., `ShowText(["..."]) #+ ##`).
 - **Smart Name Tag Handling:** Automatically detects and skips duplicate dialogue lines following name tags (`【Имя】`).
@@ -64,8 +69,6 @@
 
 ### 1. Editing a Single File
 
-1. **Load Files:**
-   - Click "Load file for translation" to upload your Russian map/event file.
 1.  **Load Files:**
     -   Click "Load file for translation" to upload your Russian map/event file.
     -   (Optional) Click "Load Japanese file" to upload the original Japanese file for comparison.
@@ -170,6 +173,32 @@
 -   **Japanese Text Ignore Marker:** Use `##` at the end of ShowText lines to exclude them from Japanese text error detection.
 -   **Empty ShowText Processing:** Empty ShowText blocks are properly matched with Japanese counterparts but hidden from the editor interface.
 -   **Special Template Recognition:** Automatic detection and handling of special text patterns for improved translation workflow.
+
+---
+
+## Changelog (v1.5.34)
+
+### Linked Character Names
+- **Character Name Alias Linking:** Added a dedicated modal dialog for grouping alternative spelling and script variants of character names (e.g., `【玉藻】` ↔ `【たまも】`).
+- **Unified Duplicate Recognition:** The duplicate detector now treats linked aliases as the same character, eliminating false duplicate warnings and allowing one-click synchronization across aliases.
+- **Persistent Storage:** Groups are saved in `localStorage` (`mgqp_linked_names`), persisting across browser sessions and file reloads.
+
+### Navigation & UX
+- **Quick File Navigation:** Floating toolbar controls (`↩` / `↪`) allow rapid cycling through maps without having to return to folder file selectors.
+- **Show All Scripts:** Added `showAllScriptsCheckbox` toggle to display all script commands, including those without Japanese text, for advanced scripting adjustments.
+- **Natural File Sorting:** Batch file lists and map selectors now sort filenames naturally using numerical ordering (e.g., `Map002` before `Map010`).
+
+### Batch Processing
+- **Unmatched First Sorting:** Added a toggle (`batchShowUnmatchedFirst`) to bring unmatched RU/JP files to the top of the batch list for immediate attention.
+- **Original JP Code Snippets:** When structural mismatches or broken event commands occur, batch error reports now display the original Japanese code snippet for instant visual context.
+- **Clean Event Titles:** Enhanced CommonEvent error headings when `ev.name` is undefined.
+
+### Engine Hardening & Bug Fixes
+- **Empty ShowText Cleanup:** Pure empty `ShowText` lines (without spaces or tabs) are automatically removed during code generation and export.
+- **Tilde & Tag Protection:** Added validation for excessive `∾` prefixes (`∾{3,}`) and malformed reset tags (`∾C[0]` or `∾∾∾C[0]`).
+- **Safe Tag Prepending:** `fixLongDialogues` and `autoFixNameTagErrors` now strip existing prefixes prior to adding a new name tag, preventing duplicate prefix accumulation.
+- **Sentence Break Guard:** `restore-mode.js` protects legitimate forced line breaks (`ShowTextAttributes #+`) when preceding blocks have 4+ lines, while cleaning premature breaks.
+- **Cleanup of Obsolete Debug Code:** Safely removed temporary debug runners and batch test scripts (`debug_batch_mode.js`, `debug_full_test.html`).
 
 ---
 

@@ -60,6 +60,10 @@ document.addEventListener('DOMContentLoaded', function () {
         if (block.isDeleted) {
           continue;
         }
+        // Автоудаление пустых строк ShowText (если внутри нет невидимых символов вроде пробела или табуляции)
+        if (block.type === 'ShowText' && (block.text === '' || block.text === undefined || block.text === null)) {
+          continue;
+        }
 
         const indentMatch = originalLine.match(/^\s*/);
         const indent = indentMatch ? indentMatch[0] : '';
@@ -193,6 +197,10 @@ document.addEventListener('DOMContentLoaded', function () {
         if (block.generated && block.text === 'ТРЕБУЕТСЯ ПЕРЕВОД') {
           return;
         }
+        // Автоудаление пустых строк ShowText (если внутри нет невидимых символов вроде пробела или табуляции)
+        if (block.type === 'ShowText' && (block.text === '' || block.text === undefined || block.text === null)) {
+          return;
+        }
 
         let lastMainBlockLine = -1;
         let parentIndent = '    ';
@@ -274,6 +282,7 @@ window.testModeCompare = function (textBlocks, previewLines) {
   for (let i = 0; i < textBlocks.length; i++) {
     const block = textBlocks[i];
     if (block.type === 'ShowText') {
+      if (block.isDeleted || block.text === '' || block.text === undefined || block.text === null) continue;
       if (/^<∾∾C\[6\]/.test(block.text) || /^∾<∾∾C\[6\]/.test(block.text) || /^\\n<\\C\[6\]/.test(block.text)) {
         if (buffer) exported.push(buffer);
         buffer = block.text;
@@ -394,7 +403,6 @@ function escapeSkillAttributes(str) {
 // --- Проверка структуры для красной лампочки ---
 // --- Проверка структуры для красной лампочки ---
 // --- Проверка структуры для красной лампочки ---
-// --- Проверка структуры для красной лампочки ---
 window.checkMapStructureMatch = function (jpContent, ruContent) {
   // 1) Простой единый парсер для обоих языков
   function parseMapFile(content) {
@@ -407,8 +415,8 @@ window.checkMapStructureMatch = function (jpContent, ruContent) {
       let trimmedLine = line.trim();
       if (!trimmedLine) continue;
 
-      if (trimmedLine.startsWith('CommonEvent')) {
-        const match = trimmedLine.match(/^CommonEvent (\d+)/);
+      if (trimmedLine.startsWith('CommonEvent') || trimmedLine.startsWith('Event ')) {
+        const match = trimmedLine.match(/^(?:CommonEvent|Event)\s+(\d+)/);
         if (match) {
           currentEvent = match[1];
           events[currentEvent] = { name: '', pages: [] };
@@ -447,19 +455,41 @@ window.checkMapStructureMatch = function (jpContent, ruContent) {
     return events;
   }
 
-  // 2) Умный и безопасный компаратор (ИГНОРИРУЕТ ТЕКСТОВЫЕ КОМАНДЫ)
+  // 2) Умный и подробный компаратор (ИГНОРИРУЕТ ТЕКСТОВЫЕ КОМАНДЫ ShowText)
   function compareEvents(jpEvents, ruEvents) {
     let grouped = [];
-    // Список команд, которые мы исключаем из проверки структуры (игнорируем их наличие/отсутствие)
-    // Это позволяет менять структуру диалогов (делить строки, добавлять атрибуты) без ошибок.
-    // Теперь игнорируем ТОЛЬКО ShowText, так как их количество может не совпадать
     const ignoredCommands = ['ShowText'];
 
+    // 1. Проверяем все события из японского оригинала
     for (const [eid, jpEv] of Object.entries(jpEvents)) {
       const ruEv = ruEvents[eid];
-      if (!ruEv) continue;
-
       let eventGroup = { eid, name: jpEv.name, pages: [] };
+
+      // Случай 1: Событие полностью отсутствует в русском файле
+      if (!ruEv) {
+        const totalJpCmds = (jpEv.pages || []).reduce((sum, p) => sum + (p ? p.length : 0), 0);
+        const firstPage = (jpEv.pages || []).find(p => p && p.length > 0);
+        const firstLine = firstPage ? firstPage[0] : null;
+        const snippet = firstPage ? firstPage.slice(0, 6).map(x => x.raw) : [];
+
+        eventGroup.pages.push({
+          page: 0,
+          ok: false,
+          errors: [{
+            line: firstLine ? firstLine.lineNum + 1 : 1,
+            msg: `<b>Событие полностью отсутствует в русском файле:</b> в оригинале содержит ${jpEv.pages.length} страниц (~${totalJpCmds} команд).`,
+            jp: firstLine ? firstLine.raw : '',
+            ru: '— [Событие не найдено в русском файле]',
+            jpLineNum: firstLine ? firstLine.lineNum : undefined,
+            ruLineNum: undefined,
+            snippet: snippet,
+            errorKind: 'missing_event'
+          }]
+        });
+        grouped.push(eventGroup);
+        continue;
+      }
+
       const maxPages = Math.max(jpEv.pages.length, ruEv.pages.length);
 
       for (let p = 0; p < maxPages; p++) {
@@ -469,6 +499,39 @@ window.checkMapStructureMatch = function (jpContent, ruContent) {
         const ruPage = (ruEv.pages[p] || []);
         let issues = [];
 
+        // Случай 2: Страница полностью отсутствует в русском файле
+        if (jpPage.length > 0 && ruPage.length === 0) {
+          const firstLine = jpPage[0];
+          issues.push({
+            line: firstLine.lineNum + 1,
+            msg: `<b>Страница Page ${p} отсутствует в русском файле:</b> в японском оригинале она содержит ${jpPage.length} команд.`,
+            jp: firstLine.raw,
+            ru: `— [Page ${p} отсутствует в русском файле]`,
+            jpLineNum: firstLine.lineNum,
+            ruLineNum: undefined,
+            snippet: jpPage.slice(0, 6).map(x => x.raw),
+            errorKind: 'missing_page'
+          });
+          eventGroup.pages.push({ page: p, ok: false, errors: issues });
+          continue;
+        }
+
+        // Случай 3: Лишняя страница в русском файле
+        if (jpPage.length === 0 && ruPage.length > 0) {
+          const firstLine = ruPage[0];
+          issues.push({
+            line: firstLine.lineNum + 1,
+            msg: `<b>Лишняя страница:</b> Page ${p} есть в русском файле (${ruPage.length} команд), но отсутствует в японском оригинале.`,
+            jp: `— [Page ${p} отсутствует в JP]`,
+            ru: firstLine.raw,
+            jpLineNum: undefined,
+            ruLineNum: firstLine.lineNum,
+            errorKind: 'extra_page'
+          });
+          eventGroup.pages.push({ page: p, ok: false, errors: issues });
+          continue;
+        }
+
         let i = 0, j = 0;
 
         while (i < jpPage.length || j < ruPage.length) {
@@ -477,28 +540,23 @@ window.checkMapStructureMatch = function (jpContent, ruContent) {
           const jpCmd = jpLine?.command;
           const ruCmd = ruLine?.command;
 
-          // === НОВАЯ ЛОГИКА: Пропуск текстовых команд ===
-
-          // 1. Если японская команда в списке игнорируемых - пропускаем её
+          // 1. Пропускаем ShowText
           if (jpCmd && ignoredCommands.includes(jpCmd)) {
             i++;
             continue;
           }
-
-          // 2. Если русская команда в списке игнорируемых - пропускаем её
           if (ruCmd && ignoredCommands.includes(ruCmd)) {
             j++;
             continue;
           }
 
-          // 3. Также пропускаем сгенерированные строки #+ в русском файле (на всякий случай)
-          // Делаем это ДО проверки ShowTextAttributes, чтобы сгенерированные атрибуты не сопоставлялись с японским оригиналом.
+          // 2. Пропускаем строки с #+
           if (ruPage[j] && ruPage[j].raw.trim().endsWith('#+')) {
             j++;
             continue;
           }
 
-          // 2.5 Сравниваем ShowTextAttributes по содержимому!
+          // 3. Сравниваем ShowTextAttributes по содержимому
           if (jpCmd === 'ShowTextAttributes' && ruCmd === 'ShowTextAttributes') {
             if (jpLine.raw.trim() !== ruLine.raw.trim() && !ruLine.raw.includes('##')) {
               issues.push({
@@ -509,7 +567,8 @@ window.checkMapStructureMatch = function (jpContent, ruContent) {
                 jpLineNum: jpLine.lineNum,
                 ruLineNum: ruLine.lineNum,
                 jpContext: { before: jpPage[i - 1]?.raw, after: jpPage[i + 1]?.raw },
-                ruContext: { before: ruPage[j - 1]?.raw, after: ruPage[j + 1]?.raw }
+                ruContext: { before: ruPage[j - 1]?.raw, after: ruPage[j + 1]?.raw },
+                errorKind: 'attr_mismatch'
               });
             }
             i++; j++;
@@ -517,31 +576,66 @@ window.checkMapStructureMatch = function (jpContent, ruContent) {
           }
 
           // 4. Пропускаем строки с ## (игнор ошибок)
-          // Если строка с ## является структурной командой (ShowChoices, When, ShowTextAttributes и т.п.),
-          // то она присутствует и в японском файле — нужно пропустить обе, иначе i и j разойдутся.
           if (ruPage[j] && ruPage[j].raw.trim().endsWith('##')) {
             const ruCmdIgnored = ruPage[j].command;
-            // Структурные команды существуют в обоих файлах — пропускаем и JP-аналог
             const isStructural = ruCmdIgnored && !ignoredCommands.includes(ruCmdIgnored);
             if (isStructural && jpPage[i] && jpPage[i].command === ruCmdIgnored) {
-              i++; // пропускаем соответствующую японскую строку
+              i++;
             }
             j++;
             continue;
           }
 
-          // === Сравнение только структурных команд (Switch, Variable, Condition, Exit, etc.) ===
+          // 5. Сравнение структурных команд
           if (!jpLine || !ruLine || jpCmd !== ruCmd) {
-            issues.push({
-              line: ruLine?.lineNum + 1 || jpLine?.lineNum + 1,
-              msg: `Нарушение логической структуры: ожидалась команда <b>${jpCmd || '—'}</b>, а найдена <b>${ruCmd || '—'}</b>`,
-              jp: jpLine?.raw || '',
-              ru: ruLine?.raw || '',
-              jpLineNum: jpLine?.lineNum,
-              ruLineNum: ruLine?.lineNum,
-              jpContext: { before: jpPage[i - 1]?.raw, after: jpPage[i + 1]?.raw },
-              ruContext: { before: ruPage[j - 1]?.raw, after: ruPage[j + 1]?.raw }
-            });
+            // Вариант А: Обрыв блока в русском файле (команды закончились раньше оригинала)
+            if (!ruLine && jpLine) {
+              const remaining = jpPage.length - i;
+              const nextKeyCmd = jpPage.slice(i).find(c => c.command !== 'BranchEnd' && c.command !== 'Empty') || jpLine;
+              const snippet = jpPage.slice(i, i + 6).map(x => x.raw);
+
+              issues.push({
+                line: jpLine.lineNum + 1,
+                msg: `<b>Обрыв блока в русском файле:</b> команды события закончились раньше времени (не хватает ещё <b>${remaining}</b> структурных команд до конца страницы).<br><small style="color:#555;">В японском оригинале далее следует: <code>${nextKeyCmd.raw.trim()}</code></small>`,
+                jp: jpLine.raw,
+                ru: '— [Конец блока в русском файле]',
+                jpLineNum: jpLine.lineNum,
+                ruLineNum: ruPage[j - 1]?.lineNum,
+                jpContext: { before: jpPage[i - 1]?.raw, after: jpPage[i + 1]?.raw },
+                ruContext: { before: ruPage[j - 1]?.raw, after: undefined },
+                snippet: snippet,
+                errorKind: 'premature_end'
+              });
+            }
+            // Вариант Б: Лишние команды в русском файле
+            else if (ruLine && !jpLine) {
+              const extraCount = ruPage.length - j;
+              issues.push({
+                line: ruLine.lineNum + 1,
+                msg: `<b>Лишние команды в русском файле:</b> в оригинале страница уже закончилась, а в русском файле найдено ещё <b>${extraCount}</b> лишних команд (начиная с <code>${ruLine.raw.trim()}</code>).`,
+                jp: '— [Конец страницы в JP]',
+                ru: ruLine.raw,
+                jpLineNum: jpPage[i - 1]?.lineNum,
+                ruLineNum: ruLine.lineNum,
+                jpContext: { before: jpPage[i - 1]?.raw, after: undefined },
+                ruContext: { before: ruPage[j - 1]?.raw, after: ruPage[j + 1]?.raw },
+                errorKind: 'extra_commands'
+              });
+            }
+            // Вариант В: Несовпадение типов команд
+            else {
+              issues.push({
+                line: ruLine.lineNum + 1,
+                msg: `<b>Нарушение логической структуры:</b> ожидалась команда <b>${jpCmd || '—'}</b>, а найдена <b>${ruCmd || '—'}</b>.<br><small style="color:#666;">Возможно, пропущено условие (ConditionalBranch) или не закрыта предыдущая ветка (BranchEnd).</small>`,
+                jp: jpLine.raw,
+                ru: ruLine.raw,
+                jpLineNum: jpLine.lineNum,
+                ruLineNum: ruLine.lineNum,
+                jpContext: { before: jpPage[i - 1]?.raw, after: jpPage[i + 1]?.raw },
+                ruContext: { before: ruPage[j - 1]?.raw, after: ruPage[j + 1]?.raw },
+                errorKind: 'cmd_mismatch'
+              });
+            }
             break;
           }
           i++; j++;
@@ -781,6 +875,10 @@ setTimeout(function () {
         if (block.isDeleted) {
           continue;
         }
+        // Автоудаление пустых строк ShowText (если внутри нет невидимых символов вроде пробела или табуляции)
+        if (block.type === 'ShowText' && (block.text === '' || block.text === undefined || block.text === null)) {
+          continue;
+        }
 
         const indentMatch = currentLineContent.match(/^\s*/);
         let formattedLine = currentLineContent;
@@ -842,6 +940,8 @@ setTimeout(function () {
     blocksToUse.forEach(block => {
       if (block.idx === undefined && !block.isDeleted) {
         if (block.generated && block.text === 'ТРЕБУЕТСЯ ПЕРЕВОД') return;
+        // Автоудаление пустых строк ShowText (если внутри нет невидимых символов вроде пробела или табуляции)
+        if (block.type === 'ShowText' && (block.text === '' || block.text === undefined || block.text === null)) return;
 
         let lastMainBlockLine = -1;
         let parentIndent = '    ';
@@ -993,7 +1093,25 @@ window.addChangeItemsButtons = function () {
       fileName = input.files[0].name;
     }
   }
-  if (!fileName || !/(CommonEvent|Map)\d+/i.test(fileName)) {
+  const fileNameLower = (fileName || "").toLowerCase();
+  const isMapFile = fileNameLower.includes('map');
+  const isCommonEventFile = !isMapFile && (fileNameLower.includes('commonevent') || (window.originalLines && window.originalLines.some(l => /^[\s\uFEFF]*CommonEvent \d+/.test(l))));
+
+  if (!isCommonEventFile) {
+    // Удаляем любые ранее созданные кнопки ChangeItems, если файл — Map или не CommonEvent
+    (window.textBlocks || []).forEach(block => {
+      if (block.dom && block.dom.changeItemsBtn) {
+        block.dom.changeItemsBtn.remove();
+        delete block.dom.changeItemsBtn;
+      }
+      delete block.associatedItems;
+      delete block.associatedItemId;
+      delete block.associatedItemType;
+      delete block.associatedThreshold;
+    });
+    if (typeof window.updateGlobalChangeItemsBtn === 'function') {
+      window.updateGlobalChangeItemsBtn();
+    }
     return;
   }
   const lines = window.originalLines || [];
@@ -1059,22 +1177,42 @@ window.addChangeItemsButtons = function () {
   });
 
   // --- ШАГ 3: Основной цикл рендеринга кнопок ---
+  const getLiveText = (b) => {
+    if (b && b.dom && b.dom.rusInput) {
+      b.text = b.dom.rusInput.value;
+      return b.dom.rusInput.value;
+    }
+    return b ? (b.text || '') : '';
+  };
+
   window.textBlocks.forEach((block, index) => {
     if (block.type !== 'ShowText' || !block.dom || !block.dom.rusInput) return;
     if (block.idx === undefined) return;
 
+    // Навешиваем слушатель ввода для моментального пересчета при вставке/редактировании
+    if (!block.dom.rusInput._changeItemsListener) {
+      block.dom.rusInput._changeItemsListener = true;
+      block.dom.rusInput.addEventListener('input', () => {
+        block.text = block.dom.rusInput.value;
+        if (window._updateItemsBtnTimer) clearTimeout(window._updateItemsBtnTimer);
+        window._updateItemsBtnTimer = setTimeout(() => {
+          window.addChangeItemsButtons();
+        }, 100);
+      });
+    }
+
+    const liveBlockText = getLiveText(block);
+
     // Паттерн получения предмета (стандартный)
     const isItemGetPattern = (text) => {
-      return /i[iaw]\[|手に入れた | 入手 | 獲得 | 拾った | 授かった |Obtained|Got|Найдено|Получено/i.test(text);
+      return /i[iaw]\[|手に入れ|入手|獲得|拾った|授かっ|貰った|もらっ|Obtained|Got|Найдено|Получено/i.test(text);
     };
 
-    const affectionMatch = block.text.match(/(好感度|Привязанность|Affection|Reputation)\s*(\d+)\s*:/);
+    const affectionMatch = liveBlockText.match(/(好感度|Привязанность|Affection|Reputation)\s*(\d+)\s*:/);
     const isAffectionThreshold = !!affectionMatch;
-    const currentIsPattern = isItemGetPattern(block.text) || isAffectionThreshold;
+    const currentIsPattern = isItemGetPattern(liveBlockText) || isAffectionThreshold;
 
-    let itemId = null;
-    let itemAmount = '1';
-    let itemType = 'ii';
+    let items = [];
     let thresholdNum = isAffectionThreshold ? parseInt(affectionMatch[2]) : null;
 
     // А. Сначала пробуем МЭППИНГ ЮНИТА (для порогов привязанности)
@@ -1084,17 +1222,29 @@ window.addChangeItemsButtons = function () {
       if (mapping) {
         const nth = mapping.affectionBlIdxs.indexOf(index);
         if (nth !== -1 && mapping.items[nth]) {
-          itemId = mapping.items[nth].id;
-          itemAmount = mapping.items[nth].amount;
-          itemType = mapping.items[nth].type;
+          items.push({
+            id: mapping.items[nth].id,
+            amount: mapping.items[nth].amount,
+            type: mapping.items[nth].type
+          });
         }
       }
     }
 
+    // 1. Находим границы группы подряд идущих ShowText строк в lines
+    let gStartIdx = block.idx;
+    while (gStartIdx > 0 && /^\s*ShowText\(/.test(lines[gStartIdx - 1])) {
+      gStartIdx--;
+    }
+    let gEndIdx = block.idx;
+    while (gEndIdx < lines.length - 1 && /^\s*ShowText\(/.test(lines[gEndIdx + 1])) {
+      gEndIdx++;
+    }
+
     // Б. Если мэппинг не помог или это обычная строка - ищем рядом (NEARBY SEARCH)
-    if (!itemId) {
-      // Поиск НАЗАД (30 строк)
-      for (let i = block.idx - 1; i >= Math.max(0, block.idx - 30); i--) {
+    if (items.length === 0) {
+      // Поиск НАЗАД от gStartIdx - 1 (30 строк) - собираем ВСЕ подряд идущие предметы
+      for (let i = gStartIdx - 1; i >= Math.max(0, gStartIdx - 30); i--) {
         const line = lines[i].trim();
         if (/^[\s\uFEFF]*(CommonEvent|Page)\s+\d+/.test(line)) break;
         if (/^(TransferPlayer|CallCommonEvent|Script|ExitEventProcessing|Label|JumpToLabel)/.test(line)) break;
@@ -1103,36 +1253,97 @@ window.addChangeItemsButtons = function () {
         const matchSimple = line.match(/(ChangeItems|ChangeWeapons|ChangeArmor)\(\[\s*(\d+),/);
         if (matchFull || matchSimple) {
           const m = matchFull || matchSimple;
-          itemId = m[2];
+          const itemId = m[2];
           const typeOp = m[3] || '0';
           const amount = m[4] || '1';
-          itemAmount = (typeOp === '1') ? `∾∾V[${amount}]` : amount;
-          itemType = (m[1] === 'ChangeWeapons') ? 'iw' : (m[1] === 'ChangeArmor' ? 'ia' : 'ii');
-          break;
+          const itemAmount = (typeOp === '1') ? `∾∾V[${amount}]` : amount;
+          const itemType = (m[1] === 'ChangeWeapons') ? 'iw' : (m[1] === 'ChangeArmor' ? 'ia' : 'ii');
+          items.unshift({ id: itemId, type: itemType, amount: itemAmount });
         }
       }
     }
 
-    // В. Если все еще нет - ищем ВПЕРЕД (50 строк)
-    if (!itemId) {
-      for (let i = block.idx + 1; i < Math.min(lines.length, block.idx + 50); i++) {
+    // В. Если все еще нет - ищем ВПЕРЕД от gEndIdx + 1 (50 строк)
+    if (items.length === 0) {
+      for (let i = gEndIdx + 1; i < Math.min(lines.length, gEndIdx + 50); i++) {
         const line = lines[i].trim();
         if (/^[\s\uFEFF]*(CommonEvent|Page|ExitEventProcessing|^BranchEnd)/.test(line)) break;
         const matchFull = line.match(/(ChangeItems|ChangeWeapons|ChangeArmor)\(\[\s*(\d+),\s*\d+,\s*(\d+),\s*(\d+).*?\]\)/);
         const matchSimple = line.match(/(ChangeItems|ChangeWeapons|ChangeArmor)\(\[\s*(\d+),/);
         if (matchFull || matchSimple) {
           const m = matchFull || matchSimple;
-          itemId = m[2];
+          const itemId = m[2];
           const typeOp = m[3] || '0';
           const amount = m[4] || '1';
-          itemAmount = (typeOp === '1') ? `∾∾V[${amount}]` : amount;
-          itemType = (m[1] === 'ChangeWeapons') ? 'iw' : (m[1] === 'ChangeArmor' ? 'ia' : 'ii');
-          break;
+          const itemAmount = (typeOp === '1') ? `∾∾V[${amount}]` : amount;
+          const itemType = (m[1] === 'ChangeWeapons') ? 'iw' : (m[1] === 'ChangeArmor' ? 'ia' : 'ii');
+          items.push({ id: itemId, type: itemType, amount: itemAmount });
         }
       }
     }
 
-    if (!itemId) return;
+    if (items.length === 0) return;
+
+    // Собираем все блоки в группе ShowText
+    const groupBlocks = [];
+    window.textBlocks.forEach((b, bIndex) => {
+      if (b.type === 'ShowText' && b.idx !== undefined && b.idx >= gStartIdx && b.idx <= gEndIdx) {
+        groupBlocks.push({ block: b, index: bIndex });
+      }
+    });
+
+    // Собираем имеющиеся теги предметов из ТЕКУЩЕГО ЖИВОГО текста всех блоков группы
+    const groupTextMatches = [];
+    let precedingTagsCountForThisBlock = 0;
+
+    groupBlocks.forEach(({ block: b, index: bIndex }) => {
+      const itemTagRegexG = /(?:\\|∾+)i([iaw]?)\[(\d+)\]/g;
+      let tm;
+      let countInB = 0;
+      const bLiveText = getLiveText(b);
+      while ((tm = itemTagRegexG.exec(bLiveText)) !== null) {
+        const textType = tm[1].toLowerCase() === 'w' ? 'iw' : (tm[1].toLowerCase() === 'a' ? 'ia' : 'ii');
+        groupTextMatches.push({ type: textType, id: tm[2], bIndex: bIndex });
+        countInB++;
+      }
+      if (bIndex < index) {
+        precedingTagsCountForThisBlock += countInB;
+      }
+    });
+
+    // Определяем, какие именно предметы из items относятся к ДАННОМУ блоку (blockItems)
+    let blockItems = [];
+    if (groupTextMatches.length > 0) {
+      const tagsInThisBlock = groupTextMatches.filter(m => m.bIndex === index);
+      if (tagsInThisBlock.length > 0) {
+        for (let k = 0; k < tagsInThisBlock.length; k++) {
+          const itemIdx = precedingTagsCountForThisBlock + k;
+          if (items[itemIdx]) {
+            blockItems.push(items[itemIdx]);
+          }
+        }
+      }
+      if (blockItems.length === 0) return;
+    } else {
+      if (items.length === groupBlocks.length) {
+        // РОВНОЕ СОВПАДЕНИЕ 1-к-1: N команд на N строк ShowText!
+        const kPos = groupBlocks.findIndex(gb => gb.index === index);
+        if (kPos !== -1 && items[kPos]) {
+          blockItems = [items[kPos]];
+        }
+      } else if (groupBlocks.length === 1) {
+        blockItems = items;
+      } else {
+        const kPos = groupBlocks.findIndex(gb => gb.index === index);
+        if (kPos !== -1) {
+          const start = Math.floor(kPos * items.length / groupBlocks.length);
+          const end = Math.floor((kPos + 1) * items.length / groupBlocks.length);
+          blockItems = items.slice(start, Math.max(start + 1, end));
+        }
+      }
+    }
+
+    if (blockItems.length === 0) return;
 
     // --- РЕНДЕРИНГ КНОПКИ ---
     if (currentIsPattern) {
@@ -1148,65 +1359,94 @@ window.addChangeItemsButtons = function () {
         block.dom.changeItemsBtn = btn;
       }
 
-      block.associatedItemId = itemId;
-      block.associatedItemType = itemType;
+      block.associatedItems = blockItems;
+      block.associatedItemId = blockItems[0].id;
+      block.associatedItemType = blockItems[0].type;
       block.associatedThreshold = thresholdNum;
 
-      let typeLabel = (itemType === 'iw') ? 'Weapon' : (itemType === 'ia' ? 'Armor' : 'Item');
-      let btnBg = (itemType === 'iw') ? '#ffe0cc' : (itemType === 'ia' ? '#ccf2ff' : '#e6ccff');
+      const itemLabels = blockItems.map(it => {
+        let typeLabel = (it.type === 'iw') ? 'Weapon' : (it.type === 'ia' ? 'Armor' : 'Item');
+        return `${typeLabel}[${it.id}]`;
+      }).join(', ');
 
-      btn.textContent = `${typeLabel}[${itemId}]`;
+      let btnBg = (blockItems[0].type === 'iw') ? '#ffe0cc' : (blockItems[0].type === 'ia' ? '#ccf2ff' : '#e6ccff');
+
+      btn.textContent = itemLabels;
       btn.style.background = btnBg;
-      btn.title = `Заменить на шаблон (${typeLabel}) ID ${itemId}`;
+      btn.title = `Заменить на шаблон: ${itemLabels}`;
 
-      // Проверка на несоответствие ID
-      const itemTagRegex = /(?:\\|∾+)i([iaw]?)\[(\d+)\]/i;
-      const tMatch = block.text.match(itemTagRegex);
-      let hasMismatch = false;
-      if (tMatch) {
-        const textType = tMatch[1] === 'w' ? 'iw' : (tMatch[1] === 'a' ? 'ia' : 'ii');
-        if (tMatch[2] !== itemId || textType !== itemType) {
-          hasMismatch = true;
-          btn.style.border = '2px solid #f00';
-          btn.style.boxShadow = '0 0 5px #f00';
-          btn.title = `ВНИМАНИЕ: ID в тексте не совпадает с командой!`;
-          if (window.allErrorIndices) window.allErrorIndices.add(index);
-        }
+      // Собираем теги предметов живого текста текущего блока
+      const itemTagRegexG = /(?:\\|∾+)i([iaw]?)\[(\d+)\]/g;
+      const tMatches = [];
+      let tm;
+      while ((tm = itemTagRegexG.exec(liveBlockText)) !== null) {
+        const textType = tm[1].toLowerCase() === 'w' ? 'iw' : (tm[1].toLowerCase() === 'a' ? 'ia' : 'ii');
+        tMatches.push({ type: textType, id: tm[2] });
       }
-      if (!hasMismatch) { btn.style.border = ''; btn.style.boxShadow = ''; }
 
-      if (isNew) {
-        btn.onclick = function () {
-          const currentText = block.dom.rusInput.value;
-          let newText;
-          if (isAffectionThreshold) {
-            const numStr = thresholdNum.toString();
-            const spacesCount = Math.max(1, 1 + (4 - numStr.length) * 2);
-            const prefix = `Привязанность${" ".repeat(spacesCount)}${numStr}:`;
-            let amountSuffix = (itemAmount !== "1") ? ` × ${itemAmount}` : "";
-            newText = `${prefix}∾∾${itemType}[${itemId}]${amountSuffix}`;
-          } else {
-            const tagMatch = currentText.match(itemTagRegex);
-            if (tagMatch) {
-              const typeLetter = itemType === 'iw' ? 'w' : (itemType === 'ia' ? 'a' : '');
-              newText = currentText.replace(itemTagRegex, (match) => {
-                // Всегда жестко ставим двойной слэш ∾∾ для любых тегов предметов
-                return `∾∾i${typeLetter}[${itemId}]`;
-              });
-            } else {
-              newText = `∾∾${itemType}[${itemId}] × ${itemAmount} получено!`;
+      let hasMismatch = false;
+      if (tMatches.length > 0) {
+        if (tMatches.length !== blockItems.length) {
+          hasMismatch = true;
+        } else {
+          for (let k = 0; k < blockItems.length; k++) {
+            if (tMatches[k].id !== blockItems[k].id || tMatches[k].type !== blockItems[k].type) {
+              hasMismatch = true;
+              break;
             }
           }
-          if (block.dom.rusInput.value !== newText) {
-            block.dom.rusInput.value = newText;
-            block.text = newText;
-            block.dom.rusInput.dispatchEvent(new Event('input', { bubbles: true }));
-            const oldLabel = btn.textContent;
-            btn.textContent = 'Done!';
-            setTimeout(() => { btn.textContent = oldLabel; }, 1000);
-          }
-        };
+        }
+      }
 
+      if (hasMismatch) {
+        btn.style.border = '2px solid #f00';
+        btn.style.boxShadow = '0 0 5px #f00';
+        btn.title = `ВНИМАНИЕ: ID предметов в тексте не совпадают с командами!`;
+        if (window.allErrorIndices) window.allErrorIndices.add(index);
+      } else {
+        btn.style.border = '';
+        btn.style.boxShadow = '';
+      }
+
+      btn.onclick = function () {
+        const currentText = block.dom.rusInput.value;
+        let newText;
+        if (isAffectionThreshold) {
+          const numStr = thresholdNum.toString();
+          const spacesCount = Math.max(1, 1 + (4 - numStr.length) * 2);
+          const prefix = `Привязанность${" ".repeat(spacesCount)}${numStr}:`;
+          let amountSuffix = (blockItems[0].amount !== "1") ? ` × ${blockItems[0].amount}` : " × 1";
+          newText = `${prefix}∾∾${blockItems[0].type}[${blockItems[0].id}]${amountSuffix}`;
+        } else {
+          const itemTagRegexG = /(?:\\|∾+)i([iaw]?)\[(\d+)\]/g;
+          const tagMatches = [...currentText.matchAll(itemTagRegexG)];
+          if (tagMatches.length > 0) {
+            let matchIdx = 0;
+            newText = currentText.replace(itemTagRegexG, () => {
+              const item = blockItems[matchIdx] || blockItems[blockItems.length - 1];
+              matchIdx++;
+              const typeLetter = item.type === 'iw' ? 'w' : (item.type === 'ia' ? 'a' : '');
+              return `∾∾i${typeLetter}[${item.id}]`;
+            });
+          } else {
+            const itemParts = blockItems.map(it => {
+              const amountSuffix = it.amount ? ` × ${it.amount}` : " × 1";
+              return `∾∾${it.type}[${it.id}]${amountSuffix}`;
+            });
+            newText = `Получено ${itemParts.join(', ')}!`;
+          }
+        }
+        if (block.dom.rusInput.value !== newText) {
+          block.dom.rusInput.value = newText;
+          block.text = newText;
+          block.dom.rusInput.dispatchEvent(new Event('input', { bubbles: true }));
+          const oldLabel = btn.textContent;
+          btn.textContent = 'Done!';
+          setTimeout(() => { btn.textContent = oldLabel; }, 1000);
+        }
+      };
+
+      if (isNew) {
         const blockDiv = block.dom.rusInput.closest('.block');
         if (blockDiv) {
           const label = blockDiv.querySelector('label');
@@ -1401,7 +1641,8 @@ window.addFixNameButtons = function () {
         const rest = match[2];
         newText = `∾\n<∾∾C[6]${name}∾∾C[0]>${rest}`;
       } else if (block.isMissingTag && block.suggestedName) {
-        newText = `∾\n<∾∾C[6]${block.suggestedName}∾∾C[0]>${block.text}`;
+        const cleanedText = block.text.replace(/^∾+\n/, '').replace(/^<∾+C\[\d+\].*?∾+C\[0\]>/, '');
+        newText = `∾\n<∾∾C[6]${block.suggestedName}∾∾C[0]>${cleanedText}`;
       }
 
       if (newText) {
@@ -2100,79 +2341,98 @@ setTimeout(function () {
       }
     }
 
-    // --- НОВАЯ ПРОВЕРКА: Несоответствие ID предмета ---
-    const itemMismatchTagRegex = /(?:\\|∾+)i([iaw]?)\[(\d+)\]/i;
+    // --- НОВАЯ ПРОВЕРКА: Несоответствие ID предметов ---
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       if (!line.includes('ShowText([')) continue;
 
-      const startIdx = line.indexOf('["');
-      const endIdx = line.lastIndexOf('"]');
-      if (startIdx === -1 || endIdx === -1) continue;
-      const text = line.substring(startIdx + 2, endIdx);
+      // Проверяем, является ли это началом группы подряд идущих ShowText
+      const isGroupStart = (i === 0) || !lines[i - 1].includes('ShowText([');
+      if (!isGroupStart) continue; // Обрабатываем всю группу только один раз на начальной строке
 
-      const tMatch = text.match(itemMismatchTagRegex);
-      if (tMatch) {
-        const textTypeLetter = (tMatch[1] || '').toLowerCase();
-        let textType = 'ii';
-        if (textTypeLetter === 'w') textType = 'iw';
-        else if (textTypeLetter === 'a') textType = 'ia';
-        const textId = tMatch[2];
+      let groupEnd = i;
+      while (groupEnd + 1 < lines.length && lines[groupEnd + 1].includes('ShowText([')) {
+        groupEnd++;
+      }
 
-        let itemId = null;
-        let itemType = 'ii';
+      // 1. Собираем все теги предметов из текста ВСЕХ строк данной группы
+      const groupTextTags = [];
+      for (let lineIdx = i; lineIdx <= groupEnd; lineIdx++) {
+        const l = lines[lineIdx];
+        const startIdx = l.indexOf('["');
+        const endIdx = l.lastIndexOf('"]');
+        if (startIdx === -1 || endIdx === -1) continue;
+        const text = l.substring(startIdx + 2, endIdx);
 
-        // Поиск НАЗАД
+        const gRegex = /(?:\\|∾+)i([iaw]?)\[(\d+)\]/g;
+        let tm;
+        while ((tm = gRegex.exec(text)) !== null) {
+          const letter = (tm[1] || '').toLowerCase();
+          const tType = letter === 'w' ? 'iw' : (letter === 'a' ? 'ia' : 'ii');
+          groupTextTags.push({ type: tType, id: tm[2], line: lineIdx });
+        }
+      }
+
+      // 2. Ищем команды предметов до или после всей группы
+      if (groupTextTags.length > 0) {
+        const cmdItems = [];
+        // Поиск НАЗАД от i - 1
         for (let k = i - 1; k >= Math.max(0, i - 15); k--) {
           const l = lines[k].trim();
           if (/^(Label|JumpToLabel|Script|ExitEventProcessing)/.test(l)) break;
           const mF = l.match(/(ChangeItems|ChangeWeapons|ChangeArmor)\(\[\s*(\d+),\s*\d+,\s*(\d+),\s*(\d+).*?\]\)/);
           const mS = l.match(/(ChangeItems|ChangeWeapons|ChangeArmor)\(\[\s*(\d+),/);
-          if (mF) {
-            itemId = mF[2];
-            if (mF[1] === 'ChangeWeapons') itemType = 'iw';
-            else if (mF[1] === 'ChangeArmor') itemType = 'ia';
-            break;
-          } else if (mS) {
-            itemId = mS[2];
-            if (mS[1] === 'ChangeWeapons') itemType = 'iw';
-            else if (mS[1] === 'ChangeArmor') itemType = 'ia';
-            break;
+          if (mF || mS) {
+            const m = mF || mS;
+            const iType = (m[1] === 'ChangeWeapons') ? 'iw' : (m[1] === 'ChangeArmor' ? 'ia' : 'ii');
+            cmdItems.unshift({ id: m[2], type: iType });
           }
         }
 
-        // Поиск ВПЕРЕД
-        if (!itemId) {
-          for (let k = i + 1; k < Math.min(lines.length, i + 30); k++) {
+        // Поиск ВПЕРЕД от groupEnd + 1
+        if (cmdItems.length === 0) {
+          for (let k = groupEnd + 1; k < Math.min(lines.length, groupEnd + 30); k++) {
             const l = lines[k].trim();
             if (/^ExitEventProcessing/.test(l)) break;
             const mF = l.match(/(ChangeItems|ChangeWeapons|ChangeArmor)\(\[\s*(\d+),\s*\d+,\s*(\d+),\s*(\d+).*?\]\)/);
             const mS = l.match(/(ChangeItems|ChangeWeapons|ChangeArmor)\(\[\s*(\d+),/);
-            if (mF) {
-              itemId = mF[2];
-              if (mF[1] === 'ChangeWeapons') itemType = 'iw';
-              else if (mF[1] === 'ChangeArmor') itemType = 'ia';
-              break;
-            } else if (mS) {
-              itemId = mS[2];
-              if (mS[1] === 'ChangeWeapons') itemType = 'iw';
-              else if (mS[1] === 'ChangeArmor') itemType = 'ia';
-              break;
+            if (mF || mS) {
+              const m = mF || mS;
+              const iType = (m[1] === 'ChangeWeapons') ? 'iw' : (m[1] === 'ChangeArmor' ? 'ia' : 'ii');
+              cmdItems.push({ id: m[2], type: iType });
             }
           }
         }
 
-        if (itemId && (textId !== itemId || textType !== itemType)) {
-          errors.push({
-            label: `строка ${i + 1}`,
-            type: 'Ошибка ID предмета',
-            reason: `ID в тексте (${textType}[${textId}]) не совпадает с командой (${itemType}[${itemId}])!`,
-            line: i,
-            msg: `ID в тексте (${textType}[${textId}]) не совпадает с командой (${itemType}[${itemId}])!`,
-            isItemIdMismatchLine: true
-          });
+        if (cmdItems.length > 0) {
+          if (groupTextTags.length !== cmdItems.length) {
+            errors.push({
+              label: `строка ${i + 1}`,
+              type: 'Ошибка ID предмета',
+              reason: `Количество предметов в группе строк (${groupTextTags.length}) не совпадает с командами (${cmdItems.length})!`,
+              line: i,
+              msg: `Количество предметов в группе строк (${groupTextTags.length}) не совпадает с командами (${cmdItems.length})!`,
+              isItemIdMismatchLine: true
+            });
+          } else {
+            for (let k = 0; k < groupTextTags.length; k++) {
+              if (groupTextTags[k].id !== cmdItems[k].id || groupTextTags[k].type !== cmdItems[k].type) {
+                errors.push({
+                  label: `строка ${groupTextTags[k].line + 1}`,
+                  type: 'Ошибка ID предмета',
+                  reason: `ID в тексте (${groupTextTags[k].type}[${groupTextTags[k].id}]) не совпадает с командой (${cmdItems[k].type}[${cmdItems[k].id}])!`,
+                  line: groupTextTags[k].line,
+                  msg: `ID в тексте (${groupTextTags[k].type}[${groupTextTags[k].id}]) не совпадает с командой (${cmdItems[k].type}[${cmdItems[k].id}])!`,
+                  isItemIdMismatchLine: true
+                });
+                break;
+              }
+            }
+          }
         }
       }
+
+      i = groupEnd; // Переходим в конец группы
     }
 
     // --- НОВАЯ ПРОВЕРКА: Разделенные или незакрытые теги цвета ---
@@ -2359,7 +2619,7 @@ setTimeout(function () {
     // === ДОБАВЛЕНО: ПРОВЕРКА НА РАССИНХРОН ИМЕН ===
     if (window.textBlocks) {
       window.textBlocks.forEach((block, i) => {
-        if (block.isDeleted || block.type !== 'ShowText' || block.hasIgnoreMarker) return;
+        if (block.isDeleted || block.type !== 'ShowText' || block.text === '' || block.hasIgnoreMarker) return;
         const ruHasName = window.isNameBlock(block.text) || /<[\\∾]{2}C\[6\]/.test(block.text);
         if ((block.manualPlus || block.generated) && ruHasName) return;
         if (!block.japaneseLink) return;
@@ -2463,7 +2723,7 @@ setTimeout(function () {
         let hasTextAhead = false;
         for (let j = i + 1; j < window.textBlocks.length; j++) {
           let nextBlock = window.textBlocks[j];
-          if (nextBlock.isDeleted || nextBlock.type === 'EmptyLine' || nextBlock.type === 'Comment') continue;
+          if (nextBlock.isDeleted || nextBlock.type === 'EmptyLine' || nextBlock.type === 'Comment' || (nextBlock.type === 'ShowText' && nextBlock.text === '')) continue;
           
           if (nextBlock.type === 'ShowText') {
             hasTextAhead = true;
@@ -2487,6 +2747,7 @@ setTimeout(function () {
     if (window.textBlocks) {
       window.textBlocks.forEach((block, i) => {
         if (block.isDeleted || block.hasIgnoreMarker) return;
+        if (block.type === 'ShowText' && block.text === '') return;
         if (block.text.trim() === '') {
           const prevBlock = i > 0 ? window.textBlocks[i - 1] : null;
           if (prevBlock && prevBlock.text.trim() === '' && !prevBlock.isDeleted) {
@@ -2524,7 +2785,7 @@ setTimeout(function () {
     // === ПРОВЕРКА: Незакрытые кавычки в тексте ShowText ===
     if (window.textBlocks) {
       window.textBlocks.forEach((block, i) => {
-        if (block.isDeleted || block.type !== 'ShowText' || block.hasIgnoreMarker) return;
+        if (block.isDeleted || block.type !== 'ShowText' || block.text === '' || block.hasIgnoreMarker) return;
         
         // Используем block.text напрямую, так как после re-parsing он содержит актуальный текст
         // Не пытаемся извлекать из lines[block.idx], так как после split операция idx может быть не синхронизирован
@@ -2580,7 +2841,7 @@ setTimeout(function () {
     // === ПРОВЕРКА: Лишние скобки 【 】 в теге имени ===
     if (window.textBlocks) {
       window.textBlocks.forEach((block, i) => {
-        if (block.isDeleted || block.type !== 'ShowText' || block.hasIgnoreMarker) return;
+        if (block.isDeleted || block.type !== 'ShowText' || block.text === '' || block.hasIgnoreMarker) return;
         
         // Используем block.text напрямую, так как после re-parsing он содержит актуальный текст
         // Не пытаемся извлекать из lines[block.idx], так как после split операция idx может быть не синхронизирован
@@ -2622,7 +2883,7 @@ setTimeout(function () {
             // Ищем следующий значимый блок
             for (let j = i + 1; j < window.textBlocks.length; j++) {
               const nb = window.textBlocks[j];
-              if (!nb.isDeleted) {
+              if (!nb.isDeleted && !(nb.type === 'ShowText' && nb.text === '')) {
                 nextBlock = nb;
                 break;
               }
@@ -3003,7 +3264,9 @@ setTimeout(function () {
         const allDuplicateBtns = document.querySelectorAll(`button.${DUPLICATE_BTN_CLASS}`);
         const visibleBtns = Array.from(allDuplicateBtns).filter(btn => {
           const isRed = btn.style.backgroundColor === 'rgb(255, 136, 136)' || btn.style.backgroundColor === '#f88';
-          return btn.offsetParent !== null && !btn.disabled && isRed && btn !== target;
+          const isLocked = btn.dataset.locked === 'true' ||
+            (btn.nextElementSibling && btn.nextElementSibling.classList.contains('duplicate-lock-btn') && btn.nextElementSibling.dataset.isLocked === 'true');
+          return btn.offsetParent !== null && !btn.disabled && isRed && !isLocked && btn !== target;
         });
 
         if (visibleBtns.length > 0) {

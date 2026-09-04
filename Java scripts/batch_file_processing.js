@@ -71,6 +71,7 @@ function renderBatchFileList() {
 
   // Получаем значение чекбокса "Скрывать файлы без сопоставления"
   const hideUnmatchedFiles = document.getElementById('batchHideUnmatchedFiles')?.checked;
+  const showUnmatchedFirst = !hideUnmatchedFiles && document.getElementById('batchShowUnmatchedFirst')?.checked;
 
   // Собираем все уникальные имена файлов из обеих папок
   const allFileNames = new Set();
@@ -78,7 +79,17 @@ function renderBatchFileList() {
   Object.keys(jpFiles).forEach(name => allFileNames.add(name));
 
   // Сортируем и отображаем все файлы
-  Array.from(allFileNames).sort().forEach(fileName => {
+  const sortedFileNames = Array.from(allFileNames).sort((a, b) => {
+    if (showUnmatchedFirst) {
+      const isUnmatchedA = !ruFiles[a] || !jpFiles[a];
+      const isUnmatchedB = !ruFiles[b] || !jpFiles[b];
+      if (isUnmatchedA && !isUnmatchedB) return -1;
+      if (!isUnmatchedA && isUnmatchedB) return 1;
+    }
+    return a.localeCompare(b, undefined, { numeric: true });
+  });
+
+  sortedFileNames.forEach(fileName => {
     const hasRU = !!ruFiles[fileName];
     const hasJP = !!jpFiles[fileName];
 
@@ -923,11 +934,21 @@ async function batchCheckAllFiles() {
   const allFileNames = new Set();
   Object.keys(ruFiles).forEach(name => allFileNames.add(name));
   Object.keys(jpFiles).forEach(name => allFileNames.add(name));
-  const sortedFileNames = Array.from(allFileNames).sort();
 
   const showOnlyErrorLines = document.getElementById('batchShowOnlyErrorLines')?.checked;
   const showOkFiles = document.getElementById('batchShowOkFiles')?.checked;
   const hideUnmatchedFiles = document.getElementById('batchHideUnmatchedFiles')?.checked;
+  const showUnmatchedFirst = !hideUnmatchedFiles && document.getElementById('batchShowUnmatchedFirst')?.checked;
+
+  const sortedFileNames = Array.from(allFileNames).sort((a, b) => {
+    if (showUnmatchedFirst) {
+      const isUnmatchedA = !ruFiles[a] || !jpFiles[a];
+      const isUnmatchedB = !ruFiles[b] || !jpFiles[b];
+      if (isUnmatchedA && !isUnmatchedB) return -1;
+      if (!isUnmatchedA && isUnmatchedB) return 1;
+    }
+    return a.localeCompare(b, undefined, { numeric: true });
+  });
 
   // Очищаем предыдущие результаты
   batchResults = [];
@@ -1104,7 +1125,8 @@ async function batchCheckAllFiles() {
         ev.pages.forEach(page => {
           if (!page.ok) {
             if (!showOnlyErrorLines || page.errors.length > 0) {
-              statHtml += `<div data-error-type="Структурные ошибки" style='color:#b00; font-weight:bold; margin:10px 0 2px 0;'>CommonEvent ${ev.eid} (${ev.name}), Page ${page.page}</div>`;
+              const eventTitle = ev.name ? `CommonEvent ${ev.eid} (${ev.name}), Page ${page.page}` : `CommonEvent ${ev.eid}, Page ${page.page}`;
+              statHtml += `<div data-error-type="Структурные ошибки" style='color:#b00; font-weight:bold; margin:10px 0 2px 0;'>${eventTitle}</div>`;
               page.errors.forEach(err => {
                 const branchEndInfo = err.branchEndNumber !== undefined ? `<div style='color:#666; font-size:12px; margin-bottom:2px;'>BranchEnd ${err.branchEndNumber}</div>` : '';
                 let linePointers = [];
@@ -1115,10 +1137,17 @@ async function batchCheckAllFiles() {
 
                 statHtml += `<div data-error-type="Структурные ошибки" style='color:#b00; margin-left:12px; margin-bottom:8px;'>${branchEndInfo}${lineInfo}<b>Строка ${lineLabel}:</b> ${err.msg}<br>`;
 
+                // Если есть сниппет фрагмента из оригинала (при обрыве или отсутствии блока)
+                if (err.snippet && err.snippet.length > 0) {
+                  statHtml += `<div style='font-size:12px; margin-top:4px; background:#fff8f8; border: 1px solid #f0c0c0; border-radius:4px; padding:6px 10px;'>` +
+                    `<span style='color:#b00; font-weight:bold;'>Оригинальный фрагмент (JP):</span>` +
+                    `<pre style='margin:4px 0 0 0; padding:0; display:block; font-size:12px; color:#222; font-family:monospace; white-space:pre-wrap;'>${escapeHtml(err.snippet.join('\n'))}</pre></div>`;
+                }
+
                 if (err.jpContext || err.ruContext) {
                   statHtml += createContextBlock('JP', err.jpContext, err.jp);
                   statHtml += createContextBlock('RU', err.ruContext, err.ru);
-                } else if (err.jp || err.ru) {
+                } else if (!err.snippet && (err.jp || err.ru)) {
                   statHtml += `<div style='font-size:13px; margin-top:2px;'><span style='color:#444;'>JP:</span> <pre style='display:inline; background:#f7f7f7; border-radius:4px; padding:2px 6px;'>${escapeHtml(err.jp)}</pre><br><span style='color:#444;'>RU:</span> <pre style='display:inline; background:#f7f7f7; border-radius:4px; padding:2px 6px;'>${escapeHtml(err.ru)}</pre></div>`;
                 }
 
@@ -1226,6 +1255,14 @@ async function batchCheckAllFiles() {
   }
 }
 
+function toggleUnmatchedFirstVisibility() {
+  const hideUnmatchedFilesBox = document.getElementById('batchHideUnmatchedFiles');
+  const container = document.getElementById('batchShowUnmatchedFirstContainer');
+  if (hideUnmatchedFilesBox && container) {
+    container.style.display = hideUnmatchedFilesBox.checked ? 'none' : '';
+  }
+}
+
 document.addEventListener('DOMContentLoaded', function () {
   document.getElementById('batchRuFolder').addEventListener('change', e => handleFolderInput(e, 'ru'));
   document.getElementById('batchJpFolder').addEventListener('change', e => handleFolderInput(e, 'jp'));
@@ -1243,6 +1280,20 @@ document.addEventListener('DOMContentLoaded', function () {
   }
   const hideUnmatchedFilesBox = document.getElementById('batchHideUnmatchedFiles');
   if (hideUnmatchedFilesBox) {
-    hideUnmatchedFilesBox.addEventListener('change', batchCheckAllFiles);
+    hideUnmatchedFilesBox.addEventListener('change', () => {
+      toggleUnmatchedFirstVisibility();
+      renderBatchFileList();
+      batchCheckAllFiles();
+    });
   }
+  const showUnmatchedFirstBox = document.getElementById('batchShowUnmatchedFirst');
+  if (showUnmatchedFirstBox) {
+    showUnmatchedFirstBox.addEventListener('change', () => {
+      renderBatchFileList();
+      batchCheckAllFiles();
+    });
+  }
+  
+  // Инициализируем видимость нового чекбокса при загрузке страницы
+  toggleUnmatchedFirstVisibility();
 });

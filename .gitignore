@@ -1,0 +1,11 @@
+# Windows system files
+desktop.ini
+Thumbs.db
+$RECYCLE.BIN/
+
+# macOS system files
+.DS_Store
+
+# Editor temp files
+*.tmp
+*.bak
