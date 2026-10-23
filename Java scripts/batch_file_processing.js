@@ -199,6 +199,8 @@ function createErrorTypeCheckboxes() {
     'Ошибка шаблона': true,  // fixAffectionTemplates
     'Ошибка компоновки (ShowTextAttributes)': true,  // частично поддерживается
     'Ошибка в ShowChoices': true,  // автоматически исправляется при генерации
+    'Ошибка в кавычках': true,  // исправление пропущенных открывающих/закрывающих кавычек
+    'Незакрытая кавычка': true,  // исправление непарных кавычек
     'Ошибка строки (длина > 50)': false,  // не поддерживается автоматически
     'Ошибка строки (японский текст)': false,  // не поддерживается автоматически
     'Ошибка кода (неправильные теги)': false,  // не поддерживается автоматически
@@ -209,7 +211,7 @@ function createErrorTypeCheckboxes() {
   
   // Создаём чекбоксы для каждого типа ошибки
   Object.keys(batchErrorTypes).forEach(errorType => {
-    const isSupported = Object.keys(supportedFixes).some(key => errorType.includes(key.split('(')[0].trim()));
+    const isSupported = Object.keys(supportedFixes).some(key => errorType.includes(key.split('(')[0].trim()) && supportedFixes[key]);
     const count = batchErrorTypes[errorType];
     
     const checkboxDiv = document.createElement('div');
@@ -450,6 +452,259 @@ function createFixControls() {
   // Добавляем элементы управления в начало контейнера (вверху)
   batchContent.insertBefore(fixControls, batchContent.firstChild);
 }
+
+// === ФУНКЦИЯ ДЛЯ ИСПРАВЛЕНИЯ ИНДЕКСОВ ВЕТОК ВЫБОРА When ===
+window.fixWhenBranchIndices = function (ruLines, jpLines) {
+  let fixedLines = ruLines.slice();
+  let fixesCount = 0;
+  const fixLog = [];
+
+  // 1. Построим соответствие с японским файлом (если он есть)
+  // Собираем структурные When из японского файла по (CommonEvent / Page)
+  const jpWhenIndices = [];
+  if (jpLines && jpLines.length > 0) {
+    let currentEvent = 'global';
+    let currentPage = 0;
+    let whenCountInPage = 0;
+    jpLines.forEach(line => {
+      const evMatch = line.match(/^\s*(CommonEvent\s+\d+|Event\s+\d+)/);
+      if (evMatch) { currentEvent = evMatch[1]; currentPage = 0; whenCountInPage = 0; }
+      const pageMatch = line.match(/^\s*Page\s+(\d+)/);
+      if (pageMatch) { currentPage = parseInt(pageMatch[1], 10); whenCountInPage = 0; }
+      const whenMatch = line.match(/^\s*When\(\[(\d+)/);
+      if (whenMatch) {
+        jpWhenIndices.push({
+          key: `${currentEvent}_${currentPage}_${whenCountInPage}`,
+          choiceIdx: parseInt(whenMatch[1], 10)
+        });
+        whenCountInPage++;
+      }
+    });
+  }
+
+  // 2. Сканируем русский файл со стеком ShowChoices
+  const choicesStack = [];
+  let currentEvent = 'global';
+  let currentPage = 0;
+  let whenCountInPage = 0;
+
+  for (let idx = 0; idx < fixedLines.length; idx++) {
+    const line = fixedLines[idx];
+
+    const evMatch = line.match(/^\s*(CommonEvent\s+\d+|Event\s+\d+)/);
+    if (evMatch) {
+      currentEvent = evMatch[1];
+      currentPage = 0;
+      whenCountInPage = 0;
+      choicesStack.length = 0;
+      continue;
+    }
+    const pageMatch = line.match(/^\s*Page\s+(\d+)/);
+    if (pageMatch) {
+      currentPage = parseInt(pageMatch[1], 10);
+      whenCountInPage = 0;
+      choicesStack.length = 0;
+      continue;
+    }
+
+    const indent = line.search(/\S/);
+    if (indent === -1) continue;
+
+    const scMatch = line.match(/^(\s*)ShowChoices\(\[\[(.*)\],\s*(\d+)\]\)/);
+    if (scMatch) {
+      while (choicesStack.length > 0 && choicesStack[choicesStack.length - 1].indent >= indent) {
+        choicesStack.pop();
+      }
+      const opts = scMatch[2].match(/"([^"\\]*(?:\\.[^"\\]*)*)"/g);
+      const optionsCount = opts ? opts.length : 0;
+      choicesStack.push({
+        indent: indent,
+        optionsCount: optionsCount,
+        expectedIndex: 0,
+        seenIndices: new Set()
+      });
+      continue;
+    }
+
+    const whenMatch = line.match(/^(\s*)When\(\[(?:(\d+)(,\s*[\s\S]*?)|([\s\S]*?))\]\)(.*)$/);
+    if (whenMatch) {
+      const leadingSpaces = whenMatch[1];
+      const hasDigitIdx = whenMatch[2] !== undefined;
+      const currentIdx = hasDigitIdx ? parseInt(whenMatch[2], 10) : -1;
+      const restParams = hasDigitIdx ? whenMatch[3] : (whenMatch[4] ? `, ${whenMatch[4].trim()}` : '');
+      const trailing = whenMatch[5] || '';
+
+      while (choicesStack.length > 0 && choicesStack[choicesStack.length - 1].indent > indent) {
+        choicesStack.pop();
+      }
+
+      let targetIdx = currentIdx;
+      let needsFix = false;
+      let fixReason = '';
+
+      const jpKey = `${currentEvent}_${currentPage}_${whenCountInPage}`;
+      const matchingJp = jpWhenIndices.find(j => j.key === jpKey);
+      whenCountInPage++;
+
+      if (choicesStack.length > 0 && choicesStack[choicesStack.length - 1].indent === indent) {
+        const currChoice = choicesStack[choicesStack.length - 1];
+        const stackExpected = currChoice.expectedIndex;
+
+        if (!hasDigitIdx) {
+          targetIdx = matchingJp ? matchingJp.choiceIdx : stackExpected;
+          needsFix = true;
+          fixReason = `пропущен числовой индекс ветки (присвоен ${targetIdx})`;
+        } else if (matchingJp && matchingJp.choiceIdx !== currentIdx) {
+          targetIdx = matchingJp.choiceIdx;
+          needsFix = true;
+          fixReason = `не совпадает с оригиналом (JP: ${matchingJp.choiceIdx}, RU: ${currentIdx})`;
+        } else if (currChoice.seenIndices.has(currentIdx) || currentIdx !== stackExpected) {
+          targetIdx = matchingJp ? matchingJp.choiceIdx : stackExpected;
+          if (targetIdx !== currentIdx) {
+            needsFix = true;
+            fixReason = `дубликат/сбой очередности ветки (ожидался индекс ${targetIdx}, было ${currentIdx})`;
+          }
+        }
+
+        currChoice.seenIndices.add(targetIdx);
+        currChoice.expectedIndex = targetIdx + 1;
+      } else if (!hasDigitIdx) {
+        targetIdx = matchingJp ? matchingJp.choiceIdx : 0;
+        needsFix = true;
+        fixReason = `пропущен числовой индекс ветки (присвоен ${targetIdx})`;
+      } else if (matchingJp && matchingJp.choiceIdx !== currentIdx) {
+        targetIdx = matchingJp.choiceIdx;
+        needsFix = true;
+        fixReason = `не совпадает с японским оригиналом (JP: ${matchingJp.choiceIdx}, RU: ${currentIdx})`;
+      }
+
+      if (needsFix) {
+        fixedLines[idx] = `${leadingSpaces}When([${targetIdx}${restParams}])${trailing}`;
+        fixesCount++;
+        fixLog.push({
+          line: idx + 1,
+          oldIdx: hasDigitIdx ? currentIdx : 'отсутствует',
+          newIdx: targetIdx,
+          reason: fixReason,
+          raw: fixedLines[idx]
+        });
+      }
+      continue;
+    }
+
+    const endMatch = line.match(/^(\s*)ChoicesEnd/);
+    if (endMatch) {
+      while (choicesStack.length > 0 && choicesStack[choicesStack.length - 1].indent >= indent) {
+        choicesStack.pop();
+      }
+      continue;
+    }
+
+    while (choicesStack.length > 0 && choicesStack[choicesStack.length - 1].indent > indent) {
+      choicesStack.pop();
+    }
+  }
+
+  return {
+    fixedLines: fixedLines,
+    fixesCount: fixesCount,
+    fixLog: fixLog
+  };
+};
+
+// === ФУНКЦИЯ ДЛЯ ИСПРАВЛЕНИЯ ОШИБОК В КАВЫЧКАХ ===
+window.fixQuoteErrors = function (ruLines, jpLines) {
+  let fixedLines = ruLines.slice();
+  let fixesCount = 0;
+  const fixLog = [];
+
+  let currentSequence = [];
+
+  const fixSequenceQuotes = (seq) => {
+    if (!seq || seq.length === 0) return;
+
+    let totalOpens = 0;
+    let totalCloses = 0;
+
+    for (let s = 0; s < seq.length; s++) {
+      const item = seq[s];
+      if (item.trailing.includes('##')) continue;
+
+      let content = item.text;
+      const cleanText = content.replace(/\\n<\\C\[\d+\].*?\\C\[0\]>/g, '').replace(/∾\n<∾∾C\[\d+\].*?∾∾C\[0\]>/g, '');
+      const opens = (cleanText.match(/«/g) || []).length;
+      const closes = (cleanText.match(/»/g) || []).length;
+
+      const availableOpens = totalOpens - totalCloses;
+      if (closes > opens && (closes - opens) > availableOpens) {
+        // Пропуск открывающей кавычки: закрывающая кавычка » без открывающей «
+        let fixedContent = content;
+
+        // Паттерн 1: Строка начинается прямо со слова + » (например, "Прорицательница»?")
+        if (/^([А-Яа-яЁёA-Za-z0-9_-]+)»/.test(fixedContent)) {
+          fixedContent = fixedContent.replace(/^([А-Яа-яЁёA-Za-z0-9_-]+)»/, '«$1»');
+        }
+        // Паттерн 2: Тег имени/префикс в начале, затем слово + »
+        else if (/^((?:\\n|∾∾\\n|∾\\n|<[\\∾]{0,2}C\[\d+\].*?[\\∾]{0,2}C\[0\]>)+)([А-Яа-яЁёA-Za-z0-9_-]+)»/.test(fixedContent)) {
+          fixedContent = fixedContent.replace(/^((?:\\n|∾∾\\n|∾\\n|<[\\∾]{0,2}C\[\d+\].*?[\\∾]{0,2}C\[0\]>)+)([А-Яа-яЁёA-Za-z0-9_-]+)»/, '$1«$2»');
+        }
+        // Паттерн 3: Прямая кавычка " в начале и » в конце ("Прорицательница»)
+        else if (/\"([А-Яа-яЁёA-Za-z0-9_-]+)»/.test(fixedContent)) {
+          fixedContent = fixedContent.replace(/\"([А-Яа-яЁёA-Za-z0-9_-]+)»/, '«$1»');
+        }
+        // Паттерн 4: Слово после пробела или скобки + » (например, "о профессии Прорицательница»?")
+        else if (/([\s(\[<])([А-Яа-яЁёA-Za-z0-9_-]+)»/.test(fixedContent)) {
+          fixedContent = fixedContent.replace(/([\s(\[<])([А-Яа-яЁёA-Za-z0-9_-]+)»/, '$1«$2»');
+        }
+
+        if (fixedContent !== content) {
+          fixedLines[item.idx] = item.prefix + fixedContent + item.suffix;
+          fixesCount++;
+          fixLog.push({
+            line: item.idx + 1,
+            old: content,
+            new: fixedContent,
+            reason: 'Добавлена пропущенная открывающая кавычка «'
+          });
+          totalOpens += 1;
+        }
+      }
+
+      totalOpens += opens;
+      totalCloses += closes;
+    }
+  };
+
+  for (let i = 0; i < fixedLines.length; i++) {
+    const line = fixedLines[i];
+    const m = line.match(/^(\s*ShowText\(\[")([\s\S]*?)("\]\)(.*))$/);
+    const staM = line.match(/^\s*ShowTextAttributes\(\[([\s\S]*?)\]\)(.*)/);
+
+    if (m) {
+      currentSequence.push({ idx: i, prefix: m[1], text: m[2], suffix: m[3], trailing: m[4] || '' });
+    } else if (staM) {
+      if (!staM[2] || !staM[2].includes('#+')) {
+        fixSequenceQuotes(currentSequence);
+        currentSequence = [];
+      }
+    } else {
+      if (currentSequence.length > 0) {
+        fixSequenceQuotes(currentSequence);
+        currentSequence = [];
+      }
+    }
+  }
+  if (currentSequence.length > 0) {
+    fixSequenceQuotes(currentSequence);
+    currentSequence = [];
+  }
+
+  return {
+    fixedLines: fixedLines,
+    fixesCount: fixesCount,
+    fixLog: fixLog
+  };
+};
 
 // Функция для исправления всех файлов с ошибками
 async function batchFixAllFiles() {
@@ -765,8 +1020,54 @@ async function batchFixAllFiles() {
         }
         } // Конец блока if (fixScriptErrors)
 
+        // === ЭТАП 2.3.2: Исправляем ОШИБКИ В ShowChoices (индексы веток When) ===
+        const fixShowChoicesErrors = Object.keys(batchFixOptions).some(key => key.includes('Ошибка в ShowChoices') && batchFixOptions[key]);
+        
+        if (fixShowChoicesErrors) {
+          addBatchReportLine(`  → ${fileName}: проверка веток выбора (When)...`, 'info');
+          const whenFixResult = window.fixWhenBranchIndices(currentFixedLines, jpLines);
+          if (whenFixResult.fixesCount > 0) {
+            currentFixedLines = whenFixResult.fixedLines.slice();
+            whenFixResult.fixLog.forEach(item => {
+              addBatchReportLine(`    ✓ Строка ${item.line}: исправлен индекс ветки When([${item.oldIdx}]) → When([${item.newIdx}]) (${item.reason})`, 'success');
+            });
+            addBatchReportLine(`    ✓ Исправлено ${whenFixResult.fixesCount} ошибок в ветках ShowChoices`, 'success');
 
-        // 2c. Запускаем фиксеры в цикле, пока они вносят изменения
+            // Синхронизируем глобальные переменные для последующих этапов
+            window.originalLines = currentFixedLines.slice();
+            window.fullRusLines = currentFixedLines.slice();
+            window.textBlocks = [];
+            window.extractTexts();
+            window.extractJapaneseTexts(window.fullJapLines);
+          } else {
+            addBatchReportLine(`    ✓ Ошибок в ветках ShowChoices не обнаружено`, 'success');
+          }
+        }
+
+        // === ЭТАП 2.3.3: Исправляем ОШИБКИ В КАВЫЧКАХ (пропуск открывающих кавычек) ===
+        const fixQuoteErrors = Object.keys(batchFixOptions).some(key => (key.includes('Ошибка в кавычках') || key.includes('Незакрытая кавычка')) && batchFixOptions[key]);
+        
+        if (fixQuoteErrors) {
+          addBatchReportLine(`  → ${fileName}: проверка кавычек...`, 'info');
+          const quoteFixResult = window.fixQuoteErrors(currentFixedLines, jpLines);
+          if (quoteFixResult.fixesCount > 0) {
+            currentFixedLines = quoteFixResult.fixedLines.slice();
+            quoteFixResult.fixLog.forEach(item => {
+              addBatchReportLine(`    ✓ Строка ${item.line}: ${item.reason} (${item.new})`, 'success');
+            });
+            addBatchReportLine(`    ✓ Исправлено ${quoteFixResult.fixesCount} ошибок в кавычках`, 'success');
+
+            // Синхронизируем глобальные переменные для последующих этапов
+            window.originalLines = currentFixedLines.slice();
+            window.fullRusLines = currentFixedLines.slice();
+            window.textBlocks = [];
+            window.extractTexts();
+            window.extractJapaneseTexts(window.fullJapLines);
+          } else {
+            addBatchReportLine(`    ✓ Ошибок в кавычках не обнаружено`, 'success');
+          }
+        }
+
         // Проверяем, выбран ли чекбокс для ошибок компоновки (включая длинные диалоги и теги)
         const fixCompositionErrorsForLoop = Object.keys(batchFixOptions).some(key => key.includes('Ошибка компоновки') && batchFixOptions[key]);
         

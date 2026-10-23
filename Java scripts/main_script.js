@@ -188,26 +188,137 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines, globalOffse
   const tempBlocks = [];
   const textCmdRegex = /^\s*ShowText\(\["([\s\S]*?)"\]\)(.*)/;
   const showChoicesRegex = /^\s*ShowChoices\(\[\[(.*)\],\s*(\d+)\]\)(.*)/;
-  const whenRegex = /^\s*When\(\[(\d+),\s*"(.*)"\]\)(.*)/;
+  const whenRegex = /^\s*When\(\[(\d+)(?:,\s*"([\s\S]*?)"|,\s*([\s\S]*?))?\]\)(.*)/;
   const otherRegex = /^\s*(\w+)\(\[([\s\S]*?)\]\)(.*)/;
   const nameValueRegex = /^\s*(\w+)\s*=\s*"(.*)"$/;
 
+  // Если передан японский файл, собираем индексы веток When для точной сверки
+  const jpWhenMap = new Map();
+  if (optionalJpLines && optionalJpLines.length > 0) {
+    let curJpEv = 'global';
+    let curJpPage = 0;
+    let jpWhenCount = 0;
+    optionalJpLines.forEach(l => {
+      const evM = l.match(/^\s*(CommonEvent\s+\d+|Event\s+\d+)/);
+      if (evM) { curJpEv = evM[1]; curJpPage = 0; jpWhenCount = 0; }
+      const pM = l.match(/^\s*Page\s+(\d+)/);
+      if (pM) { curJpPage = parseInt(pM[1], 10); jpWhenCount = 0; }
+      const wM = l.match(/^\s*When\(\[(\d+)/);
+      if (wM) {
+        jpWhenMap.set(`${curJpEv}_${curJpPage}_${jpWhenCount}`, parseInt(wM[1], 10));
+        jpWhenCount++;
+      }
+    });
+  }
+
+  const choicesStack = [];
+  let currentEvent = 'global';
+  let currentPage = 0;
+  let whenCountInPage = 0;
+
+  // --- Проверка кавычек (пропуск открывающих «, незакрытые «, непарные ") ---
+  let currentDialogueSequence = [];
+  const flushDialogueQuotes = (seq) => {
+    if (!seq || seq.length === 0) return;
+    let totalOpens = 0;
+    let totalCloses = 0;
+    let lastOpenIdx = -1;
+    const hasSeqIgnoreMarker = seq.some(item => item.trailing.includes('##'));
+
+    for (let s = 0; s < seq.length; s++) {
+      const item = seq[s];
+      const hasItemIgnoreMarker = item.trailing.includes('##');
+      const cleanText = item.text.replace(/\\n<\\C\[\d+\].*?\\C\[0\]>/g, '').replace(/∾\n<∾∾C\[\d+\].*?∾∾C\[0\]>/g, '');
+      const opens = (cleanText.match(/«/g) || []).length;
+      const closes = (cleanText.match(/»/g) || []).length;
+
+      if (opens > 0) lastOpenIdx = item.idx;
+
+      const availableOpens = totalOpens - totalCloses;
+      if (closes > opens && (closes - opens) > availableOpens) {
+        if (!hasItemIgnoreMarker && !hasSeqIgnoreMarker) {
+          errors.push({
+            label: getLineLabel(item.idx),
+            type: 'Ошибка в кавычках',
+            reason: 'Пропуск открывающей кавычки: закрывающая кавычка » без предшествующей открывающей «.',
+            line: item.idx,
+            msg: 'Пропуск открывающей кавычки.',
+            isFixableQuote: true,
+            isMissingOpenQuote: true
+          });
+        }
+      }
+
+      // Непарные двойные кавычки "
+      const straightQuotes = (cleanText.replace(/\\"/g, '').match(/"/g) || []).length;
+      if (straightQuotes % 2 !== 0 && !hasItemIgnoreMarker && !hasSeqIgnoreMarker) {
+        errors.push({
+          label: getLineLabel(item.idx),
+          type: 'Ошибка в кавычках',
+          reason: 'Незакрытая кавычка: нечётное количество " в строке.',
+          line: item.idx,
+          msg: 'Нечётное количество " в строке.',
+          isFixableQuote: true,
+          isUnclosedQuote: true
+        });
+      }
+
+      totalOpens += opens;
+      totalCloses += closes;
+    }
+
+    if (totalOpens > totalCloses && lastOpenIdx !== -1 && !hasSeqIgnoreMarker) {
+      if (seq.length <= 4) {
+        errors.push({
+          label: getLineLabel(lastOpenIdx),
+          type: 'Ошибка в кавычках',
+          reason: 'Незакрытая кавычка: открывающая кавычка « без закрывающей ».',
+          line: lastOpenIdx,
+          msg: 'Незакрытая кавычка «.',
+          isFixableQuote: true,
+          isUnclosedQuote: true
+        });
+      }
+    }
+  };
+
   ruLines.forEach((line, idx) => {
     if (/^\s*Display Name\s*=/.test(line)) return;
+
+    const evMatch = line.match(/^\s*(CommonEvent\s+\d+|Event\s+\d+)/);
+    if (evMatch) {
+      flushDialogueQuotes(currentDialogueSequence);
+      currentDialogueSequence = [];
+      currentEvent = evMatch[1];
+      currentPage = 0;
+      whenCountInPage = 0;
+      choicesStack.length = 0;
+    }
+    const pageMatch = line.match(/^\s*Page\s+(\d+)/);
+    if (pageMatch) {
+      flushDialogueQuotes(currentDialogueSequence);
+      currentDialogueSequence = [];
+      currentPage = parseInt(pageMatch[1], 10);
+      whenCountInPage = 0;
+      choicesStack.length = 0;
+    }
 
     let match;
     if ((match = line.match(textCmdRegex))) {
       const textContent = match[1];
       const trailingContent = match[2] || '';
       const hasIgnoreMarker = /##/.test(trailingContent);
+      currentDialogueSequence.push({ idx: idx, text: textContent, line: line, trailing: trailingContent });
       tempBlocks.push({ text: textContent, type: 'ShowText', originalIdx: idx, line: line, hasIgnoreMarker: hasIgnoreMarker, trailingContent: trailingContent });
     } else if ((match = line.match(showChoicesRegex))) {
+      flushDialogueQuotes(currentDialogueSequence);
+      currentDialogueSequence = [];
       let choicesText = match[1];
+      const scTrailing = match[3] || '';
+      const scHasIgnoreMarker = /##/.test(scTrailing);
       
       // Проверка на двойные кавычки в ShowChoices
       const validChoicesPattern = /^\s*"([^"\\]|\\.)*"\s*(,\s*"([^"\\]|\\.)*"\s*)*$/;
-      const scTrailing = match[3] || '';
-      const scHasIgnoreMarker = /##/.test(scTrailing);
       if (choicesText.trim() !== '' && !validChoicesPattern.test(choicesText) && !scHasIgnoreMarker) {
         errors.push({
           label: getLineLabel(idx),
@@ -224,24 +335,175 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines, globalOffse
       } else {
         choices = choicesText.split(/\s*\|\s*/).map(c => c.replace(/^"|"$/g, ''));
       }
+
+      // Отслеживание стека выбора для проверки порядка веток When
+      const scIndent = line.search(/\S/);
+      while (choicesStack.length > 0 && choicesStack[choicesStack.length - 1].indent >= scIndent) {
+        choicesStack.pop();
+      }
+      choicesStack.push({
+        indent: scIndent,
+        optionsCount: choices.length,
+        expectedIndex: 0,
+        seenIndices: new Set()
+      });
+
       tempBlocks.push({ text: choices.join(' | '), type: 'ShowChoices', originalIdx: idx, choices: choices, defaultChoice: parseInt(match[2]), line: line, trailingContent: scTrailing, hasIgnoreMarker: scHasIgnoreMarker });
     } else if ((match = line.match(whenRegex))) {
+      flushDialogueQuotes(currentDialogueSequence);
+      currentDialogueSequence = [];
+      const choiceIndex = parseInt(match[1], 10);
+      const whenContent = match[2] !== undefined ? match[2] : (match[3] !== undefined ? match[3] : '');
+      const whenTrailing = match[4] || '';
+      const whenHasIgnoreMarker = /##/.test(whenTrailing);
+
+      const whenIndent = line.search(/\S/);
+      while (choicesStack.length > 0 && choicesStack[choicesStack.length - 1].indent > whenIndent) {
+        choicesStack.pop();
+      }
+
+      const jpKey = `${currentEvent}_${currentPage}_${whenCountInPage}`;
+      const jpChoiceIdx = jpWhenMap.get(jpKey);
+      whenCountInPage++;
+
+      if (!whenHasIgnoreMarker) {
+        if (choicesStack.length > 0 && choicesStack[choicesStack.length - 1].indent === whenIndent) {
+          const currChoice = choicesStack[choicesStack.length - 1];
+          const expectedIdx = currChoice.expectedIndex;
+
+          if (jpChoiceIdx !== undefined && jpChoiceIdx !== choiceIndex) {
+            errors.push({
+              label: getLineLabel(idx),
+              type: 'Ошибка в ShowChoices',
+              reason: `Индекс ветки выбора When([${choiceIndex}]) не совпадает с оригиналом (JP: [${jpChoiceIdx}]).`,
+              line: idx,
+              msg: 'Несовпадение индекса ветки выбора с японским оригиналом.',
+              expectedIndex: jpChoiceIdx,
+              isFixableWhen: true
+            });
+          } else if (currChoice.seenIndices.has(choiceIndex)) {
+            errors.push({
+              label: getLineLabel(idx),
+              type: 'Ошибка в ShowChoices',
+              reason: `Дубликат индекса ветки выбора When([${choiceIndex}]). Ожидался индекс [${expectedIdx}].`,
+              line: idx,
+              msg: 'Дубликат индекса ветки выбора.',
+              expectedIndex: expectedIdx,
+              isFixableWhen: true
+            });
+          } else if (choiceIndex !== expectedIdx) {
+            errors.push({
+              label: getLineLabel(idx),
+              type: 'Ошибка в ShowChoices',
+              reason: `Неверный индекс ветки выбора When([${choiceIndex}]): ожидался [${expectedIdx}].`,
+              line: idx,
+              msg: 'Неверный индекс ветки выбора.',
+              expectedIndex: expectedIdx,
+              isFixableWhen: true
+            });
+          } else if (currChoice.optionsCount > 0 && choiceIndex >= currChoice.optionsCount) {
+            errors.push({
+              label: getLineLabel(idx),
+              type: 'Ошибка в ShowChoices',
+              reason: `Индекс ветки выбора When([${choiceIndex}]) выходит за границы списка вариантов (всего ${currChoice.optionsCount}).`,
+              line: idx,
+              msg: 'Индекс ветки выходит за границы.',
+              expectedIndex: expectedIdx,
+              isFixableWhen: true
+            });
+          }
+
+          currChoice.seenIndices.add(choiceIndex);
+          currChoice.expectedIndex = Math.max(currChoice.expectedIndex + 1, choiceIndex + 1);
+        } else if (jpChoiceIdx !== undefined && jpChoiceIdx !== choiceIndex) {
+          errors.push({
+            label: getLineLabel(idx),
+            type: 'Ошибка в ShowChoices',
+            reason: `Индекс ветки выбора When([${choiceIndex}]) не совпадает с оригиналом (JP: [${jpChoiceIdx}]).`,
+            line: idx,
+            msg: 'Несовпадение индекса ветки выбора с японским оригиналом.',
+            expectedIndex: jpChoiceIdx,
+            isFixableWhen: true
+          });
+        }
+      }
+
+      tempBlocks.push({ text: whenContent, type: 'When', originalIdx: idx, choiceIndex: choiceIndex, line: line, trailingContent: whenTrailing, hasIgnoreMarker: whenHasIgnoreMarker });
+    } else if ((match = line.match(/^\s*When\(\[(?!\d+)(?:\"([\s\S]*?)\"|([\s\S]*?))?\]\)(.*)/))) {
+      flushDialogueQuotes(currentDialogueSequence);
+      currentDialogueSequence = [];
+      const whenContent = match[1] !== undefined ? match[1] : (match[2] !== undefined ? match[2] : '');
       const whenTrailing = match[3] || '';
       const whenHasIgnoreMarker = /##/.test(whenTrailing);
-      tempBlocks.push({ text: match[2], type: 'When', originalIdx: idx, choiceIndex: parseInt(match[1]), line: line, trailingContent: whenTrailing, hasIgnoreMarker: whenHasIgnoreMarker });
+
+      const whenIndent = line.search(/\S/);
+      while (choicesStack.length > 0 && choicesStack[choicesStack.length - 1].indent > whenIndent) {
+        choicesStack.pop();
+      }
+
+      const jpKey = `${currentEvent}_${currentPage}_${whenCountInPage}`;
+      const jpChoiceIdx = jpWhenMap.get(jpKey);
+      whenCountInPage++;
+
+      let expectedIdx = 0;
+      if (choicesStack.length > 0 && choicesStack[choicesStack.length - 1].indent === whenIndent) {
+        const currChoice = choicesStack[choicesStack.length - 1];
+        expectedIdx = currChoice.expectedIndex;
+        currChoice.seenIndices.add(expectedIdx);
+        currChoice.expectedIndex = expectedIdx + 1;
+      }
+      const targetIdx = jpChoiceIdx !== undefined ? jpChoiceIdx : expectedIdx;
+
+      if (!whenHasIgnoreMarker) {
+        errors.push({
+          label: getLineLabel(idx),
+          type: 'Ошибка в ShowChoices',
+          reason: `В команде ветки When пропущен числовой индекс (ожидался индекс [${targetIdx}]).`,
+          line: idx,
+          msg: 'Пропущен числовой индекс ветки выбора When.',
+          expectedIndex: targetIdx,
+          isFixableWhen: true
+        });
+      }
+
+      tempBlocks.push({ text: whenContent, type: 'When', originalIdx: idx, choiceIndex: targetIdx, line: line, trailingContent: whenTrailing, hasIgnoreMarker: whenHasIgnoreMarker });
+    } else if (/^\s*ChoicesEnd(?:\(\[\]\)|\(\))?/.test(line)) {
+      flushDialogueQuotes(currentDialogueSequence);
+      currentDialogueSequence = [];
+      const endIndent = line.search(/\S/);
+      while (choicesStack.length > 0 && choicesStack[choicesStack.length - 1].indent >= endIndent) {
+        choicesStack.pop();
+      }
     } else if ((match = line.match(otherRegex))) {
       const commandType = match[1];
       const commandText = match[2];
       const trailingContent = match[3] || '';
+
+      if (commandType === 'ShowTextAttributes' && /#\+/.test(trailingContent)) {
+        // диалог продолжается в следующем окне
+      } else {
+        flushDialogueQuotes(currentDialogueSequence);
+        currentDialogueSequence = [];
+      }
+
       const translatableCommands = ['Script', 'ScriptMore', 'Label', 'JumpToLabel', 'Name', 'ShowTextAttributes', 'ChangeActorName', 'ConditionalBranch', 'Empty'];
       const technicalCommands = ['PlaySE', 'PlayBGM', 'PlayME', 'TransferPlayer', 'ChangeGold', 'ChangeItems', 'ChangeWeapons', 'ChangeArmors', 'ControlSwitches', 'ControlVariables', 'ControlSelfSwitch'];
       if (translatableCommands.includes(commandType)) {
         tempBlocks.push({ text: commandText, type: commandType, originalIdx: idx, line: line, trailingContent: trailingContent });
       } else if (technicalCommands.includes(commandType)) {
         // Извлекаем технические команды для проверки соответствия японскому файлу
-        tempBlocks.push({ text: commandText, type: commandType, originalIdx: idx, line: line, trailingContent: trailingContent, isTechnical: true });
+        tempBlocks.push({ text: commandText, type: commandType, originalIdx: idx, line: line, trailingContent: trailingContent, isTechnical: true, event: currentEvent, page: currentPage });
+      }
+
+      const otherIndent = line.search(/\S/);
+      if (otherIndent !== -1) {
+        while (choicesStack.length > 0 && choicesStack[choicesStack.length - 1].indent > otherIndent) {
+          choicesStack.pop();
+        }
       }
     } else if ((match = line.match(nameValueRegex))) {
+      flushDialogueQuotes(currentDialogueSequence);
+      currentDialogueSequence = [];
       const commandType = match[1];
       const commandText = match[2];
       if (commandType === 'Name') {
@@ -249,6 +511,9 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines, globalOffse
       }
     }
   });
+
+  flushDialogueQuotes(currentDialogueSequence);
+  currentDialogueSequence = [];
 
   const textBlocks = [];
   for (let i = 0; i < tempBlocks.length; i++) {
@@ -831,68 +1096,89 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines, globalOffse
   // =================================================================
   // START: Проверка технических команд с японским файлом
   // =================================================================
-  console.log('[DEBUG TECHNICAL] Начало проверки технических команд');
-  console.log('[DEBUG TECHNICAL] optionalJpLines:', optionalJpLines ? optionalJpLines.length : 'null');
-  
   if (optionalJpLines && optionalJpLines.length > 0) {
-    // Парсим японские технические команды
+    // Вспомогательная нормализация атрибутов в структурах RPG::ClassName(@prop=val, ...)
+    // Устраняет ложные ошибки из-за разного порядка параметров (@volume=80, @pitch=100 vs @pitch=100, @volume=80)
+    const normalizeTechnicalCommand = (str) => {
+      if (!str) return str;
+      return str.replace(/(RPG::\w+\()([^)]+)(\))/g, (match, prefix, body, suffix) => {
+        const parts = [];
+        const paramRegex = /(@\w+)\s*=\s*("(?:\\.|[^"\\])*"|[^,]+)/g;
+        let m;
+        while ((m = paramRegex.exec(body)) !== null) {
+          parts.push({ key: m[1], full: `${m[1]}=${m[2].trim()}` });
+        }
+        if (parts.length > 0) {
+          parts.sort((a, b) => a.key.localeCompare(b.key));
+          return prefix + parts.map(p => p.full).join(', ') + suffix;
+        }
+        return match;
+      });
+    };
+
+    // Парсим японские технические команды с привязкой к событию и странице
     const jpTempBlocks = [];
     const jpOtherRegex = /^\s*(\w+)\(\[([\s\S]*?)\]\)/;
-    
+    let curJpEv = 'global';
+    let curJpPage = 0;
+
     optionalJpLines.forEach((line, idx) => {
       if (/^\s*Display Name\s*=/.test(line)) return;
-      
+
+      const evM = line.match(/^\s*(CommonEvent\s+\d+|Event\s+\d+)/);
+      if (evM) { curJpEv = evM[1]; curJpPage = 0; }
+      const pM = line.match(/^\s*Page\s+(\d+)/);
+      if (pM) { curJpPage = parseInt(pM[1], 10); }
+
       let match;
       if ((match = line.match(jpOtherRegex))) {
         const commandType = match[1];
         const commandText = match[2];
         const technicalCommands = ['ConditionalBranch', 'PlaySE', 'PlayBGM', 'PlayME', 'TransferPlayer', 'ChangeGold', 'ChangeItems', 'ChangeWeapons', 'ChangeArmors', 'ControlSwitches', 'ControlVariables', 'ControlSelfSwitch'];
         if (technicalCommands.includes(commandType)) {
-          jpTempBlocks.push({ text: commandText, type: commandType, originalIdx: idx, isTechnical: true });
-          console.log(`[DEBUG TECHNICAL] JP: ${commandType} at idx ${idx}: ${commandText}`);
+          jpTempBlocks.push({ text: commandText, type: commandType, originalIdx: idx, isTechnical: true, event: curJpEv, page: curJpPage });
         }
       }
     });
 
-    console.log(`[DEBUG TECHNICAL] Найдено JP технических команд: ${jpTempBlocks.length}`);
-
-    // Сопоставляем русские и японские технические команды по типу и позиции
+    // Сопоставляем русские и японские технические команды по типу, событию/странице и позиции
     const ruTechnicalBlocks = tempBlocks.filter(b => b.isTechnical);
     const jpTechnicalBlocks = jpTempBlocks.filter(b => b.isTechnical);
-    
-    console.log(`[DEBUG TECHNICAL] Найдено RU технических команд: ${ruTechnicalBlocks.length}`);
-    
+
     // Отслеживаем использованные JP блоки
     const usedJpIndices = new Set();
-    
+
     ruTechnicalBlocks.forEach((ruBlock) => {
-      console.log(`[DEBUG TECHNICAL] RU: ${ruBlock.type} at idx ${ruBlock.originalIdx}: ${ruBlock.text}`);
-      // Последовательное сопоставление по порядку появления команд одного типа
-      const jpBlock = jpTechnicalBlocks.find((jp) => 
-        jp.type === ruBlock.type && 
-        !usedJpIndices.has(jp.originalIdx) // Ещё не использован
+      // Сначала ищем соответствующую команду в том же событии и странице
+      let jpBlock = jpTechnicalBlocks.find((jp) =>
+        jp.type === ruBlock.type &&
+        jp.event === ruBlock.event &&
+        jp.page === ruBlock.page &&
+        !usedJpIndices.has(jp.originalIdx)
       );
 
+      // Если в рамках страницы не найдено, ищем по порядку типа
+      if (!jpBlock) {
+        jpBlock = jpTechnicalBlocks.find((jp) =>
+          jp.type === ruBlock.type &&
+          !usedJpIndices.has(jp.originalIdx)
+        );
+      }
+
       if (jpBlock) {
-        console.log(`[DEBUG TECHNICAL] Сопоставлен с JP at idx ${jpBlock.originalIdx}: ${jpBlock.text}`);
         usedJpIndices.add(jpBlock.originalIdx); // Помечаем как использованный
-        // Сравниваем значения
-        if (ruBlock.text !== jpBlock.text) {
-          console.log(`[DEBUG TECHNICAL] ОШИБКА: значения не совпадают!`);
+        // Сравниваем значения с учётом нормализации параметров
+        const normRu = normalizeTechnicalCommand(ruBlock.text);
+        const normJp = normalizeTechnicalCommand(jpBlock.text);
+        if (normRu !== normJp) {
           errors.push({
             label: getLineLabel(ruBlock.originalIdx),
             type: 'Ошибка технической команды',
             reason: `Значение команды ${ruBlock.type} не совпадает с японским файлом. RU: "${ruBlock.text}", JP: "${jpBlock.text}"`
           });
-        } else {
-          console.log(`[DEBUG TECHNICAL] Значения совпадают`);
         }
-      } else {
-        console.log(`[DEBUG TECHNICAL] Не найден соответствующий JP блок для ${ruBlock.type} at idx ${ruBlock.originalIdx}`);
       }
     });
-  } else {
-    console.log('[DEBUG TECHNICAL] optionalJpLines отсутствует или пуст');
   }
   // =================================================================
   // END: Проверка технических команд с японским файлом

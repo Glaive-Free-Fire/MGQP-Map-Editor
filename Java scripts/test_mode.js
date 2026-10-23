@@ -148,14 +148,15 @@ document.addEventListener('DOMContentLoaded', function () {
             break;
           case 'When':
             // When имеет формат: [номер_выбора, "текст_условия"]
-            // Заменяем текст условия, сохраняя номер выбора
+            // Заменяем текст условия, используя choiceIndex блока если задан
             let whenText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+            const targetChoiceIdx = (block.choiceIndex !== undefined && block.choiceIndex !== null) ? block.choiceIndex : '$1';
             // Определяем, были ли кавычки в оригинале
             const whenHasQuotes = /\[(\d+),\s*"(.*)"\]/.test(originalLine);
             if (whenHasQuotes) {
-              formattedLine = originalLine.replace(/\[(\d+),\s*"(.*)"\]/, `[$1, "${whenText}"]`);
+              formattedLine = originalLine.replace(/\[(\d+),\s*"(.*)"\]/, `[${targetChoiceIdx}, "${whenText}"]`);
             } else {
-              formattedLine = originalLine.replace(/\[(\d+),\s*(.*)\]/, `[$1, ${whenText}]`);
+              formattedLine = originalLine.replace(/\[(\d+),\s*(.*)\]/, `[${targetChoiceIdx}, ${whenText}]`);
             }
             break;
           default:
@@ -575,6 +576,29 @@ window.checkMapStructureMatch = function (jpContent, ruContent) {
             continue;
           }
 
+          // 3.1 Сравниваем ветки выбора (When) по их индексу
+          if (jpCmd === 'When' && ruCmd === 'When') {
+            const jpWhenMatch = jpLine.raw.match(/^\s*When\(\[(\d+)/);
+            const ruWhenMatch = ruLine.raw.match(/^\s*When\(\[(\d+)/);
+            const ruNoIdx = !ruWhenMatch && /^\s*When\(\[/.test(ruLine.raw);
+            if (jpWhenMatch && (ruNoIdx || (ruWhenMatch && jpWhenMatch[1] !== ruWhenMatch[1])) && !ruLine.raw.includes('##')) {
+              const currentRuDesc = ruWhenMatch ? `<b>When([${ruWhenMatch[1]}, ...])</b>` : `<b>${ruLine.raw.trim()}</b> (пропущен числовой индекс)`;
+              issues.push({
+                line: ruLine.lineNum + 1,
+                msg: `<b>Несовпадение индекса ветки выбора:</b> в оригинале <b>When([${jpWhenMatch[1]}, ...])</b>, а в переводе ${currentRuDesc}.<br><small style="color:#666;">Индекс ветки должен соответствовать варианту выбора в ShowChoices и японскому оригиналу.</small>`,
+                jp: jpLine.raw,
+                ru: ruLine.raw,
+                jpLineNum: jpLine.lineNum,
+                ruLineNum: ruLine.lineNum,
+                jpContext: { before: jpPage[i - 1]?.raw, after: jpPage[i + 1]?.raw },
+                ruContext: { before: ruPage[j - 1]?.raw, after: ruPage[j + 1]?.raw },
+                errorKind: 'when_index_mismatch'
+              });
+            }
+            i++; j++;
+            continue;
+          }
+
           // 4. Пропускаем строки с ## (игнор ошибок)
           if (ruPage[j] && ruPage[j].raw.trim().endsWith('##')) {
             const ruCmdIgnored = ruPage[j].command;
@@ -921,9 +945,10 @@ setTimeout(function () {
             break;
           case 'When':
             let whenText = block.text.replace(/∾/g, '\\').replace(/\n/g, '\\n');
+            const targetChoiceIdx = (block.choiceIndex !== undefined && block.choiceIndex !== null) ? block.choiceIndex : '$1';
             const whenHasQuotes = /\[(\d+),\s*"(.*)"\]/.test(currentLineContent);
-            if (whenHasQuotes) { formattedLine = currentLineContent.replace(/\[(\d+),\s*"(.*)"\]/, `[$1, "${whenText}"]`); }
-            else { formattedLine = currentLineContent.replace(/\[(\d+),\s*(.*)\]/, `[$1, ${whenText}]`); }
+            if (whenHasQuotes) { formattedLine = currentLineContent.replace(/\[(\d+),\s*"(.*)"\]/, `[${targetChoiceIdx}, "${whenText}"]`); }
+            else { formattedLine = currentLineContent.replace(/\[(\d+),\s*(.*)\]/, `[${targetChoiceIdx}, ${whenText}]`); }
             break;
           default:
             formattedLine = currentLineContent;
@@ -3055,7 +3080,7 @@ setTimeout(function () {
         }
 
         // Обработка незакрытых кавычек
-        if (err.type === 'Незакрытая кавычка') {
+        if (err.type === 'Незакрытая кавычка' || err.type === 'Ошибка в кавычках') {
           if (blockIndex !== undefined) window.allErrorIndices.add(blockIndex);
           unclosedQuoteCount++;
         }
@@ -3107,7 +3132,7 @@ setTimeout(function () {
           if (portraitDesyncErrorCount > 0) titleMsg += `\n + Отвязок портрета: ${portraitDesyncErrorCount}`;
           if (showChoicesErrorCount > 0) titleMsg += `\n + Ошибок в ShowChoices: ${showChoicesErrorCount}`;
 
-          if (!lamp.title.includes('Ошибок скрипта') && !lamp.title.includes('Ошибок отступов') && !lamp.title.includes('Ошибок ID предметов') && !lamp.title.includes('Разорванных тегов') && !lamp.title.includes('Лишних переносов') && !lamp.title.includes('Ошибок шаблонов') && !lamp.title.includes('Ошибок рассинхрона имён') && !lamp.title.includes('Структурных ошибок') && !lamp.title.includes('Незакрытых кавычек') && !lamp.title.includes('Слипание строк') && !lamp.title.includes('Дубликатов строк (#+)') && !lamp.title.includes('Скобки 【 】 в имени') && !lamp.title.includes('Отвязок портрета') && !lamp.title.includes('Ошибок в ShowChoices')) {
+          if (!lamp.title.includes('Ошибок скрипта') && !lamp.title.includes('Ошибок отступов') && !lamp.title.includes('Ошибок ID предметов') && !lamp.title.includes('Разорванных тегов') && !lamp.title.includes('Лишних переносов') && !lamp.title.includes('Ошибок шаблонов') && !lamp.title.includes('Ошибок рассинхрона имён') && !lamp.title.includes('Структурных ошибок') && !lamp.title.includes('Незакрытых кавычек') && !lamp.title.includes('Ошибок в кавычках') && !lamp.title.includes('Слипание строк') && !lamp.title.includes('Дубликатов строк (#+)') && !lamp.title.includes('Скобки 【 】 в имени') && !lamp.title.includes('Отвязок портрета') && !lamp.title.includes('Ошибок в ShowChoices')) {
             lamp.title += titleMsg;
           }
         }
@@ -3125,7 +3150,7 @@ setTimeout(function () {
           let extraHtml = '<div class="auto-detect-errors" style="margin-top:10px; border-top:1px solid #ccc; padding-top:5px;">';
           extraHtml += '<b>Обнаруженные ошибки (Live):</b><ul style="color:#d00; margin-top:4px;">';
           allErrors.forEach(err => {
-            if (err.type === 'Ошибка скрипта' || err.isFixableIndent || err.isItemIdMismatchLine || err.type === 'Ошибка тега цвета' || err.type === 'Лишний перенос' || err.type === 'Ошибка шаблона' || err.type === 'Рассинхронизация' || err.type === 'Логическая ошибка' || err.type === 'Структурная ошибка' || err.type === 'Слипание строк' || err.type === 'Незакрытая кавычка' || err.type === 'Дубликат строки' || err.type === 'Ошибка имени' || err.type === 'Отвязка портрета' || err.type === 'Ошибка в ShowChoices') {
+            if (err.type === 'Ошибка скрипта' || err.isFixableIndent || err.isItemIdMismatchLine || err.type === 'Ошибка тега цвета' || err.type === 'Лишний перенос' || err.type === 'Ошибка шаблона' || err.type === 'Рассинхронизация' || err.type === 'Логическая ошибка' || err.type === 'Структурная ошибка' || err.type === 'Слипание строк' || err.type === 'Незакрытая кавычка' || err.type === 'Ошибка в кавычках' || err.type === 'Дубликат строки' || err.type === 'Ошибка имени' || err.type === 'Отвязка портрета' || err.type === 'Ошибка в ShowChoices') {
               // Если это ошибка скрипта, проверяем на пустой msg
               const displayMsg = err.msg || err.reason || 'Неизвестная ошибка';
               const offset = window.globalLineOffset || 0;
