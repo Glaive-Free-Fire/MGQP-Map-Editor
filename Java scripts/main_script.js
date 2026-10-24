@@ -49,7 +49,41 @@ window.getVisibleTextMetrics = function (text) {
     .replace(/[\\∾]/g, '')
     .replace(/∿/g, '')
     .trim();
-  return { text: visibleText, length: visibleText.length };
+  // Длинное тире (—, U+2014) и горизонтальная черта (―, U+2015) считаются за 2 символа
+  const emDashCount = (visibleText.match(/[—―]/g) || []).length;
+  return { text: visibleText, length: visibleText.length + emDashCount };
+};
+
+// --- Определение наличия портрета для блока диалога ---
+window.hasPortraitForBlock = function (block, textBlocks, index) {
+  const blocks = textBlocks || (typeof window !== 'undefined' ? window.textBlocks : null);
+  if (!blocks || !block) return false;
+  let idx = index;
+  if (idx === undefined || idx === null || idx < 0) {
+    idx = blocks.indexOf(block);
+  }
+  if (idx <= 0) return false;
+
+  for (let j = idx - 1; j >= 0; j--) {
+    const prev = blocks[j];
+    if (!prev || prev.isDeleted || prev.type === 'EmptyLine' || prev.type === 'Comment') continue;
+    if (prev.type === 'ShowText') {
+      continue;
+    }
+    if (prev.type === 'ShowTextAttributes') {
+      const t = prev.text || prev.line || '';
+      const match = t.match(/\[?\s*(?:"([^"]*)"|'([^']*)'|([a-zA-Z0-9_]+))/);
+      if (match) {
+        const faceName = (match[1] !== undefined ? match[1] : (match[2] !== undefined ? match[2] : match[3])).trim();
+        if (faceName && faceName.toLowerCase() !== 'nil' && faceName !== '""' && faceName !== "''") {
+          return true;
+        }
+      }
+      return false;
+    }
+    break;
+  }
+  return false;
 };
 
 // --- Подсчёт символов и управление кнопками ---
@@ -59,8 +93,9 @@ window.updateAllForBlock = function (block, textarea, plusBtn, minusBtn, counter
     const info = window.getGameTextInfo(text);
     const metrics = window.getVisibleTextMetrics(text);
     const len = metrics.length;
+    const charLimit = (window.hasPortraitForBlock && window.hasPortraitForBlock(block, textBlocks)) ? 51 : 60;
     // Логика для кнопок +/- остаётся
-    plusBtn.style.display = (len > 50) ? '' : 'none';
+    plusBtn.style.display = (len > charLimit) ? '' : 'none';
     minusBtn.style.display = (text.trim() === '' && textBlocks.length > 1) ? '' : 'none';
     // Логика подсчёта символов и выделения остаётся
     let selStart = textarea.selectionStart;
@@ -76,10 +111,11 @@ window.updateAllForBlock = function (block, textarea, plusBtn, minusBtn, counter
         if (newer === cleanSel) break;
         cleanSel = newer;
       }
-      selGame = cleanSel
+      const selVisible = cleanSel
         .replace(/[\\∾]/g, '')
-        .replace(/∿/g, '')
-        .length;
+        .replace(/∿/g, '');
+      const emDashes = (selVisible.match(/[—―]/g) || []).length;
+      selGame = selVisible.length + emDashes;
     } else if (sel > 0 && selEnd > nameLen && selStart < nameLen) {
       const selected = info.rawGameText.substring(0, selEnd - nameLen);
       let cleanSel = selected.replace(/<[\\∾]{2}C\[\d+\](?:.*?)<[\\∾]{2}C\[0\]>/g, '').replace(/<[\\∾]{2}C\[\d+\].*?[\\∾]{2}C\[0\]>/g, '');
@@ -88,16 +124,17 @@ window.updateAllForBlock = function (block, textarea, plusBtn, minusBtn, counter
         if (newer === cleanSel) break;
         cleanSel = newer;
       }
-      selGame = cleanSel
+      const selVisible = cleanSel
         .replace(/[\\∾]/g, '')
-        .replace(/∿/g, '')
-        .length;
+        .replace(/∿/g, '');
+      const emDashes = (selVisible.match(/[—―]/g) || []).length;
+      selGame = selVisible.length + emDashes;
       if (selGame < 0) selGame = 0;
     }
     if (selGame > 0) {
-      counter.textContent = `Игровых символов: ${len} (выделено: ${selGame})`;
+      counter.textContent = `Игровых символов: ${len}/${charLimit} (выделено: ${selGame})`;
     } else {
-      counter.textContent = `Игровых символов: ${len}`;
+      counter.textContent = `Игровых символов: ${len}/${charLimit}`;
     }
   } else {
     const len = text.replace(/∾/g, '').length;
@@ -830,11 +867,12 @@ window.checkForLineLevelErrors = function (ruLines, optionalJpLines, globalOffse
       }
 
       const metrics = window.getVisibleTextMetrics(block.text);
-      if (metrics.length > 50 && !block.hasIgnoreMarker) {
+      const charLimit = (window.hasPortraitForBlock && window.hasPortraitForBlock(block, textBlocks, i)) ? 51 : 60;
+      if (metrics.length > charLimit && !block.hasIgnoreMarker) {
         errors.push({
           label: getLineLabel(block.idx),
           type: 'Ошибка строки',
-          reason: `Превышен лимит символов: ${metrics.length} > 50`
+          reason: `Превышен лимит символов: ${metrics.length} > ${charLimit}`
         });
       }
       // Ловим: (1) одиночный ∾C[0] и (2) тройной+ ∾∾∾C[0] — оба являются ошибками

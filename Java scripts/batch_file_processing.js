@@ -72,6 +72,7 @@ function renderBatchFileList() {
   // Получаем значение чекбокса "Скрывать файлы без сопоставления"
   const hideUnmatchedFiles = document.getElementById('batchHideUnmatchedFiles')?.checked;
   const showUnmatchedFirst = !hideUnmatchedFiles && document.getElementById('batchShowUnmatchedFirst')?.checked;
+  const ignorePlusLines = document.getElementById('batchIgnorePlusLines')?.checked;
 
   // Собираем все уникальные имена файлов из обеих папок
   const allFileNames = new Set();
@@ -1223,7 +1224,6 @@ async function batchFixAllFiles() {
     fixBtn.disabled = false;
   }
 }
-
 async function batchCheckAllFiles() {
   const batchListDiv = document.getElementById('batchFileList');
   batchListDiv.innerHTML = '';
@@ -1240,6 +1240,7 @@ async function batchCheckAllFiles() {
   const showOkFiles = document.getElementById('batchShowOkFiles')?.checked;
   const hideUnmatchedFiles = document.getElementById('batchHideUnmatchedFiles')?.checked;
   const showUnmatchedFirst = !hideUnmatchedFiles && document.getElementById('batchShowUnmatchedFirst')?.checked;
+  const ignorePlusLines = document.getElementById('batchIgnorePlusLines')?.checked;
 
   const sortedFileNames = Array.from(allFileNames).sort((a, b) => {
     if (showUnmatchedFirst) {
@@ -1349,9 +1350,10 @@ async function batchCheckAllFiles() {
     const ruText = ruLines.join('\n');
     const structResult = window.checkMapStructureMatch(jpText, ruText);
 
-    const structErrorCount = structResult.grouped ? structResult.grouped.reduce((acc, ev) => acc + ev.pages.reduce((a, p) => a + (p.errors ? p.errors.length : 0), 0), 0) : 0;
+    let structErrorCount = structResult.grouped ? structResult.grouped.reduce((acc, ev) => acc + ev.pages.reduce((a, p) => a + (p.errors ? p.errors.length : 0), 0), 0) : 0;
 
-    if (structErrorCount === 0 && window.textBlocks && window.textBlocks.length > 0 && window.japBlocks && window.japBlocks.length > 0) {
+    // Рекомендация добавить #+ добавляется только если чекбокс отключения ошибок доп. строк не включен
+    if (!ignorePlusLines && structErrorCount === 0 && window.textBlocks && window.textBlocks.length > 0 && window.japBlocks && window.japBlocks.length > 0) {
       window.textBlocks.forEach(block => {
         if (block.isDeleted) return;
         if (block.type === 'ShowText' &&
@@ -1367,6 +1369,47 @@ async function batchCheckAllFiles() {
           });
         }
       });
+    }
+
+    // Если включен чекбокс отключения ошибок доп. строк (#+), фильтруем ошибки
+    if (ignorePlusLines) {
+      lineLevelErrors = lineLevelErrors.filter(err => {
+        // 1. Ошибка на строке, содержащей маркер #+
+        if (err.line !== undefined && ruLines[err.line] && /#\+/.test(ruLines[err.line])) {
+          return false;
+        }
+        // 2. Ошибка относится к блоку, помеченному как manualPlus / generated
+        if (window.textBlocks && err.line !== undefined) {
+          const block = window.textBlocks.find(b => b.idx === err.line);
+          if (block && (block.manualPlus || block.generated)) {
+            return false;
+          }
+        }
+        // 3. Текст ошибки, причина или тип содержит маркер #+ или упоминание строк-продолжений
+        const textToCheck = `${err.type || ''} ${err.reason || ''} ${err.msg || ''}`;
+        if (/#\+|строк[еами\-]+продолжен/i.test(textToCheck)) {
+          return false;
+        }
+        return true;
+      });
+
+      // Также отфильтровываем упоминания #+ из структурных ошибок, если они есть
+      if (structResult.grouped) {
+        structResult.grouped.forEach(ev => {
+          ev.pages.forEach(page => {
+            if (page.errors && page.errors.length > 0) {
+              page.errors = page.errors.filter(err => {
+                if (err.ru && /#\+/.test(err.ru)) return false;
+                if (err.ruLineNum !== undefined && ruLines[err.ruLineNum] && /#\+/.test(ruLines[err.ruLineNum])) return false;
+                if (err.msg && /#\+/.test(err.msg)) return false;
+                return true;
+              });
+              page.ok = page.errors.length === 0;
+            }
+          });
+        });
+        structErrorCount = structResult.grouped.reduce((acc, ev) => acc + ev.pages.reduce((a, p) => a + (p.errors ? p.errors.length : 0), 0), 0);
+      }
     }
 
     // Собираем типы ошибок для чекбоксов
@@ -1578,6 +1621,21 @@ document.addEventListener('DOMContentLoaded', function () {
   const showOkFilesBox = document.getElementById('batchShowOkFiles');
   if (showOkFilesBox) {
     showOkFilesBox.addEventListener('change', batchCheckAllFiles);
+  }
+  const ignorePlusLinesBox = document.getElementById('batchIgnorePlusLines');
+  if (ignorePlusLinesBox) {
+    try {
+      const saved = localStorage.getItem('mgqp_batch_ignore_plus_lines');
+      if (saved !== null) {
+        ignorePlusLinesBox.checked = saved === 'true';
+      }
+    } catch (e) {}
+    ignorePlusLinesBox.addEventListener('change', () => {
+      try {
+        localStorage.setItem('mgqp_batch_ignore_plus_lines', ignorePlusLinesBox.checked ? 'true' : 'false');
+      } catch (e) {}
+      batchCheckAllFiles();
+    });
   }
   const hideUnmatchedFilesBox = document.getElementById('batchHideUnmatchedFiles');
   if (hideUnmatchedFilesBox) {

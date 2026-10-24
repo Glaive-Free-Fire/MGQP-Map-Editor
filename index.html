@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8">
-  <title>MGQP Map Editor v1.5.35</title>
+  <title>MGQP Map Editor v1.5.36</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
   <script src="Java scripts/main_script.js"></script>
   <script src="Java scripts/restore-mode.js"></script>
@@ -49,7 +49,7 @@
       display: none;
     }
 
-    /* Красная отметка позиции 50-го символа */
+    /* Красная отметка позиции 51/60-го символа */
     .limit-marker {
       position: absolute;
       top: 0;
@@ -428,7 +428,7 @@
       <label for="batchJpFolder">Загрузить папку карт (японский)</label><br>
       <button id="batchCheckBtn" class="control-btn">Проверить карты на ошибки</button>
     </div>
-    <div style="margin-bottom:10px; display:flex; gap:24px; align-items:center;">
+    <div style="margin-bottom:10px; display:flex; gap:24px; align-items:center; flex-wrap:wrap;">
       <label style="font-size:15px; font-weight:normal; cursor:pointer;">
         <input type="checkbox" id="batchShowOnlyErrorLines" checked
           style="vertical-align:middle; margin-right:6px;">Показывать только строки с ошибками
@@ -440,6 +440,11 @@
       <label style="font-size:15px; font-weight:normal; cursor:pointer;">
         <input type="checkbox" id="batchHideUnmatchedFiles" checked
           style="vertical-align:middle; margin-right:6px;">Скрывать файлы без сопоставления
+      </label>
+            <label style="font-size:15px; font-weight:normal; cursor:pointer;"
+        title="Отключает ошибки и рекомендации, связанные со строками-продолжениями и маркером #+">
+        <input type="checkbox" id="batchIgnorePlusLines"
+          style="vertical-align:middle; margin-right:6px;">Отключить ошибки доп. строк (#+)
       </label>
       <label id="batchShowUnmatchedFirstContainer" style="font-size:15px; font-weight:normal; cursor:pointer; display:none;">
         <input type="checkbox" id="batchShowUnmatchedFirst"
@@ -1329,13 +1334,15 @@
                 .replace(/∾∾[A-Z](\[\d+\])?/g, '')
                 .replace(/∾/g, '')
                 .trim();
-              return v.length;
+              const emDashCount = (v.match(/[—―]/g) || []).length;
+              return v.length + emDashCount;
             })());
-            if (!block.hasIgnoreMarker && len > 50) {
+            const charLimit = (window.hasPortraitForBlock && window.hasPortraitForBlock(block, window.textBlocks, i)) ? 51 : 60;
+            if (!block.hasIgnoreMarker && len > charLimit) {
               redLineErrors.push({
                 label: block.idx !== undefined ? window.formatLineLabel(block.idx) : '[продолжение]',
                 type: 'Ошибка строки',
-                reason: `Превышен лимит символов: ${len} > 50`
+                reason: `Превышен лимит символов: ${len} > ${charLimit}`
               });
               window.allErrorIndices.add(i);
             }
@@ -3833,11 +3840,12 @@
       // Проверяем валидность блока (ИГНОРИРУЕМ УДАЛЕННЫЕ)
       if (!block || block.type !== 'ShowText' || !block.text || block.isDeleted) return false;
 
+      const charLimit = (window.hasPortraitForBlock && window.hasPortraitForBlock(block, textBlocks, blockIndex)) ? 51 : 60;
       const info = window.getGameTextInfo(block.text);
       const visibleText = info.rawGameText;
 
-      // Если строка короткая (<= 50 символов), разделять нечего
-      if (window.getVisibleTextMetrics(info.rawGameText).length <= 50) return false;
+      // Если строка короткая (<= charLimit символов), разделять нечего
+      if (window.getVisibleTextMetrics(info.rawGameText).length <= charLimit) return false;
 
 
       let namePart = info.fullPrefix;
@@ -3859,8 +3867,8 @@
         const currentText = firstLineWords.join(' ').replace(/\x01/g, ' ');
         const currentLen = window.getVisibleTextMetrics(currentText).length;
 
-        if (currentLen > 50) {
-          // Защита: если одно-единственное слово (или неразрывный тег) длиннее 50 символов,
+        if (currentLen > charLimit) {
+          // Защита: если одно-единственное слово (или неразрывный тег) длиннее charLimit символов,
           // мы обязаны его оставить, иначе уйдем в бесконечный цикл разделения пустоты.
           if (firstLineWords.length > 1) {
             firstLineWords.pop(); // Убираем последнее слово, чтобы не превышать лимит
@@ -3965,13 +3973,13 @@
 
         alert('Строки разделены, структура исправлена, теги имен добавлены!');
       } else {
-        alert('Нет строк для разделения (все строки короче 50 символов).');
+        alert('Нет строк для разделения (все строки короче лимита: 51 с портретом / 60 без портрета).');
       }
     };
 
     // Собирает актуальный список индексов красных textarea
-    // Возвращает css-left для маркера на позиции 50 видимых символов
-    function calculateLimitLinePosition(textarea, text, prefixText) {
+    // Возвращает css-left для маркера на позиции 51/60 видимых символов
+    function calculateLimitLinePosition(textarea, text, prefixText, charLimit = 51) {
       const style = window.getComputedStyle(textarea);
       const paddingLeft = parseFloat(style.paddingLeft);
       const font = style.font;
@@ -3987,9 +3995,18 @@
       span.textContent = prefixText || '';
       const prefixWidth = span.offsetWidth;
 
-      // ширина первых 50 символов диалога
-      const textToMeasure = (text || '').substring(0, 50);
-      span.textContent = textToMeasure;
+      // ширина первых charLimit символов диалога с учетом длинного тире (считается за 2)
+      let accumulated = '';
+      let effLen = 0;
+      const str = text || '';
+      for (let k = 0; k < str.length; k++) {
+        const ch = str[k];
+        const cost = (ch === '—' || ch === '―') ? 2 : 1;
+        if (effLen + cost > charLimit) break;
+        effLen += cost;
+        accumulated += ch;
+      }
+      span.textContent = accumulated;
       const textWidth = span.offsetWidth;
 
       document.body.removeChild(span);
@@ -4142,11 +4159,13 @@
               .replace(/∾/g, '')
               .replace(/∿/g, '')
               .trim();
-            return { text: t, length: t.length };
+            const emDashCount = (t.match(/[—―]/g) || []).length;
+            return { text: t, length: t.length + emDashCount };
           })();
           const visibleText = metrics.text;
-          if (hasError && visibleText.length > 50) {
-            marker.style.left = calculateLimitLinePosition(ta, visibleText, info.fullPrefix);
+          const charLimit = (window.hasPortraitForBlock && window.hasPortraitForBlock(block, textBlocks, i)) ? 51 : 60;
+          if (hasError && metrics.length > charLimit) {
+            marker.style.left = calculateLimitLinePosition(ta, visibleText, info.fullPrefix, charLimit);
             ruler.style.display = 'block';
           } else {
             ruler.style.display = 'none';
@@ -4484,20 +4503,24 @@
 
         if (block.type === 'ShowText' || block.type === undefined) {
           const info = window.getGameTextInfo(block.text);
-          const visibleText = info.rawGameText
-            .replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/g, '')
-            .replace(/∾∾C\[\d+\]/g, '')
-            .replace(/C\[\d+\]/g, '')
-            .replace(/∾/g, '')
-            .replace(/∿/g, '')
-            .trim();
-          const len = visibleText.length;
-          if (len > 50) {
+          const len = (window.getVisibleTextMetrics ? window.getVisibleTextMetrics(block.text).length : (function () {
+            const visibleText = info.rawGameText
+              .replace(/<∾∾C\[\d+\](?:.*?)∾∾C\[\d+\]>/g, '')
+              .replace(/∾∾C\[\d+\]/g, '')
+              .replace(/C\[\d+\]/g, '')
+              .replace(/∾/g, '')
+              .replace(/∿/g, '')
+              .trim();
+            const emDashCount = (visibleText.match(/[—―]/g) || []).length;
+            return visibleText.length + emDashCount;
+          })());
+          const charLimit = (window.hasPortraitForBlock && window.hasPortraitForBlock(block, window.textBlocks, i)) ? 51 : 60;
+          if (len > charLimit) {
             errors.push({
               idx: block.idx,
               label: block.idx !== undefined ? window.formatLineLabel(block.idx) : '[продолжение]',
               type: 'ShowText',
-              reason: `Превышен лимит символов: ${len} > 50`
+              reason: `Превышен лимит символов: ${len} > ${charLimit}`
             });
           }
           if (info.isCorrupted) {
