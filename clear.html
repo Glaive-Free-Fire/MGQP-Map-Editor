@@ -5792,7 +5792,7 @@
             if (!blocks[fullPath]) blocks[fullPath] = [];
             blocks[fullPath].push({
               text: stMatch[1],
-              fullLine: line,
+              fullLine: line.replace(/\r$/, ''),
               lineNum: i + 1,
               screenId: screenId
             });
@@ -5942,7 +5942,7 @@
                 jpName: jpDialogues[i].name,
                 jpText: jpDialogues[i].text, 
                 ruCombinedText: ruDialogues[i].combinedText,
-                ruFullLines: ruDialogues[i].fullLines.join('\n'),
+                ruFullLines: ruDialogues[i].fullLines.map(l => l.replace(/\r$/, '')).join('\n'),
                 ruLineNum: ruDialogues[i].lineNum,
                 blockPath: path
             });
@@ -6603,11 +6603,11 @@
 
       // 3. Индексная замена (строго по координатам строк)
       globalConflicts.forEach(conflict => {
-        const finalResolution = document.getElementById(`center_${conflict.id}`).value;
-        if (!finalResolution.trim()) return;
+        const finalResolution = document.getElementById(`center_${conflict.id}`).value.trim();
+        if (!finalResolution) return;
 
         const newLinesRaw = finalResolution.split('\n');
-        const newLines = newLinesRaw.map(l => l.replace(/\r$/, ''));
+        const newLines = newLinesRaw.map(l => l.replace(/\r$/, '')).filter(l => l.trim() !== '');
 
         const replaceInFile = (fileName, oldLinesRaw, newText, startLineHint, sourceFullBlock) => {
           let lines = fileLinesMap[fileName];
@@ -6615,7 +6615,7 @@
           const originalLines = originalFileLinesMap[fileName] || lines;
 
           const newLinesRaw = newText.split('\n');
-          const newLines = newLinesRaw.map(l => l.replace(/\r$/, ''));
+          const newLines = newLinesRaw.map(l => l.replace(/\r$/, '')).filter(l => l.trim() !== '');
 
           let oldLinesClean = oldLinesRaw.map(l => l.replace(/\r$/, '')).filter(l => l.trim() !== '');
           if (oldLinesClean.length === 0) return;
@@ -6717,22 +6717,27 @@
               }
             }
             const withTargetIndent = (rawLine) => {
-              const cleanLine = rawLine.replace(/\r$/, '');
-              if (cleanLine.trim() === '') return '';
-              const sourceIndent = (cleanLine.match(/^(\s*)/) || ['', ''])[1];
-              const relativeIndent = sourceIndent.length - sourceBaseIndent.length;
-              const targetIndentLen = Math.max(0, targetIndent.length + relativeIndent);
-              return ' '.repeat(targetIndentLen) + cleanLine.slice(sourceIndent.length);
+              const cleanLine = rawLine.replace(/\r$/, '').trim();
+              if (cleanLine === '') return '';
+              return targetIndent + cleanLine;
             };
             let showTextIdx = 0;
             let attrIdx = 0;
-            const newBlockLines = sourceFullBlock.map(l => {
-              if (l.trim().startsWith('ShowText(') && showTextIdx < newLines.length) {
-                const newLine = newLines[showTextIdx++];
-                const newIndent = (newLine.match(/^(\s*)/) || ['',''])[1];
-                return targetIndent + newLine.slice(newIndent.length);
-              }
-              if (l.trim().startsWith('ShowTextAttributes')) {
+            const newBlockLines = [];
+            for (let i = 0; i < sourceFullBlock.length; i++) {
+              const l = sourceFullBlock[i];
+              if (l.trim().startsWith('ShowText(')) {
+                if (showTextIdx < newLines.length) {
+                  newBlockLines.push(targetIndent + newLines[showTextIdx++].trim());
+                }
+                // Если это последний ShowText в блоке-источнике, но в newLines есть ещё строки:
+                const remainingSourceShowText = sourceFullBlock.slice(i + 1).filter(sl => sl.trim().startsWith('ShowText(')).length;
+                if (remainingSourceShowText === 0 && showTextIdx < newLines.length) {
+                  while (showTextIdx < newLines.length) {
+                    newBlockLines.push(targetIndent + newLines[showTextIdx++].trim());
+                  }
+                }
+              } else if (l.trim().startsWith('ShowTextAttributes')) {
                 const currentAttrLine = currentBlockAttrs[attrIdx] || null;
                 let attrLineToUse = l;
                 if (currentAttrLine && currentAttrLine.trim() !== l.trim()) {
@@ -6748,10 +6753,11 @@
                   attrLineToUse = cleanAttr + ' ' + sourceCommentMatch[1].trim();
                 }
                 attrIdx++;
-                return withTargetIndent(attrLineToUse);
+                newBlockLines.push(withTargetIndent(attrLineToUse));
+              } else {
+                newBlockLines.push(withTargetIndent(l));
               }
-              return withTargetIndent(l);
-            });
+            }
             lines[blockStart] = newBlockLines.join(hasCR ? '\r\n' : '\n') + (hasCR ? '\r' : '');
             for (let i = blockStart + 1; i <= blockEnd; i++) {
               lines[i] = null;
@@ -6771,12 +6777,10 @@
             if (j < matchIndices.length - 1) {
               // Это НЕ последняя старая строка
               if (j < newLines.length) {
-                let sourceIndentMatch = newLines[j].match(/^(\s*)/);
-                let sourceIndent = sourceIndentMatch ? sourceIndentMatch[1] : '';
-                if (newLines[j].trim() === '') {
-                  lines[targetIdx] = hasCR ? '\r' : '';
+                if (newLines[j].trim() !== '') {
+                  lines[targetIdx] = targetIndent + newLines[j].trim() + (hasCR ? '\r' : '');
                 } else {
-                  lines[targetIdx] = targetIndent + newLines[j].slice(sourceIndent.length) + (hasCR ? '\r' : '');
+                  lines[targetIdx] = null;
                 }
               } else {
                 // Если новые кончились, старую метим на удаление
@@ -6788,15 +6792,15 @@
                 // Впихиваем сюда все ОСТАВШИЕСЯ новые строки
                 let combined = [];
                 for (let k = j; k < newLines.length; k++) {
-                  let sourceIndentMatch = newLines[k].match(/^(\s*)/);
-                  let sourceIndent = sourceIndentMatch ? sourceIndentMatch[1] : '';
-                  if (newLines[k].trim() === '') {
-                    combined.push('');
-                  } else {
-                    combined.push(targetIndent + newLines[k].slice(sourceIndent.length));
+                  if (newLines[k].trim() !== '') {
+                    combined.push(targetIndent + newLines[k].trim());
                   }
                 }
-                lines[targetIdx] = combined.join(hasCR ? '\r\n' : '\n') + (hasCR ? '\r' : '');
+                if (combined.length > 0) {
+                  lines[targetIdx] = combined.join(hasCR ? '\r\n' : '\n') + (hasCR ? '\r' : '');
+                } else {
+                  lines[targetIdx] = null;
+                }
               } else {
                 lines[targetIdx] = null;
               }
