@@ -5815,7 +5815,9 @@
 
       function getPureJpName(raw) {
           if (!raw) return null;
-          return raw.replace(/[【】]/g, '').trim();
+          let s = raw.replace(/[【】]/g, '');
+          s = s.replace(/[（(].*?[）)]/g, '');
+          return s.trim();
       }
 
        function getPureRuName(raw) {
@@ -5835,7 +5837,7 @@
 
         for (const cmd of cmds) {
           const text = cmd.text;
-          const nameMatch = text.match(/^【([^】]+)】/);
+          const nameMatch = text.match(/^【([^】]+)】(?:\s*[（(][^）)]*[）)])?/);
           const screenChanged = cmd.screenId !== lastScreenId;
           lastScreenId = cmd.screenId;
 
