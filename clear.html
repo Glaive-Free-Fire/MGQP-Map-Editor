@@ -5898,7 +5898,10 @@
             const pureName = getPureRuName(nameTag);
 
             // Если тот же говорящий и экран помечен #+ (или содержит #+) — это продолжение реплики
-            const isScreenContinuation = screenChanged && (cmd.screenHasPlus || cmd.fullLine.includes('#+')) && current && current.pureName === pureName;
+            const currentAff = current ? (current.nameTag ? current.nameTag.match(/(?:\\\\|\\)V\[(\d+)\]/i) : null) : null;
+            const cmdAff = nameTag ? nameTag.match(/(?:\\\\|\\)V\[(\d+)\]/i) : null;
+            const affCompatible = (!currentAff || !cmdAff || currentAff[1] === cmdAff[1]);
+            const isScreenContinuation = screenChanged && (cmd.screenHasPlus || cmd.fullLine.includes('#+')) && current && current.pureName === pureName && affCompatible;
 
             // Новый блок: сменился экран (без продолжения #+) или говорящий
             if (!current || current.pureName !== pureName || (screenChanged && !isScreenContinuation)) {
