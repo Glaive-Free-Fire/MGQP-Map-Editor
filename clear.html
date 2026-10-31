@@ -5737,6 +5737,8 @@
         
         let interactionCounter = 0;
         let lastCommandType = "Other"; // 'ShowText', 'Attr', 'Other'
+        let screenHasPlus = false;
+        let currentFace = "";
 
         for (let i = 0; i < lines.length; i++) {
           const line = lines[i];
@@ -5748,6 +5750,8 @@
             screenId = 0;
             interactionCounter = 0;
             lastCommandType = "Other";
+            screenHasPlus = false;
+            currentFace = "";
             continue;
           }
 
@@ -5758,20 +5762,24 @@
             screenId = 0;
             interactionCounter = 0;
             lastCommandType = "Other";
+            screenHasPlus = false;
+            currentFace = "";
             continue;
           }
 
-          const labelMatch = line.match(/^\s*Label\(\s*\[\s*"?([^"\]]+)"?\s*\]\s*\)/);
+          const labelMatch = line.match(/^\s*Label\(\s*\[\s*"?([^"]+)"?\s*\]\s*\)/);
           if (labelMatch) {
             currentLabel = "_Label " + labelMatch[1]; 
             screenId = 0;
             interactionCounter = 0;
             lastCommandType = "Other";
+            screenHasPlus = false;
+            currentFace = "";
             continue;
           }
 
           // ShowTextAttributes — граница экрана.
-          const attrMatch = line.match(/^\s*ShowTextAttributes\(/);
+          const attrMatch = line.match(/^\s*ShowTextAttributes\(\s*\[\s*"([^"]*)"/);
           if (attrMatch) {
             // Если перед этим был не диалог (например, Wait), значит это новая интеракция
             if (lastCommandType !== "ShowText" && lastCommandType !== "Attr") {
@@ -5779,6 +5787,8 @@
             }
             lastCommandType = "Attr";
             screenId++;
+            currentFace = attrMatch[1];
+            screenHasPlus = line.includes('#+');
             continue;
           }
 
@@ -5794,7 +5804,9 @@
               text: stMatch[1],
               fullLine: line.replace(/\r$/, ''),
               lineNum: i + 1,
-              screenId: screenId
+              screenId: screenId,
+              face: currentFace,
+              screenHasPlus: screenHasPlus
             });
           } else {
              // Игнорируем пустые строки и комментарии
@@ -5803,6 +5815,7 @@
              }
              // Любая другая команда (Wait, Branch, MovePicture и т.д.) прерывает интеракцию
              lastCommandType = "Other";
+             screenHasPlus = false;
           }
         }
         return blocks;
@@ -5849,7 +5862,7 @@
             // Новый блок: сменился экран или сменился говорящий
             if (!current || current.pureName !== pureName || screenChanged) {
               if (current) dialogues.push(current);
-              current = { name: speakerName, pureName, text: textAfterName };
+              current = { name: speakerName, pureName, face: cmd.face, text: textAfterName };
             } else {
               current.text += (current.text ? " " : "") + textAfterName;
             }
@@ -5857,7 +5870,7 @@
             // Нет тега имени (закадровый голос или продолжение в пределах того же экрана)
             if (!current || screenChanged) {
                if (current) dialogues.push(current);
-               current = { name: "", pureName: "", text: text };
+               current = { name: "", pureName: "", face: cmd.face, text: text };
             } else {
                current.text += (current.text ? " " : "") + text;
             }
@@ -5884,13 +5897,16 @@
             const nameTag = tagMatch ? tagMatch[1] : null;
             const pureName = getPureRuName(nameTag);
 
-            // Новый блок: сменился экран или говорящий
-            if (!current || current.pureName !== pureName || screenChanged) {
+            // Если тот же говорящий и экран помечен #+ (или содержит #+) — это продолжение реплики
+            const isScreenContinuation = screenChanged && (cmd.screenHasPlus || cmd.fullLine.includes('#+')) && current && current.pureName === pureName;
+
+            // Новый блок: сменился экран (без продолжения #+) или говорящий
+            if (!current || current.pureName !== pureName || (screenChanged && !isScreenContinuation)) {
               if (current) dialogues.push(current);
               let cleanText = ruText.replace(/^(?:\\\\n|\\n)?\s*<[^>]+>\s*/, '');
               cleanText = cleanText.replace(/^【[^】]+】\s*/, '');
               current = {
-                nameTag, pureName,
+                nameTag, pureName, face: cmd.face,
                 combinedText: cleanText.replace(/#\+\s*/g, '').trim(),
                 fullLines: [cmd.fullLine],
                 lineNum: cmd.lineNum
@@ -5904,11 +5920,11 @@
             }
           } else {
              // Нет тега имени
-             const isPlusContinuation = cmd.fullLine.includes('#+') || ruText.includes('#+');
+             const isPlusContinuation = cmd.fullLine.includes('#+') || ruText.includes('#+') || cmd.screenHasPlus;
              if (!current || (screenChanged && !isPlusContinuation)) {
                 if (current) dialogues.push(current);
                 current = {
-                  nameTag: null, pureName: "", 
+                  nameTag: null, pureName: "", face: cmd.face,
                   combinedText: ruText.replace(/#\+\s*/g, '').trim(),
                   fullLines: [cmd.fullLine],
                   lineNum: cmd.lineNum
@@ -5930,19 +5946,48 @@
         const jpDialogues = chainJpDialogues(jpCmds);
         const ruDialogues = chainRuDialogues(ruCmds);
 
-        // Сопоставляем по индексу. Берём минимум из двух, чтобы не терять данные
-        // при небольших расхождениях в структуре (например, доп. реплики от других NPC).
-        const pairCount = Math.min(jpDialogues.length, ruDialogues.length);
-        if (pairCount === 0) continue;
+        if (jpDialogues.length === 0 || ruDialogues.length === 0) continue;
 
-        for (let i = 0; i < pairCount; i++) {
+        // Если количество реплик разошлось, логируем ошибку структуры
+        if (jpDialogues.length !== ruDialogues.length) {
             results.push({
                 fileName: fileName,
-                jpName: jpDialogues[i].name,
-                jpText: jpDialogues[i].text, 
-                ruCombinedText: ruDialogues[i].combinedText,
-                ruFullLines: ruDialogues[i].fullLines.map(l => l.replace(/\r$/, '')).join('\n'),
-                ruLineNum: ruDialogues[i].lineNum,
+                jpName: "【ОШИБКА СТРУКТУРЫ】",
+                jpText: `[${path}] Расхождение количества диалогов (JP: ${jpDialogues.length}, RU: ${ruDialogues.length})`,
+                ruCombinedText: "",
+                ruFullLines: "",
+                ruLineNum: (ruCmds[0] ? ruCmds[0].lineNum : 1),
+                blockPath: path
+            });
+        }
+
+        const pairCount = Math.min(jpDialogues.length, ruDialogues.length);
+
+        for (let i = 0; i < pairCount; i++) {
+            const jpD = jpDialogues[i];
+            const ruD = ruDialogues[i];
+
+            // Защита от сдвига: проверяем несовпадение портрета (если оба заданы и не пусты)
+            if (jpD.face && ruD.face && (jpD.face !== ruD.face)) {
+                results.push({
+                    fileName: fileName,
+                    jpName: "【ОШИБКА СТРУКТУРЫ】",
+                    jpText: `[${path}] Несовпадение говорящего в реплике #${i + 1} (JP: ${jpD.name} [${jpD.face}] vs RU: ${ruD.nameTag || 'нет тега'} [${ruD.face}])`,
+                    ruCombinedText: "",
+                    ruFullLines: "",
+                    ruLineNum: ruD.lineNum,
+                    blockPath: path
+                });
+                break; // Прерываем спаривание данного блока во избежание сдвига всех последующих реплик!
+            }
+
+            results.push({
+                fileName: fileName,
+                jpName: jpD.name,
+                jpText: jpD.text, 
+                ruCombinedText: ruD.combinedText,
+                ruFullLines: ruD.fullLines.map(l => l.replace(/\r$/, '')).join('\n'),
+                ruLineNum: ruD.lineNum,
                 blockPath: path
             });
         }
@@ -5950,7 +5995,7 @@
       return results;
     }
 
-    function stripRuNameTag(text) {
+        function stripRuNameTag(text) {
       // Убираем префикс \n или \\n
       let cleaned = text.replace(/^(?:\\\\n|\\n)\s*/, '').trim();
       // Убираем тег имени <...>, если внутри есть цветовые коды
