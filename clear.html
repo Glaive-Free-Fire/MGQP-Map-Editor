@@ -5826,39 +5826,17 @@
           return s.trim();
       }
 
-      function isPureSilence(t) {
-        if (!t) return false;
-        let s = t.replace(/(?:\\\\|\\)[a-zA-Z]+(?:\[\d+\])?/g, '').replace(/<.*?>/g, '').replace(/^【[^】]+】/, '').trim();
-        return s.length > 0 && /^[.!?…\s。！？―—–・~～…]+$/.test(s);
-      }
-
-      // Вспомогательная: разбивает массив ShowText-команд на диалоги.
-      // Склейка: если тот же персонаж говорит на нескольких экранах подряд, 
-      // это считается ОДНИМ диалоговым блоком для целей поиска дубликатов.
-      // Экраны чистой тишины / многоточий (паузы) НЕ склеиваются с речью.
+      // Вспомогательная: разбивает массив ShowText-команд на диалоги (по экранам ShowTextAttributes).
+      // Каждое отдельное окно диалога является самостоятельным блоком.
       function chainJpDialogues(cmds) {
         const dialogues = [];
         let current = null;
         let lastScreenId = -1;
 
-        const screenTexts = {};
-        for (const cmd of cmds) {
-          const sid = cmd.screenId;
-          if (!screenTexts[sid]) screenTexts[sid] = [];
-          screenTexts[sid].push(cmd.text);
-        }
-        const silentScreenIds = new Set();
-        for (const sid in screenTexts) {
-          if (isPureSilence(screenTexts[sid].join(' '))) {
-            silentScreenIds.add(Number(sid));
-          }
-        }
-
         for (const cmd of cmds) {
           const text = cmd.text;
           const nameMatch = text.match(/^【([^】]+)】/);
           const screenChanged = cmd.screenId !== lastScreenId;
-          const isSilenceTransition = screenChanged && (silentScreenIds.has(cmd.screenId) || silentScreenIds.has(lastScreenId));
           lastScreenId = cmd.screenId;
 
           if (nameMatch) {
@@ -5866,21 +5844,19 @@
             const pureName = getPureJpName(speakerName);
             const textAfterName = text.substring(speakerName.length).trim();
 
-            // Новый блок только если сменился говорящий или произошёл переход через экран тишины
-            if (!current || current.pureName !== pureName || isSilenceTransition) {
+            // Новый блок: сменился экран или сменился говорящий
+            if (!current || current.pureName !== pureName || screenChanged) {
               if (current) dialogues.push(current);
               current = { name: speakerName, pureName, text: textAfterName };
             } else {
               current.text += (current.text ? " " : "") + textAfterName;
             }
           } else {
-            // Нет тега имени (закадровый голос или продолжение)
-            // Если сменился экран ИЛИ нет текущего блока → новый блок (повествование)
+            // Нет тега имени (закадровый голос или продолжение в пределах того же экрана)
             if (!current || screenChanged) {
                if (current) dialogues.push(current);
                current = { name: "", pureName: "", text: text };
             } else {
-               // В пределах того же экрана — просто добавляем текст
                current.text += (current.text ? " " : "") + text;
             }
           }
@@ -5894,23 +5870,9 @@
         let current = null;
         let lastScreenId = -1;
 
-        const screenTexts = {};
-        for (const cmd of cmds) {
-          const sid = cmd.screenId;
-          if (!screenTexts[sid]) screenTexts[sid] = [];
-          screenTexts[sid].push(cmd.text);
-        }
-        const silentScreenIds = new Set();
-        for (const sid in screenTexts) {
-          if (isPureSilence(screenTexts[sid].join(' '))) {
-            silentScreenIds.add(Number(sid));
-          }
-        }
-
         for (const cmd of cmds) {
           const ruText = cmd.text;
           const screenChanged = cmd.screenId !== lastScreenId;
-          const isSilenceTransition = screenChanged && (silentScreenIds.has(cmd.screenId) || silentScreenIds.has(lastScreenId));
           lastScreenId = cmd.screenId;
 
           const isDialogueStart = /^(?:\\\\n|\\n)?\s*<[^\s>]+>/.test(ruText) || /^【[^】]+】/.test(ruText) || ruText.includes('<\\C[') || ruText.includes('<\\\\C[');
@@ -5920,8 +5882,8 @@
             const nameTag = tagMatch ? tagMatch[1] : null;
             const pureName = getPureRuName(nameTag);
 
-            // Новый блок: сменился говорящий, пустое имя при смене экрана, или экран тишины
-            if (!current || current.pureName !== pureName || (pureName === "" && screenChanged) || isSilenceTransition) {
+            // Новый блок: сменился экран или говорящий
+            if (!current || current.pureName !== pureName || screenChanged) {
               if (current) dialogues.push(current);
               let cleanText = ruText.replace(/^(?:\\\\n|\\n)?\s*<[^>]+>\s*/, '');
               cleanText = cleanText.replace(/^【[^】]+】\s*/, '');
@@ -5941,7 +5903,7 @@
           } else {
              // Нет тега имени
              const isPlusContinuation = cmd.fullLine.includes('#+') || ruText.includes('#+');
-             if (!current || (screenChanged && !isPlusContinuation) || isSilenceTransition) {
+             if (!current || (screenChanged && !isPlusContinuation)) {
                 if (current) dialogues.push(current);
                 current = {
                   nameTag: null, pureName: "", 
