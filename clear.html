@@ -6247,6 +6247,226 @@
         });
 
         // Строим индекс по всем файлам
+        const groupByPhrase = document.getElementById('groupByPhrase')?.checked ?? false;
+
+        allPairs.forEach(pair => {
+          if (pair.jpName === "【ОШИБКА СТРУКТУРЫ】" || pair.jpText.includes('[JP НЕ НАЙДЕН')) return;
+          
+          const jpNorm = normalizeJp(pair.jpText);
+          const nameNorm = normalizeJp(pair.jpName);
+          
+          if (jpNorm.length === 0) return;
+          const key = groupByPhrase ? jpNorm : (nameNorm + "|" + jpNorm);
+          if (!index[key]) {
+            index[key] = { jpName: pair.jpName, jpText: pair.jpText, occurrences: [] };
+          }
+          index[key].occurrences.push({
+            fileName: pair.fileName,
+            ruFullLines: pair.ruFullLines,
+            ruCombinedText: pair.ruCombinedText,
+            ruLineNum: pair.ruLineNum,
+            blockPath: pair.blockPath,
+            jpName: pair.jpName
+          });
+        });
+
+        let diffData = [];
+        globalConflicts = [];
+        const seenMismatches = new Set();
+
+        for (const key in index) {
+          const entry = index[key];
+          if (entry.occurrences.length < 2) continue;
+          const variantMap = {};
+          entry.occurrences.forEach(occ => {
+            const cleanRu = normalizeRuText(stripRuNameTag(occ.ruCombinedText));
+            const charName = occ.jpName ? occ.jpName.replace(/[【】]/g, '').trim() : '';
+            if (!variantMap[cleanRu]) {
+              variantMap[cleanRu] = { text: cleanRu, fullLines: occ.ruFullLines, files: [], occurrences: [], characters: new Set() };
+            }
+            variantMap[cleanRu].files.push(occ.fileName);
+            variantMap[cleanRu].occurrences.push(occ);
+            if (charName) variantMap[cleanRu].characters.add(charName);
+          });
+
+          const uniqueVariants = Object.values(variantMap);
+          if (uniqueVariants.length < 2) continue;
+
+          // Проверка: расхождение должно быть МЕЖДУ РАЗНЫМИ файлами (или между разными персонажами при группировке)
+          const allFiles = new Set();
+          entry.occurrences.forEach(occ => allFiles.add(occ.fileName));
+          const distinctCharacters = Array.from(new Set(entry.occurrences.map(o => o.jpName).filter(Boolean)));
+          const charCount = distinctCharacters.length;
+          const isMultiChar = charCount > 1;
+
+          if (allFiles.size < 2 && !isMultiChar) continue;
+
+          const conflictId = globalConflicts.length;
+          const mismatchKey = key + "|" + uniqueVariants.map(v => v.text).join("||");
+          if (seenMismatches.has(mismatchKey)) continue;
+          seenMismatches.add(mismatchKey);
+
+          const charsLabel = distinctCharacters.map(c => c.replace(/[【】]/g, '')).join(', ');
+          const jpContext = isMultiChar 
+            ? `🗣️ [Общая фраза: ${charCount} перс. (${charsLabel})] ${entry.jpText}`
+            : `【${entry.jpName}】 ${entry.jpText}`;
+
+          const conflictObj = {
+            id: conflictId,
+            mode: 'allfiles',
+            jpContext: jpContext,
+            jpName: entry.jpName,
+            jpText: entry.jpText,
+            isMultiChar: isMultiChar,
+            charCount: charCount,
+            distinctChars: distinctCharacters.map(c => c.replace(/[【】]/g, '')),
+            occurrences: entry.occurrences,
+            uniqueVariants: uniqueVariants
+          };
+          globalConflicts.push(conflictObj);
+
+          let entryText = '';
+          if (isMultiChar) {
+            entryText += `🗣️ [ОБЩАЯ ФРАЗА РАЗНЫХ ПЕРСОНАЖЕЙ (${charCount} перс.: ${charsLabel})]: ${entry.jpText}\n`;
+          } else {
+            entryText += `[JP Оригинал]: ${entry.jpName}${entry.jpText}\n`;
+          }
+          entryText += `Встречается в ${entry.occurrences.length} местах:\n`;
+          entry.occurrences.forEach(occ => {
+            const charPrefix = isMultiChar && occ.jpName ? `${occ.jpName} ` : '';
+            entryText += `*${occ.fileName}* [${occ.blockPath}] Строка ${occ.ruLineNum} ${charPrefix}\n${occ.ruFullLines}\n`;
+          });
+          entryText += `Уникальных вариантов перевода: ${uniqueVariants.length}\n`;
+          uniqueVariants.forEach((v, idx) => {
+            const charInfo = isMultiChar && v.characters.size > 0 ? ` [${Array.from(v.characters).join(', ')}]` : '';
+            entryText += `--- Вариант ${idx + 1} (${v.files.length} файлов)${charInfo} ---\n${v.text}\n`;
+          });
+          entryText += `----------------------------------------\n\n`;
+
+          diffData.push({
+            text: entryText,
+            lineOrder: entry.occurrences[0].ruLineNum,
+            file1: entry.occurrences[0].fileName,
+            isMultiChar: isMultiChar,
+            charCount: charCount,
+            conflictObj: conflictObj
+          });
+        }
+
+        diffData.sort((a, b) => {
+          if (groupByPhrase) {
+            if (a.isMultiChar !== b.isMultiChar) return a.isMultiChar ? -1 : 1;
+            if (a.isMultiChar && b.isMultiChar && b.charCount !== a.charCount) {
+              return b.charCount - a.charCount;
+            }
+          }
+          if (sortByFile) {
+            return a.file1.localeCompare(b.file1);
+          }
+          return a.lineOrder - b.lineOrder;
+        });
+
+        globalConflicts = diffData.map(d => d.conflictObj).filter(Boolean);
+        globalConflicts.forEach((c, idx) => c.id = idx);
+
+        let finalOutput = "";
+        
+        if (structureErrors.length > 0) {
+            finalOutput += "⚠️ НАЙДЕНЫ ОШИБКИ ИЛИ РАССИНХРОНИЗАЦИИ:\n";
+            finalOutput += Array.from(new Set(structureErrors)).join("\n") + "\n\n========================================\n\n";
+        }
+
+        const showAllDups = document.getElementById('showAllDuplicates')?.checked || false;
+        if (diffData.length === 0) {
+            finalOutput += showAllDups ? 'Одинаковых фраз не найдено вообще!' : 'Расхождений в одинаковых фразах не найдено! (Все совпадения переведены одинаково. Включите галочку "Показывать все дубликаты", чтобы просмотреть их)';
+        } else {
+          const sortByFile = document.getElementById('sortByFile').checked;
+          
+          if (sortByFile) {
+            diffData.sort((a, b) => {
+              if (a.file1 < b.file1) return -1;
+              if (a.file1 > b.file1) return 1;
+              if (a.file2 < b.file2) return -1;
+              if (a.file2 > b.file2) return 1;
+              return a.lineOrder - b.lineOrder;
+            });
+          } else {
+            diffData.sort((a, b) => a.lineOrder - b.lineOrder);
+          }
+          
+          const diffCount = diffData.filter(d => d.isDiff).length;
+          const matchCount = diffData.length - diffCount;
+          let headerText = `Найдено дубликатов: ${diffData.length}`;
+          if (showAllDups) {
+            headerText += ` (Расхождений: ${diffCount}, Уже совпадают: ${matchCount})`;
+          }
+          finalOutput += headerText + `\n\n` + diffData.map(d => d.text).join("");
+        }
+        
+        output.value = finalOutput;
+        
+        // Показываем кнопку "Исправить", если есть конфликты
+        document.getElementById('btnStartFix').style.display = globalConflicts.length > 0 ? 'inline-block' : 'none';
+        document.getElementById('resolutionArea').style.display = 'none'; // Скрываем редактор при новом поиске
+      });
+    }
+
+    function copyDuplicatesOutput() {
+      const textarea = document.getElementById('outputDuplicates');
+      textarea.select();
+      try {
+        navigator.clipboard.writeText(textarea.value).then(() => {
+          alert('Результат скопирован!');
+        });
+      } catch (err) {
+        document.execCommand('copy');
+      }
+    }
+
+    function processDuplicatesAllFiles() {
+      const output = document.getElementById('outputDuplicates');
+      output.value = 'Анализ файлов... Пожалуйста, подождите.';
+
+      Promise.all([
+        readMultipleFilesAsLines('dupAllJp'),
+        readMultipleFilesAsLines('dupAllRu')
+      ]).then(filesArrays => {
+        const [jpFiles, ruFiles] = filesArrays;
+
+        if (jpFiles.length === 0 || ruFiles.length === 0) {
+          alert('Пожалуйста, загрузите файлы в оба поля!');
+          output.value = '';
+          return;
+        }
+
+        const structureErrors = [];
+        const index = {};
+
+        function getPairsFromFiles(jpList, ruList) {
+          let combinedPairs = [];
+          ruList.forEach(ruFile => {
+            const jpFile = jpList.find(f => f.name === ruFile.name);
+            if (!jpFile) {
+              structureErrors.push(`[ВНИМАНИЕ] Для файла ${ruFile.name} не загружен японский оригинал!`);
+              return;
+            }
+            const pairs = extractSyncDialogues(ruFile.lines, jpFile.lines, ruFile.name);
+            combinedPairs = combinedPairs.concat(pairs);
+          });
+          return combinedPairs;
+        }
+
+        const allPairs = getPairsFromFiles(jpFiles, ruFiles);
+        globalRuFiles = {};
+        ruFiles.forEach(f => globalRuFiles[f.name] = f.lines.join('\n'));
+
+        allPairs.forEach(pair => {
+          if (pair.jpName === "【ОШИБКА СТРУКТУРЫ】") {
+            structureErrors.push(`[${pair.fileName}] ${pair.jpText}`);
+          }
+        });
+
+        // Строим индекс по всем файлам
         allPairs.forEach(pair => {
           if (pair.jpName === "【ОШИБКА СТРУКТУРЫ】" || pair.jpText.includes('[JP НЕ НАЙДЕН')) return;
           
@@ -6584,6 +6804,22 @@
       }
     }
 
+    
+    function adaptLineNameToTarget(newLine, targetOriginalLine) {
+      if (!newLine || !targetOriginalLine) return newLine;
+      const targetMatch = targetOriginalLine.match(/ShowText\(\["((?:\\\\n|\\n)?\s*<[^>]+>|【[^】]+】)/);
+      const newMatch = newLine.match(/ShowText\(\["((?:\\\\n|\\n)?\s*<[^>]+>|【[^】]+】)/);
+
+      if (targetMatch && newMatch) {
+        return newLine.replace(newMatch[1], targetMatch[1]);
+      } else if (targetMatch && !newMatch) {
+        return newLine.replace(/ShowText\(\["/, 'ShowText(["' + targetMatch[1]);
+      } else if (!targetMatch && newMatch) {
+        return newLine.replace(newMatch[1], '');
+      }
+      return newLine;
+    }
+
     function saveAndDownloadArchivedFiles() {
       // 1. Проверяем, есть ли хотя бы один разрешенный конфликт
       let hasChanges = false;
@@ -6656,7 +6892,7 @@
         const newLinesRaw = finalResolution.split('\n');
         const newLines = newLinesRaw.map(l => l.replace(/\r$/, '')).filter(l => l.trim() !== '');
 
-        const replaceInFile = (fileName, oldLinesRaw, newText, startLineHint, sourceFullBlock) => {
+        const replaceInFile = (fileName, oldLinesRaw, newText, startLineHint, sourceFullBlock, isMultiChar = false) => {
           let lines = fileLinesMap[fileName];
           if (!lines) return;
           const originalLines = originalFileLinesMap[fileName] || lines;
@@ -6775,7 +7011,9 @@
               const l = sourceFullBlock[i];
               if (l.trim().startsWith('ShowText(')) {
                 if (showTextIdx < newLines.length) {
-                  newBlockLines.push(targetIndent + newLines[showTextIdx++].trim());
+                  const nextLine = newLines[showTextIdx++];
+                  const adaptedNext = isMultiChar ? adaptLineNameToTarget(nextLine.trim(), (currentBlockLines && currentBlockLines[showTextIdx - 1]) || '') : nextLine.trim();
+                  newBlockLines.push(targetIndent + adaptedNext);
                 }
                 // Если это последний ShowText в блоке-источнике, но в newLines есть ещё строки:
                 const remainingSourceShowText = sourceFullBlock.slice(i + 1).filter(sl => sl.trim().startsWith('ShowText(')).length;
@@ -6825,7 +7063,8 @@
               // Это НЕ последняя старая строка
               if (j < newLines.length) {
                 if (newLines[j].trim() !== '') {
-                  lines[targetIdx] = targetIndent + newLines[j].trim() + (hasCR ? '\r' : '');
+                  const adaptedLine = isMultiChar ? adaptLineNameToTarget(newLines[j].trim(), originalLines[targetIdx]) : newLines[j].trim();
+                  lines[targetIdx] = targetIndent + adaptedLine + (hasCR ? '\r' : '');
                 } else {
                   lines[targetIdx] = null;
                 }
