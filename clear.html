@@ -5906,7 +5906,8 @@
             }
           } else {
              // Нет тега имени
-             if (!current || screenChanged) {
+             const isPlusContinuation = cmd.fullLine.includes('#+') || ruText.includes('#+');
+             if (!current || (screenChanged && !isPlusContinuation)) {
                 if (current) dialogues.push(current);
                 current = {
                   nameTag: null, pureName: "", 
